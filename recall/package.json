@@ -1,0 +1,34 @@
+{
+  "name": "@teammates/recall",
+  "version": "0.1.0",
+  "description": "Local semantic memory search for teammates. Indexes MEMORIES.md and daily logs using Vectra + transformers.js.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "teammates-recall": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "teammates",
+    "ai",
+    "memory",
+    "vector-search",
+    "embeddings"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "vectra": "^0.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
