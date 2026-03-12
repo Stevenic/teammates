@@ -1,0 +1,35 @@
+{
+  "name": "@teammates/cli",
+  "version": "0.1.0",
+  "description": "Agent-agnostic CLI for teammates. Routes tasks, manages handoffs, and plugs into any coding agent backend.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "teammates": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "teammates",
+    "ai",
+    "orchestrator",
+    "agent",
+    "handoff",
+    "cli"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "ora": "^9.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
