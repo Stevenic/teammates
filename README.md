@@ -108,6 +108,7 @@ teammates/
     src/                # TypeScript source
     package.json        # @teammates/recall package
     README.md           # Recall documentation
+  docs/                 # Vision and design documents
   template/
     .gitignore          # Keeps USER.md out of version control
     README.md           # Roster template with placeholders

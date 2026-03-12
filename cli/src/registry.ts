@@ -64,6 +64,11 @@ export class Registry {
     return config;
   }
 
+  /** Register a teammate programmatically (e.g. the agent itself) */
+  register(config: TeammateConfig): void {
+    this.teammates.set(config.name, config);
+  }
+
   /** Get a loaded teammate by name */
   get(name: string): TeammateConfig | undefined {
     return this.teammates.get(name);

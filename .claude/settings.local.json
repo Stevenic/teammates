@@ -13,7 +13,16 @@
       "Bash(npm run:*)",
       "Bash(node C:/source/teammates/cli/test-ansi.js)",
       "Bash(node -e \"const rl = require\\('readline'\\).createInterface\\({input: process.stdin, output: process.stdout}\\); console.log\\(rl._refreshLine.toString\\(\\).slice\\(0, 500\\)\\)\" 2>&1 || node -e \"const rl = require\\('readline'\\); console.log\\(Object.getOwnPropertyNames\\(rl.Interface.prototype\\).filter\\(k => k.includes\\('refresh'\\)\\)\\)\")",
-      "Bash(node -e \"const rl = require\\('readline'\\).createInterface\\({input: process.stdin, output: process.stdout}\\); console.log\\(rl._refreshLine.toString\\(\\).slice\\(400, 900\\)\\)\")"
+      "Bash(node -e \"const rl = require\\('readline'\\).createInterface\\({input: process.stdin, output: process.stdout}\\); console.log\\(rl._refreshLine.toString\\(\\).slice\\(400, 900\\)\\)\")",
+      "Bash(code \"C:\\\\source\\\\teammates\\\\docs\\\\teammates-vision.md\")",
+      "Bash(node -e \"const rl = require\\('readline'\\); console.log\\(typeof rl.moveCursor, typeof rl.clearLine, typeof rl.cursorTo\\)\")",
+      "Bash(node C:/source/teammates/cli/test-move.js 2>&1)",
+      "Bash(node -e \"import\\('readline'\\).then\\(rl => { const out = process.stdout; out.write\\('PROMPT LINE'\\); out.write\\('\\\\\\\\nline-1'\\); out.write\\('\\\\\\\\nline-2'\\); rl.moveCursor\\(out, 0, -2\\); out.write\\(' <CURSOR>'\\); out.write\\('\\\\\\\\n\\\\\\\\n\\\\\\\\n'\\); }\\)\")",
+      "Bash(node -e \"console.log\\('isTTY:', process.stdout.isTTY\\); console.log\\('hasColors:', process.stdout.hasColors?.\\(\\)\\)\")",
+      "Bash(node -e \"console.log\\(process.stdout.constructor.toString\\(\\).slice\\(0, 200\\)\\)\" 2>&1)",
+      "Bash(node -e \"console.log\\(Object.getOwnPropertyNames\\(process.stdout\\).concat\\(Object.getOwnPropertyNames\\(Object.getPrototypeOf\\(process.stdout\\)\\)\\).join\\(', '\\)\\)\")",
+      "Bash(node -e \"const rl = require\\('readline'\\); console.log\\(rl.moveCursor.toString\\(\\)\\)\")",
+      "Bash(node -e \"const rl = require\\('readline'\\); console.log\\(rl.cursorTo.toString\\(\\)\\)\")"
     ]
   }
 }

@@ -144,6 +144,8 @@ const results = await search("database migration", {
   teammatesDir: "./.teammates",
   teammate: "atlas",
   maxResults: 5,
+  maxChunks: 3,    // max chunks per document (default: 3)
+  maxTokens: 500,  // max tokens per section (default: 500)
 });
 
 // Search without auto-sync

@@ -122,6 +122,12 @@ class TeammatesREPL {
   private spinner: Ora | null = null;
   private commands: Map<string, SlashCommand> = new Map();
   private lastResult: TaskResult | null = null;
+  private lastResults: Map<string, TaskResult> = new Map();
+
+  private storeResult(result: TaskResult): void {
+    this.lastResult = result;
+    this.lastResults.set(result.teammate, result);
+  }
   private adapterName: string;
   private taskQueue: { teammate: string; task: string }[] = [];
   private queueActive: { teammate: string; task: string } | null = null;
@@ -349,6 +355,19 @@ class TeammatesREPL {
     });
     await this.orchestrator.init();
 
+    // Register the agent itself as a mentionable teammate
+    const registry = this.orchestrator.getRegistry();
+    registry.register({
+      name: this.adapterName,
+      role: `General-purpose coding agent (${this.adapterName})`,
+      soul: "",
+      memories: "",
+      dailyLogs: [],
+      ownership: { primary: [], secondary: [] },
+    });
+    // Add status entry (init() already ran, so we add it manually)
+    this.orchestrator.getAllStatuses().set(this.adapterName, { state: "idle" });
+
     // Populate roster on the adapter so prompts include team info
     if ("roster" in this.adapter) {
       const registry = this.orchestrator.getRegistry();
@@ -382,12 +401,12 @@ class TeammatesREPL {
             this.wordwheelIndex + 1,
             this.wordwheelItems.length - 1
           );
-          this.updateWordwheel();
+          this.renderItems(); // calls dropdown.render() → _refreshLine()
           return;
         }
         if (key.name === "up") {
           this.wordwheelIndex = Math.max(this.wordwheelIndex - 1, -1);
-          this.updateWordwheel();
+          this.renderItems(); // calls dropdown.render() → _refreshLine()
           return;
         }
         if (key.name === "tab" && this.wordwheelIndex >= 0) {
@@ -396,11 +415,26 @@ class TeammatesREPL {
         }
       }
 
-      // Any other key — clear, let readline handle it, then refresh
-      this.clearWordwheel();
+      // Enter/return — clear dropdown visually before readline processes it
+      // (readline doesn't call _refreshLine on Enter, so dropdown would linger)
+      if (key && key.name === "return") {
+        this.dropdown.clear();
+        this.wordwheelItems = [];
+        this.wordwheelIndex = -1;
+        // Force a refresh to erase dropdown, then let readline process Enter
+        (this.rl as any)._refreshLine();
+        origTtyWrite(s, key);
+        return;
+      }
+
+      // Any other key — clear dropdown, let readline handle keystroke,
+      // then recompute and render the new dropdown.
+      this.dropdown.clear();
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
       origTtyWrite(s, key);
+      // origTtyWrite called _refreshLine which cleared old dropdown.
+      // Now compute new items and render (calls _refreshLine again with new suffix).
       this.updateWordwheel();
     };
 
@@ -411,7 +445,10 @@ class TeammatesREPL {
     this.rl.prompt();
 
     this.rl.on("line", async (line: string) => {
-      this.clearWordwheel();
+      // Clear dropdown state — readline's own refresh on Enter clears visually
+      this.dropdown.clear();
+      this.wordwheelItems = [];
+      this.wordwheelIndex = -1;
 
       const trimmed = line.trim();
       if (!trimmed) {
@@ -561,6 +598,13 @@ class TeammatesREPL {
         },
       },
       {
+        name: "debug",
+        aliases: ["raw"],
+        usage: "/debug [teammate]",
+        description: "Show raw agent output from the last task",
+        run: (args) => this.cmdDebug(args),
+      },
+      {
         name: "queue",
         aliases: ["qu"],
         usage: "/queue [@teammate] [task]",
@@ -663,7 +707,7 @@ class TeammatesREPL {
               chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`),
             spinner: "dots",
           }).start();
-        } else {
+        } else if (!this.queueDraining) {
           console.log(
             chalk.blue(`  ${event.assignment.teammate}`) +
               chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`)
@@ -772,7 +816,7 @@ class TeammatesREPL {
           task: pending.task,
           handoff: pending,
         });
-        this.lastResult = result;
+        this.storeResult(result);
         return true;
       }
       case "2": {
@@ -784,7 +828,7 @@ class TeammatesREPL {
           task: pending.task,
           handoff: pending,
         });
-        this.lastResult = result;
+        this.storeResult(result);
         return true;
       }
       case "3": {
@@ -813,7 +857,7 @@ class TeammatesREPL {
 
     const [, teammate, task] = parts;
     const result = await this.orchestrator.assign({ teammate, task });
-    this.lastResult = result;
+    this.storeResult(result);
 
     if (result.handoff && this.orchestrator.requireApproval) {
       // Handoff is pending — user was already prompted
@@ -835,7 +879,7 @@ class TeammatesREPL {
 
     console.log(chalk.gray(`  Routed to: ${chalk.bold(match)}`));
     const result = await this.orchestrator.assign({ teammate: match, task: argsStr });
-    this.lastResult = result;
+    this.storeResult(result);
   }
 
   private async cmdStatus(): Promise<void> {
@@ -939,6 +983,26 @@ class TeammatesREPL {
     console.log();
   }
 
+  private async cmdDebug(argsStr: string): Promise<void> {
+    const teammate = argsStr.trim();
+    const result = teammate
+      ? this.lastResults.get(teammate)
+      : this.lastResult;
+
+    if (!result?.rawOutput) {
+      console.log(chalk.gray("  No raw output available." + (teammate ? "" : " Try: /debug <teammate>")));
+      return;
+    }
+
+    console.log();
+    console.log(chalk.gray(`  ── raw output from ${result.teammate} ──`));
+    console.log();
+    console.log(result.rawOutput);
+    console.log();
+    console.log(chalk.gray(`  ── end raw output ──`));
+    console.log();
+  }
+
   private async cmdCancel(argsStr: string): Promise<void> {
     const n = parseInt(argsStr.trim(), 10);
     if (isNaN(n) || n < 1 || n > this.taskQueue.length) {
@@ -1017,6 +1081,7 @@ class TeammatesREPL {
     }
 
     this.taskQueue.push({ teammate, task: task.trim() });
+    console.log();
     console.log(
       chalk.gray("  Queued: ") +
         chalk.cyan(`@${teammate}`) +
@@ -1024,6 +1089,11 @@ class TeammatesREPL {
         chalk.white(task.trim().slice(0, 60)) +
         chalk.gray(` (${this.taskQueue.length} in queue)`)
     );
+    console.log(
+      chalk.blue(`  ${teammate}`) +
+        chalk.gray(` is working on: ${task.trim().slice(0, 60)}...`)
+    );
+    console.log();
 
     // Start draining if not already
     if (!this.queueDraining) {
@@ -1059,7 +1129,7 @@ class TeammatesREPL {
         task: entry.task,
       });
       this.queueActive = null;
-      this.lastResult = result;
+      this.storeResult(result);
     }
 
     console.log(chalk.green("  ✔ Queue complete."));

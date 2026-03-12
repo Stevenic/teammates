@@ -1,65 +1,89 @@
 /**
  * Dropdown — renders lines below the readline prompt.
  *
- * Key constraint: readline's _refreshLine() calls clearScreenDown(),
- * which erases everything below the cursor. So we NEVER call _refreshLine
- * after writing dropdown content. Instead we manually position the cursor.
+ * Hooks _refreshLine:
+ *   1. origRefresh runs: clears screen, writes prompt, positions cursor
+ *   2. We append dropdown lines with \n
+ *   3. We adjust prevRows so the NEXT _refreshLine's moveCursor(0, -prevRows)
+ *      moves the cursor back up past the dropdown lines to the prompt
  */
 
 import type { Interface as ReadlineInterface } from "node:readline";
 
-export class Dropdown {
-  private count = 0;
-  private out = process.stdout;
+/** Truncate a string with ANSI codes to `max` visible characters. */
+function truncateAnsi(str: string, max: number): string {
+  let visible = 0;
+  let i = 0;
+  while (i < str.length && visible < max) {
+    if (str[i] === "\x1b") {
+      // Skip ANSI sequence
+      const end = str.indexOf("m", i);
+      if (end !== -1) { i = end + 1; continue; }
+    }
+    visible++;
+    i++;
+  }
+  return str.slice(0, i);
+}
 
-  constructor(private rl: ReadlineInterface) {}
+export class Dropdown {
+  private lines: string[] = [];
+  private out = process.stdout;
+  private refreshing = false; // guard against recursion
+
+  constructor(private rl: ReadlineInterface) {
+    this.installHook();
+  }
 
   get rendered(): number {
-    return this.count;
+    return this.lines.length;
   }
 
-  /** Show or update the dropdown. Pass [] to hide. */
-  render(lines: string[]): void {
-    if (lines.length === 0) {
-      this.clear();
-      return;
-    }
-
-    // Erase old content (if any) + write new content in one pass
-    // Step 1: move down into any existing rows and erase them
-    const toClear = Math.max(this.count, lines.length);
-    // Make sure enough rows exist below — emit \n's then come back
-    for (let i = 0; i < toClear; i++) this.out.write("\n");
-    this.out.write(`\x1b[${toClear}A`);
-    // Step 2: write new lines (move down with \x1b[E which goes to col 0 of next line)
-    for (let i = 0; i < toClear; i++) {
-      this.out.write(`\x1b[E\x1b[2K`);
-      if (i < lines.length) this.out.write(lines[i]);
-    }
-    // Step 3: move back up and position cursor on the prompt
-    this.out.write(`\x1b[${toClear}A`);
-    this.restoreCursor();
-    this.count = lines.length;
+  /** Set dropdown content. Triggers _refreshLine to display. */
+  render(newLines: string[]): void {
+    this.lines = newLines;
+    (this.rl as any)._refreshLine();
   }
 
-  /** Erase all dropdown content. */
+  /** Clear dropdown. Next _refreshLine won't append anything. */
   clear(): void {
-    if (this.count === 0) return;
-    // Move into rows below and erase each one
-    for (let i = 0; i < this.count; i++) {
-      this.out.write(`\x1b[E\x1b[2K`);
-    }
-    this.out.write(`\x1b[${this.count}A`);
-    this.restoreCursor();
-    this.count = 0;
+    this.lines = [];
   }
 
-  /** Position cursor on the prompt line at the right column — without _refreshLine. */
-  private restoreCursor(): void {
-    const promptText: string = (this.rl as any)._prompt ?? "";
-    const promptLen = promptText.replace(/\x1b\[[0-9;]*m/g, "").length;
-    const cursor: number = (this.rl as any).cursor ?? 0;
-    const col = promptLen + cursor + 1; // 1-based
-    this.out.write(`\x1b[${col}G`);
+  private installHook(): void {
+    const origRefresh = (this.rl as any)._refreshLine.bind(this.rl);
+
+    (this.rl as any)._refreshLine = () => {
+      // Guard: render() calls _refreshLine, which must not recurse
+      if (this.refreshing) {
+        origRefresh();
+        return;
+      }
+      this.refreshing = true;
+
+      // 1. Run the original: clears below, writes prompt, positions cursor
+      origRefresh();
+
+      // 2. Append dropdown lines below the prompt (truncated to prevent wrapping)
+      if (this.lines.length > 0) {
+        const cols = this.out.columns || 120;
+        let buf = "";
+        for (const line of this.lines) {
+          buf += "\n" + truncateAnsi(line, cols - 1);
+        }
+        this.out.write(buf);
+
+        // 3. Move cursor back up to the prompt line and restore column.
+        //    Don't touch prevRows — cursor IS on the prompt line after this.
+        const n = this.lines.length;
+        this.out.write(`\x1b[${n}A`);
+        const promptText: string = (this.rl as any)._prompt ?? "";
+        const promptLen = promptText.replace(/\x1b\[[0-9;]*m/g, "").length;
+        const cursor: number = (this.rl as any).cursor ?? 0;
+        this.out.write(`\x1b[${promptLen + cursor + 1}G`);
+      }
+
+      this.refreshing = false;
+    };
   }
 }

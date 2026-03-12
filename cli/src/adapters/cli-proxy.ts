@@ -148,11 +148,35 @@ export class CliProxyAdapter implements AgentAdapter {
     teammate: TeammateConfig,
     prompt: string
   ): Promise<TaskResult> {
+    // If the teammate has no soul (e.g. the raw agent), skip identity/memory
+    // wrapping but include handoff instructions so it can delegate to teammates
     const sessionFile = this.sessionFiles.get(teammate.name);
-    const fullPrompt = buildTeammatePrompt(teammate, prompt, {
-      roster: this.roster,
-      sessionFile,
-    });
+    let fullPrompt: string;
+    if (teammate.soul) {
+      fullPrompt = buildTeammatePrompt(teammate, prompt, {
+        roster: this.roster,
+        sessionFile,
+      });
+    } else {
+      const parts = [prompt];
+      const others = this.roster.filter((r) => r.name !== teammate.name);
+      if (others.length > 0) {
+        parts.push("\n\n---\n");
+        parts.push("If part of this task belongs to a specialist, you can hand it off.");
+        parts.push("Your teammates:");
+        for (const t of others) {
+          const owns = t.ownership.primary.length > 0
+            ? ` — owns: ${t.ownership.primary.join(", ")}`
+            : "";
+          parts.push(`- @${t.name}: ${t.role}${owns}`);
+        }
+        parts.push("\nTo hand off, end your response with:");
+        parts.push("```json");
+        parts.push('{ "handoff": { "to": "<teammate>", "task": "<what you need them to do>", "context": "<any context>" } }');
+        parts.push("```");
+      }
+      fullPrompt = parts.join("\n");
+    }
 
     // Write prompt to temp file to avoid shell escaping issues
     const promptFile = join(tmpdir(), `teammates-${this.name}-${randomUUID()}.md`);
