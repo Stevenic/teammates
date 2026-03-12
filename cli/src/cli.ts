@@ -116,6 +116,7 @@ interface WordwheelItem {
 
 class TeammatesREPL {
   private orchestrator!: Orchestrator;
+  private adapter!: AgentAdapter;
   private rl!: ReadlineInterface;
   private spinner: Ora | null = null;
   private commands: Map<string, SlashCommand> = new Map();
@@ -356,12 +357,22 @@ class TeammatesREPL {
     // Init orchestrator
     const teammatesDir = await findTeammatesDir();
     const adapter = resolveAdapter(this.adapterName);
+    this.adapter = adapter;
     this.orchestrator = new Orchestrator({
       teammatesDir,
       adapter,
       onEvent: (e) => this.handleEvent(e),
     });
     await this.orchestrator.init();
+
+    // Populate roster on the adapter so prompts include team info
+    if ("roster" in this.adapter) {
+      const registry = this.orchestrator.getRegistry();
+      (this.adapter as any).roster = this.orchestrator.listTeammates().map((name) => {
+        const t = registry.get(name)!;
+        return { name: t.name, role: t.role, ownership: t.ownership };
+      });
+    }
 
     // Register commands
     this.registerCommands();
@@ -578,6 +589,24 @@ class TeammatesREPL {
         run: () => this.cmdHelp(),
       },
       {
+        name: "verbose",
+        aliases: ["v"],
+        usage: "/verbose",
+        description: "Toggle agent output streaming",
+        run: async () => {
+          if ("verbose" in this.adapter) {
+            const proxy = this.adapter as any;
+            proxy.verbose = !proxy.verbose;
+            console.log(
+              chalk.gray("  Agent output: ") +
+                (proxy.verbose ? chalk.green("visible") : chalk.yellow("hidden"))
+            );
+          } else {
+            console.log(chalk.gray("  Adapter does not support output toggling."));
+          }
+        },
+      },
+      {
         name: "exit",
         aliases: ["q", "quit"],
         usage: "/exit",
@@ -644,14 +673,27 @@ class TeammatesREPL {
 
   // ─── Event handler ───────────────────────────────────────────────
 
+  private isVerbose(): boolean {
+    return "verbose" in this.adapter && (this.adapter as any).verbose === true;
+  }
+
   private handleEvent(event: OrchestratorEvent): void {
     switch (event.type) {
       case "task_assigned":
-        this.spinner = ora({
-          text: chalk.blue(`${event.assignment.teammate}`) +
-            chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`),
-          spinner: "dots",
-        }).start();
+        if (this.isVerbose()) {
+          // No spinner — agent output will stream directly
+          console.log(
+            chalk.blue(`  ${event.assignment.teammate}`) +
+              chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`)
+          );
+          console.log();
+        } else {
+          this.spinner = ora({
+            text: chalk.blue(`${event.assignment.teammate}`) +
+              chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`),
+            spinner: "dots",
+          }).start();
+        }
         break;
 
       case "task_completed":
@@ -662,6 +704,13 @@ class TeammatesREPL {
               event.result.summary
           );
           this.spinner = null;
+        } else {
+          console.log();
+          console.log(
+            chalk.green(`  ✔ ${event.result.teammate}`) +
+              chalk.gray(": ") +
+              event.result.summary
+          );
         }
         break;
 

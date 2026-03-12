@@ -93,6 +93,16 @@ teammates-recall status --dir ./.teammates
 4. **Stores** the index at `.teammates/.index/<teammate>/` (gitignored)
 5. **Searches** using Vectra's semantic similarity matching
 
+## Auto-Sync
+
+Every `search` call automatically detects new or changed memory files and indexes them before returning results. This is on by default — no manual `sync` or `index` step is needed.
+
+**How it works:** The indexer compares file modification times against stored metadata. Only files that are new or changed since the last sync get re-indexed, so the overhead is minimal for most queries.
+
+**Skip it when you need speed:** Pass `--no-sync` (CLI) or `skipSync: true` (library) to skip the check entirely. Useful for hot loops or large indexes where you control sync timing separately.
+
+**Why this matters for agents:** Agents write memory files as plain markdown — they shouldn't need to know about index state or remember to run a sync command. Auto-sync closes the gap between "file written" and "file searchable" so agents can write-then-search in a single workflow without extra steps.
+
 ## Use From Any Agent
 
 Any AI coding tool that can run shell commands can use recall:

@@ -103,6 +103,12 @@ export class Orchestrator {
    * If the result contains a handoff, follows the chain automatically.
    */
   async assign(assignment: TaskAssignment, depth = 0): Promise<TaskResult> {
+    // Normalize: strip leading @ from teammate names (agents may use @mentions)
+    assignment.teammate = assignment.teammate.replace(/^@/, "");
+    if (assignment.handoff) {
+      assignment.handoff.to = assignment.handoff.to.replace(/^@/, "");
+      assignment.handoff.from = assignment.handoff.from.replace(/^@/, "");
+    }
     const teammate = this.registry.get(assignment.teammate);
     if (!teammate) {
       const error = `Unknown teammate: ${assignment.teammate}`;

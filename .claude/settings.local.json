@@ -7,7 +7,9 @@
       "Bash(npx tsc:*)",
       "Bash(node dist/cli.js --help 2>&1 || node dist/cli.js 2>&1 | head -20)",
       "Bash(node /c/source/teammates/cli/dist/cli.js --adapter claude --help 2>&1 || node /c/source/teammates/cli/dist/cli.js --help 2>&1)",
-      "Bash(node /c/source/teammates/cli/dist/cli.js --help)"
+      "Bash(node /c/source/teammates/cli/dist/cli.js --help)",
+      "Bash(echo \"hello\" | claude -p 2>&1 | head -5)",
+      "Bash(CLAUDECODE= claude -p \"say hi in one word\" 2>&1 | head -5)"
     ]
   }
 }

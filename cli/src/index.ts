@@ -11,7 +11,7 @@ export type {
   OrchestratorEvent,
 } from "./types.js";
 
-export type { AgentAdapter } from "./adapter.js";
+export type { AgentAdapter, RosterEntry } from "./adapter.js";
 export { buildTeammatePrompt, formatHandoffContext } from "./adapter.js";
 export { Registry } from "./registry.js";
 export {

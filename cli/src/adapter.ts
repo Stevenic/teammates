@@ -38,21 +38,34 @@ export interface AgentAdapter {
   destroySession?(sessionId: string): Promise<void>;
 }
 
+/** Minimal teammate info for the roster section of a prompt. */
+export interface RosterEntry {
+  name: string;
+  role: string;
+  ownership: { primary: string[]; secondary: string[] };
+}
+
 /**
- * Build the system prompt for a teammate session.
- * Adapters use this to construct a consistent identity prompt.
+ * Build the full prompt for a teammate session.
+ * Includes identity, memory, roster, output protocol, and the task.
  */
 export function buildTeammatePrompt(
   teammate: TeammateConfig,
   taskPrompt: string,
-  handoffContext?: string
+  options?: {
+    handoffContext?: string;
+    roster?: RosterEntry[];
+    sessionFile?: string;
+  }
 ): string {
   const parts: string[] = [];
 
+  // ── Identity ──────────────────────────────────────────────────────
   parts.push(`# You are ${teammate.name}\n`);
   parts.push(teammate.soul);
   parts.push("\n---\n");
 
+  // ── Memories ──────────────────────────────────────────────────────
   if (teammate.memories.trim()) {
     parts.push("## Your Memories\n");
     parts.push(teammate.memories);
@@ -67,12 +80,80 @@ export function buildTeammatePrompt(
     parts.push("\n---\n");
   }
 
-  if (handoffContext) {
-    parts.push("## Handoff Context\n");
-    parts.push(handoffContext);
+  // ── Team roster ───────────────────────────────────────────────────
+  if (options?.roster && options.roster.length > 0) {
+    parts.push("## Your Team\n");
+    parts.push("These are the other teammates you can hand off work to:\n");
+    for (const t of options.roster) {
+      if (t.name === teammate.name) continue;
+      const owns = t.ownership.primary.length > 0
+        ? ` — owns: ${t.ownership.primary.join(", ")}`
+        : "";
+      parts.push(`- **@${t.name}**: ${t.role}${owns}`);
+    }
     parts.push("\n---\n");
   }
 
+  // ── Handoff context (if this task came from another teammate) ─────
+  if (options?.handoffContext) {
+    parts.push("## Handoff Context\n");
+    parts.push(options.handoffContext);
+    parts.push("\n---\n");
+  }
+
+  // ── Session state ────────────────────────────────────────────────
+  if (options?.sessionFile) {
+    parts.push("## Session State\n");
+    parts.push(`Your session file is at: \`${options.sessionFile}\`
+
+**Read this file first** — it contains context from your prior tasks in this session.
+
+**Before returning your result**, append a brief entry to this file with:
+- What you did
+- Key decisions made
+- Files changed
+- Anything the next task should know
+
+This is how you maintain continuity across tasks. Always read it, always update it.
+`);
+    parts.push("\n---\n");
+  }
+
+  // ── Output protocol ───────────────────────────────────────────────
+  parts.push("## Output Protocol\n");
+  parts.push(`When you finish, you MUST end your response with exactly one of these two blocks:
+
+### Option 1: Direct response
+
+If you can complete the task yourself, do the work and then end with:
+
+\`\`\`json
+{ "result": { "summary": "<one-line summary of what you did>", "changedFiles": ["<file>", ...] } }
+\`\`\`
+
+### Option 2: Handoff
+
+If the task (or part of it) belongs to another teammate, end with:
+
+\`\`\`json
+{ "handoff": { "to": "<teammate>", "task": "<specific request for them>", "changedFiles": ["<files you changed, if any>"], "context": "<any context they need>" } }
+\`\`\`
+
+You may also write a task file (e.g. \`.teammates/tasks/<name>.md\`) with detailed instructions and reference it in the handoff:
+
+\`\`\`json
+{ "handoff": { "to": "<teammate>", "task": "See .teammates/tasks/<name>.md", "changedFiles": [".teammates/tasks/<name>.md"] } }
+\`\`\`
+
+Rules:
+- Always include exactly one JSON block at the end — either \`result\` or \`handoff\`.
+- Only hand off to teammates listed in "Your Team" above.
+- Do as much of the work as you can before handing off.
+- If the task is outside everyone's ownership, do your best and return a result.
+`);
+  parts.push("\n---\n");
+
+  // ── Task ──────────────────────────────────────────────────────────
   parts.push("## Task\n");
   parts.push(taskPrompt);
 
