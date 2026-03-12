@@ -43,6 +43,17 @@ your-project/
 - **Ownership** — File patterns each teammate is responsible for. Every part of the codebase has a clear owner.
 - **Protocol** — How teammates collaborate: handoff conventions, dependency direction, and conflict resolution.
 
+## CLI Orchestrator (Optional)
+
+Route tasks to teammates, manage handoffs, and run any coding agent backend from a single REPL:
+
+```bash
+cd cli && npm install && npm run build
+teammates claude           # or codex, aider, echo
+```
+
+Inside the session, assign tasks with `@mentions`, auto-route with bare text, queue background work, and approve or reject handoffs between teammates. See [cli/README.md](cli/README.md) for details.
+
 ## Memory Search (Optional)
 
 As daily logs accumulate, teammates can't read every file. Install `@teammates/recall` for local semantic search:
@@ -89,6 +100,10 @@ teammates/
   README.md             # This file
   ONBOARDING.md         # Instructions for an AI agent to bootstrap teammates
   LICENSE               # MIT
+  cli/                  # Optional: interactive teammate orchestrator
+    src/                # TypeScript source (REPL, orchestrator, adapters)
+    package.json        # @teammates/cli package
+    README.md           # CLI documentation
   recall/               # Optional: local semantic memory search
     src/                # TypeScript source
     package.json        # @teammates/recall package

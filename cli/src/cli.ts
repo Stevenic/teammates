@@ -19,6 +19,7 @@ import type { AgentAdapter } from "./adapter.js";
 import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js";
 import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
+import { Dropdown } from "./dropdown.js";
 
 // ─── Argument parsing ────────────────────────────────────────────────
 
@@ -122,7 +123,10 @@ class TeammatesREPL {
   private commands: Map<string, SlashCommand> = new Map();
   private lastResult: TaskResult | null = null;
   private adapterName: string;
-  private wordwheelRendered = 0;      // lines currently drawn below prompt
+  private taskQueue: { teammate: string; task: string }[] = [];
+  private queueActive: { teammate: string; task: string } | null = null;
+  private queueDraining = false;
+  private dropdown!: Dropdown;
   private wordwheelItems: WordwheelItem[] = [];
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
 
@@ -143,32 +147,12 @@ class TeammatesREPL {
     return result;
   }
 
-  /** Column position of the cursor on the prompt line (1-based). */
-  private getInputColumn(): number {
-    const promptVisible = ((this.rl as any)._prompt ?? "")
-      .replace(/\x1b\[[0-9;]*m/g, "").length;
-    const cursor: number = (this.rl as any).cursor ?? 0;
-    return promptVisible + cursor + 1;
-  }
-
   private clearWordwheel(): void {
-    if (this.wordwheelRendered === 0) return;
-    const out = process.stdout;
-    for (let i = 0; i < this.wordwheelRendered; i++) {
-      out.write("\x1b[1B\x1b[2K");
-    }
-    out.write(`\x1b[${this.wordwheelRendered}A\x1b[${this.getInputColumn()}G`);
-    this.wordwheelRendered = 0;
+    this.dropdown.clear();
   }
 
   private writeWordwheel(lines: string[]): void {
-    if (lines.length === 0) return;
-    const out = process.stdout;
-    for (const line of lines) {
-      out.write("\n\x1b[2K" + line);
-    }
-    out.write(`\x1b[${lines.length}A\x1b[${this.getInputColumn()}G`);
-    this.wordwheelRendered = lines.length;
+    this.dropdown.render(lines);
   }
 
   /**
@@ -384,6 +368,7 @@ class TeammatesREPL {
       prompt: chalk.cyan("teammates") + chalk.gray("> "),
       terminal: true,
     });
+    this.dropdown = new Dropdown(this.rl);
 
     // Intercept all keypress via _ttyWrite so we can capture
     // arrow-down / arrow-up / Tab for wordwheel navigation.
@@ -459,19 +444,19 @@ class TeammatesREPL {
     // Logo + info block
     console.log();
     console.log(
-      chalk.cyan(" ▐▛▀▀▀▜▌   ") +
+      chalk.cyan(" ▐▛▀▀▀▀▜▌   ") +
         chalk.bold("Teammates") +
         chalk.gray(" v0.1.0")
     );
     console.log(
       chalk.cyan(" ▐▌") +
-        chalk.yellow(" ϟ ") +
+        " 🧬 " +
         chalk.cyan("▐▌   ") +
         chalk.white(`${this.adapterName}`) +
         chalk.gray(` · ${teammates.length} teammate${teammates.length === 1 ? "" : "s"}`)
     );
     console.log(
-      chalk.cyan(" ▐▙▄▄▄▟▌   ") +
+      chalk.cyan(" ▐▙▄▄▄▄▟▌   ") +
         chalk.gray(process.cwd())
     );
 
@@ -494,22 +479,19 @@ class TeammatesREPL {
 
     // Quick reference — 3 columns
     const col1 = [
-      ["/assign", "assign to teammate"],
+      ["@mention", "assign to teammate"],
       ["/route", "auto-route task"],
-      ["/handoff", "manual handoff"],
-      ["bare text", "auto-route shortcut"],
+      ["/queue", "queue tasks"],
     ];
     const col2 = [
-      ["/approve", "accept handoff"],
-      ["/reject", "decline handoff"],
       ["/status", "session overview"],
+      ["/verbose", "toggle output"],
       ["/log", "last task output"],
     ];
     const col3 = [
-      ["/teammates", "list roster"],
       ["/help", "all commands"],
-      ["Tab", "autocomplete"],
       ["/exit", "exit session"],
+      ["Tab", "autocomplete"],
     ];
 
     for (let i = 0; i < col1.length; i++) {
@@ -526,39 +508,11 @@ class TeammatesREPL {
   private registerCommands(): void {
     const cmds: SlashCommand[] = [
       {
-        name: "assign",
-        aliases: ["a"],
-        usage: "/assign <teammate> <task...>",
-        description: "Assign a task to a specific teammate",
-        run: (args) => this.cmdAssign(args),
-      },
-      {
         name: "route",
         aliases: ["r"],
         usage: "/route <task...>",
         description: "Auto-route a task to the best teammate",
         run: (args) => this.cmdRoute(args),
-      },
-      {
-        name: "approve",
-        aliases: ["y", "yes"],
-        usage: "/approve",
-        description: "Approve a pending handoff",
-        run: () => this.cmdApprove(),
-      },
-      {
-        name: "reject",
-        aliases: ["n", "no"],
-        usage: "/reject",
-        description: "Reject a pending handoff",
-        run: () => this.cmdReject(),
-      },
-      {
-        name: "handoff",
-        aliases: ["ho"],
-        usage: "/handoff <from> <to> <task...>",
-        description: "Manually hand off a task between teammates",
-        run: (args) => this.cmdHandoff(args),
       },
       {
         name: "status",
@@ -607,6 +561,20 @@ class TeammatesREPL {
         },
       },
       {
+        name: "queue",
+        aliases: ["qu"],
+        usage: "/queue [@teammate] [task]",
+        description: "Add to queue, or show queue if no args",
+        run: (args) => this.cmdQueue(args),
+      },
+      {
+        name: "cancel",
+        aliases: [],
+        usage: "/cancel <n>",
+        description: "Cancel a queued task by number",
+        run: (args) => this.cmdCancel(args),
+      },
+      {
         name: "exit",
         aliases: ["q", "quit"],
         usage: "/exit",
@@ -628,6 +596,12 @@ class TeammatesREPL {
   }
 
   private async dispatch(input: string): Promise<void> {
+    // Handle pending handoff menu (1/2/3)
+    if (this.orchestrator.getPendingHandoff()) {
+      const handled = await this.handleHandoffChoice(input);
+      if (handled) return;
+    }
+
     if (input.startsWith("/")) {
       const spaceIdx = input.indexOf(" ");
       const cmdName = spaceIdx > 0 ? input.slice(1, spaceIdx) : input.slice(1);
@@ -678,21 +652,22 @@ class TeammatesREPL {
   }
 
   private handleEvent(event: OrchestratorEvent): void {
+    // When queue is draining in background, never use spinner — it blocks the prompt
+    const useSpinner = !this.queueDraining && !this.isVerbose();
+
     switch (event.type) {
       case "task_assigned":
-        if (this.isVerbose()) {
-          // No spinner — agent output will stream directly
-          console.log(
-            chalk.blue(`  ${event.assignment.teammate}`) +
-              chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`)
-          );
-          console.log();
-        } else {
+        if (useSpinner) {
           this.spinner = ora({
             text: chalk.blue(`${event.assignment.teammate}`) +
               chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`),
             spinner: "dots",
           }).start();
+        } else {
+          console.log(
+            chalk.blue(`  ${event.assignment.teammate}`) +
+              chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`)
+          );
         }
         break;
 
@@ -771,13 +746,60 @@ class TeammatesREPL {
       }
     }
     console.log(chalk.gray("  └─────────────────────────────────────"));
+    console.log();
     console.log(
-      chalk.yellow("  Type ") +
-        chalk.bold("/approve") +
-        chalk.yellow(" to proceed or ") +
-        chalk.bold("/reject") +
-        chalk.yellow(" to cancel")
+      chalk.cyan("  1") + chalk.gray(") Approve")
     );
+    console.log(
+      chalk.cyan("  2") + chalk.gray(") Always approve handoffs")
+    );
+    console.log(
+      chalk.cyan("  3") + chalk.gray(") Reject")
+    );
+    console.log();
+  }
+
+  /** Handle the numbered handoff menu choice. */
+  private async handleHandoffChoice(choice: string): Promise<boolean> {
+    const pending = this.orchestrator.getPendingHandoff();
+    if (!pending) return false;
+
+    switch (choice) {
+      case "1": {
+        this.orchestrator.clearPendingHandoff(pending.from);
+        const result = await this.orchestrator.assign({
+          teammate: pending.to,
+          task: pending.task,
+          handoff: pending,
+        });
+        this.lastResult = result;
+        return true;
+      }
+      case "2": {
+        this.orchestrator.requireApproval = false;
+        this.orchestrator.clearPendingHandoff(pending.from);
+        console.log(chalk.gray("  Auto-approving all future handoffs."));
+        const result = await this.orchestrator.assign({
+          teammate: pending.to,
+          task: pending.task,
+          handoff: pending,
+        });
+        this.lastResult = result;
+        return true;
+      }
+      case "3": {
+        this.orchestrator.clearPendingHandoff(pending.from);
+        console.log(
+          chalk.gray(`  Rejected handoff from `) +
+            chalk.bold(pending.from) +
+            chalk.gray(" to ") +
+            chalk.bold(pending.to)
+        );
+        return true;
+      }
+      default:
+        return false;
+    }
   }
 
   // ─── Commands ────────────────────────────────────────────────────
@@ -813,58 +835,6 @@ class TeammatesREPL {
 
     console.log(chalk.gray(`  Routed to: ${chalk.bold(match)}`));
     const result = await this.orchestrator.assign({ teammate: match, task: argsStr });
-    this.lastResult = result;
-  }
-
-  private async cmdApprove(): Promise<void> {
-    const pending = this.orchestrator.getPendingHandoff();
-    if (!pending) {
-      console.log(chalk.gray("No pending handoff to approve."));
-      return;
-    }
-
-    // Clear the pending state and execute
-    this.orchestrator.clearPendingHandoff(pending.from);
-
-    const result = await this.orchestrator.assign({
-      teammate: pending.to,
-      task: pending.task,
-      handoff: pending,
-    });
-    this.lastResult = result;
-  }
-
-  private async cmdReject(): Promise<void> {
-    const pending = this.orchestrator.getPendingHandoff();
-    if (!pending) {
-      console.log(chalk.gray("No pending handoff to reject."));
-      return;
-    }
-
-    this.orchestrator.clearPendingHandoff(pending.from);
-    console.log(
-      chalk.gray(`  Rejected handoff from `) +
-        chalk.bold(pending.from) +
-        chalk.gray(" to ") +
-        chalk.bold(pending.to)
-    );
-  }
-
-  private async cmdHandoff(argsStr: string): Promise<void> {
-    const parts = argsStr.match(/^(\S+)\s+(\S+)\s+(.+)$/);
-    if (!parts) {
-      console.log(chalk.yellow("Usage: /handoff <from> <to> <task...>"));
-      return;
-    }
-
-    const [, from, to, task] = parts;
-    const envelope: HandoffEnvelope = { from, to, task };
-
-    const result = await this.orchestrator.assign({
-      teammate: to,
-      task,
-      handoff: envelope,
-    });
     this.lastResult = result;
   }
 
@@ -969,6 +939,134 @@ class TeammatesREPL {
     console.log();
   }
 
+  private async cmdCancel(argsStr: string): Promise<void> {
+    const n = parseInt(argsStr.trim(), 10);
+    if (isNaN(n) || n < 1 || n > this.taskQueue.length) {
+      if (this.taskQueue.length === 0) {
+        console.log(chalk.gray("  Queue is empty."));
+      } else {
+        console.log(chalk.yellow(`  Usage: /cancel <1-${this.taskQueue.length}>`));
+      }
+      return;
+    }
+
+    const removed = this.taskQueue.splice(n - 1, 1)[0];
+    console.log(
+      chalk.gray("  Cancelled: ") +
+        chalk.cyan(`@${removed.teammate}`) +
+        chalk.gray(" — ") +
+        chalk.white(removed.task.slice(0, 60))
+    );
+  }
+
+  private async cmdQueue(argsStr: string): Promise<void> {
+    if (!argsStr) {
+      // Show queue
+      if (this.taskQueue.length === 0 && !this.queueDraining) {
+        console.log(chalk.gray("  Queue is empty."));
+        return;
+      }
+      console.log();
+      console.log(
+        chalk.bold("  Task Queue") +
+          (this.queueDraining ? chalk.blue("  (draining)") : "")
+      );
+      console.log(chalk.gray("  " + "─".repeat(50)));
+      if (this.queueActive) {
+        console.log(
+          chalk.blue("  ▸ ") +
+            chalk.cyan(`@${this.queueActive.teammate}`) +
+            chalk.gray(" — ") +
+            chalk.white(this.queueActive.task.length > 60 ? this.queueActive.task.slice(0, 57) + "..." : this.queueActive.task) +
+            chalk.blue("  (running)")
+        );
+      }
+      for (let i = 0; i < this.taskQueue.length; i++) {
+        const entry = this.taskQueue[i];
+        console.log(
+          chalk.gray(`  ${i + 1}. `) +
+            chalk.cyan(`@${entry.teammate}`) +
+            chalk.gray(" — ") +
+            chalk.white(entry.task.length > 60 ? entry.task.slice(0, 57) + "..." : entry.task)
+        );
+      }
+      if (this.taskQueue.length > 0) {
+        console.log(chalk.gray("  /cancel <n> to remove a task"));
+      }
+      console.log();
+      return;
+    }
+
+    // Parse: @teammate task or teammate task
+    const match = argsStr.match(/^@?(\S+)(?:\s+([\s\S]+))?$/);
+    if (!match) {
+      console.log(chalk.yellow("  Usage: /queue @teammate <task...>"));
+      return;
+    }
+
+    const [, teammate, task] = match;
+    const names = this.orchestrator.listTeammates();
+    if (!names.includes(teammate)) {
+      console.log(chalk.yellow(`  Unknown teammate: ${teammate}`));
+      return;
+    }
+
+    if (!task?.trim()) {
+      console.log(chalk.yellow(`  Missing task. Usage: /queue @${teammate} <task...>`));
+      return;
+    }
+
+    this.taskQueue.push({ teammate, task: task.trim() });
+    console.log(
+      chalk.gray("  Queued: ") +
+        chalk.cyan(`@${teammate}`) +
+        chalk.gray(" — ") +
+        chalk.white(task.trim().slice(0, 60)) +
+        chalk.gray(` (${this.taskQueue.length} in queue)`)
+    );
+
+    // Start draining if not already
+    if (!this.queueDraining) {
+      this.drainQueue();
+    }
+  }
+
+  /** Drain the queue in the background — REPL stays responsive. */
+  private async drainQueue(): Promise<void> {
+    if (this.queueDraining) return;
+    this.queueDraining = true;
+
+    while (this.taskQueue.length > 0) {
+      // If a handoff is pending, pause until it's resolved
+      if (this.orchestrator.getPendingHandoff()) {
+        await new Promise<void>((resolve) => {
+          const check = () => {
+            if (!this.orchestrator.getPendingHandoff()) {
+              resolve();
+            } else {
+              setTimeout(check, 500);
+            }
+          };
+          setTimeout(check, 500);
+        });
+        continue;
+      }
+
+      const entry = this.taskQueue.shift()!;
+      this.queueActive = entry;
+      const result = await this.orchestrator.assign({
+        teammate: entry.teammate,
+        task: entry.task,
+      });
+      this.queueActive = null;
+      this.lastResult = result;
+    }
+
+    console.log(chalk.green("  ✔ Queue complete."));
+    this.rl.prompt();
+    this.queueDraining = false;
+  }
+
   private async cmdHelp(): Promise<void> {
     console.log();
     console.log(chalk.bold("  Commands"));
@@ -1025,7 +1123,6 @@ ${chalk.bold("Agents:")}
 
 ${chalk.bold("In-session:")}
   @teammate <task>           Assign directly via @mention
-  /assign <teammate> <task>  Assign a task to a teammate
   /route <task>              Auto-route to the best teammate
   /status                    Session overview
   /help                      All commands

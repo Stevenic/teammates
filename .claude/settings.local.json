@@ -9,7 +9,11 @@
       "Bash(node /c/source/teammates/cli/dist/cli.js --adapter claude --help 2>&1 || node /c/source/teammates/cli/dist/cli.js --help 2>&1)",
       "Bash(node /c/source/teammates/cli/dist/cli.js --help)",
       "Bash(echo \"hello\" | claude -p 2>&1 | head -5)",
-      "Bash(CLAUDECODE= claude -p \"say hi in one word\" 2>&1 | head -5)"
+      "Bash(CLAUDECODE= claude -p \"say hi in one word\" 2>&1 | head -5)",
+      "Bash(npm run:*)",
+      "Bash(node C:/source/teammates/cli/test-ansi.js)",
+      "Bash(node -e \"const rl = require\\('readline'\\).createInterface\\({input: process.stdin, output: process.stdout}\\); console.log\\(rl._refreshLine.toString\\(\\).slice\\(0, 500\\)\\)\" 2>&1 || node -e \"const rl = require\\('readline'\\); console.log\\(Object.getOwnPropertyNames\\(rl.Interface.prototype\\).filter\\(k => k.includes\\('refresh'\\)\\)\\)\")",
+      "Bash(node -e \"const rl = require\\('readline'\\).createInterface\\({input: process.stdin, output: process.stdout}\\); console.log\\(rl._refreshLine.toString\\(\\).slice\\(400, 900\\)\\)\")"
     ]
   }
 }
