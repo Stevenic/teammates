@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /c/source/teammates log --oneline -20)",
+      "Bash(wc -l /c/source/teammates/cli/src/*.ts)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node dist/cli.js --help 2>&1 || node dist/cli.js 2>&1 | head -20)",
+      "Bash(node /c/source/teammates/cli/dist/cli.js --adapter claude --help 2>&1 || node /c/source/teammates/cli/dist/cli.js --help 2>&1)",
+      "Bash(node /c/source/teammates/cli/dist/cli.js --help)"
+    ]
+  }
+}

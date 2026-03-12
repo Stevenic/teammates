@@ -20,4 +20,9 @@ export {
   type TeammateStatus,
 } from "./orchestrator.js";
 export { EchoAdapter } from "./adapters/echo.js";
-export { CodexAdapter, type CodexAdapterOptions } from "./adapters/codex.js";
+export {
+  CliProxyAdapter,
+  PRESETS,
+  type AgentPreset,
+  type CliProxyOptions,
+} from "./adapters/cli-proxy.js";

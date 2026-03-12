@@ -18,7 +18,7 @@ import { Orchestrator } from "./orchestrator.js";
 import type { AgentAdapter } from "./adapter.js";
 import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js";
 import { EchoAdapter } from "./adapters/echo.js";
-import { CodexAdapter } from "./adapters/codex.js";
+import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
 
 // ─── Argument parsing ────────────────────────────────────────────────
 
@@ -41,9 +41,13 @@ function getOption(name: string): string | undefined {
 }
 
 const showHelp = getFlag("help");
-const adapterName = getOption("adapter") ?? "echo";
 const modelOverride = getOption("model");
 const dirOverride = getOption("dir");
+// First remaining positional arg is the agent name (default: echo)
+const adapterName = args.shift() ?? "echo";
+// Everything left passes through to the agent CLI
+const agentPassthrough = [...args];
+args.length = 0;
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -65,16 +69,21 @@ async function findTeammatesDir(): Promise<string> {
 }
 
 function resolveAdapter(name: string): AgentAdapter {
-  switch (name) {
-    case "echo":
-      return new EchoAdapter();
-    case "codex":
-      return new CodexAdapter({ model: modelOverride });
-    default:
-      console.error(chalk.red(`Unknown adapter: ${name}`));
-      console.error(`Available adapters: echo, codex`);
-      process.exit(1);
+  if (name === "echo") return new EchoAdapter();
+
+  // All other adapters go through the CLI proxy
+  if (PRESETS[name]) {
+    return new CliProxyAdapter({
+      preset: name,
+      model: modelOverride,
+      extraFlags: agentPassthrough,
+    });
   }
+
+  const available = ["echo", ...Object.keys(PRESETS)].join(", ");
+  console.error(chalk.red(`Unknown adapter: ${name}`));
+  console.error(`Available adapters: ${available}`);
+  process.exit(1);
 }
 
 function relativeTime(date: Date): string {
@@ -97,6 +106,12 @@ interface SlashCommand {
   run: (args: string) => Promise<void>;
 }
 
+interface WordwheelItem {
+  label: string;        // left column display text
+  description: string;  // right column display text
+  completion: string;   // full line content when accepted
+}
+
 // ─── REPL ────────────────────────────────────────────────────────────
 
 class TeammatesREPL {
@@ -106,10 +121,236 @@ class TeammatesREPL {
   private commands: Map<string, SlashCommand> = new Map();
   private lastResult: TaskResult | null = null;
   private adapterName: string;
+  private wordwheelRendered = 0;      // lines currently drawn below prompt
+  private wordwheelItems: WordwheelItem[] = [];
+  private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
 
   constructor(adapterName: string) {
     this.adapterName = adapterName;
   }
+
+  // ─── Wordwheel ─────────────────────────────────────────────────────
+
+  private getUniqueCommands(): SlashCommand[] {
+    const seen = new Set<string>();
+    const result: SlashCommand[] = [];
+    for (const [, cmd] of this.commands) {
+      if (seen.has(cmd.name)) continue;
+      seen.add(cmd.name);
+      result.push(cmd);
+    }
+    return result;
+  }
+
+  /** Column position of the cursor on the prompt line (1-based). */
+  private getInputColumn(): number {
+    const promptVisible = ((this.rl as any)._prompt ?? "")
+      .replace(/\x1b\[[0-9;]*m/g, "").length;
+    const cursor: number = (this.rl as any).cursor ?? 0;
+    return promptVisible + cursor + 1;
+  }
+
+  private clearWordwheel(): void {
+    if (this.wordwheelRendered === 0) return;
+    const out = process.stdout;
+    for (let i = 0; i < this.wordwheelRendered; i++) {
+      out.write("\x1b[1B\x1b[2K");
+    }
+    out.write(`\x1b[${this.wordwheelRendered}A\x1b[${this.getInputColumn()}G`);
+    this.wordwheelRendered = 0;
+  }
+
+  private writeWordwheel(lines: string[]): void {
+    if (lines.length === 0) return;
+    const out = process.stdout;
+    for (const line of lines) {
+      out.write("\n\x1b[2K" + line);
+    }
+    out.write(`\x1b[${lines.length}A\x1b[${this.getInputColumn()}G`);
+    this.wordwheelRendered = lines.length;
+  }
+
+  /**
+   * Which argument positions are teammate-name completable per command.
+   * Key = command name, value = set of 0-based arg positions that take a teammate.
+   */
+  private static readonly TEAMMATE_ARG_POSITIONS: Record<string, Set<number>> = {
+    assign:  new Set([0]),
+    handoff: new Set([0, 1]),
+    log:     new Set([0]),
+  };
+
+  /** Build param-completion items for the current line, if any. */
+  private getParamItems(cmdName: string, argsBefore: string, partial: string): WordwheelItem[] {
+    const positions = TeammatesREPL.TEAMMATE_ARG_POSITIONS[cmdName];
+    if (!positions) return [];
+
+    // Count how many complete args precede the current partial
+    const completedArgs = argsBefore.trim() ? argsBefore.trim().split(/\s+/).length : 0;
+    if (!positions.has(completedArgs)) return [];
+
+    const teammates = this.orchestrator.listTeammates();
+    const lower = partial.toLowerCase();
+    return teammates
+      .filter((n) => n.toLowerCase().startsWith(lower))
+      .map((name) => {
+        const t = this.orchestrator.getRegistry().get(name);
+        const linePrefix = "/" + cmdName + " " + (argsBefore ? argsBefore : "");
+        return {
+          label: name,
+          description: t?.role ?? "",
+          completion: linePrefix + name + " ",
+        };
+      });
+  }
+
+  /**
+   * Find the @mention token the cursor is currently inside, if any.
+   * Returns { before, partial, atPos } or null.
+   */
+  private findAtMention(line: string, cursor: number): { before: string; partial: string; atPos: number } | null {
+    // Walk backward from cursor to find the nearest unescaped '@'
+    const left = line.slice(0, cursor);
+    const atPos = left.lastIndexOf("@");
+    if (atPos < 0) return null;
+    // '@' must be at start of line or preceded by whitespace
+    if (atPos > 0 && !/\s/.test(line[atPos - 1])) return null;
+    const partial = left.slice(atPos + 1);
+    // Partial must be a single token (no spaces)
+    if (/\s/.test(partial)) return null;
+    return { before: line.slice(0, atPos), partial, atPos };
+  }
+
+  /** Build @mention teammate completion items. */
+  private getAtMentionItems(line: string, before: string, partial: string, atPos: number): WordwheelItem[] {
+    const teammates = this.orchestrator.listTeammates();
+    const lower = partial.toLowerCase();
+    const after = line.slice(atPos + 1 + partial.length);
+    return teammates
+      .filter((n) => n.toLowerCase().startsWith(lower))
+      .map((name) => {
+        const t = this.orchestrator.getRegistry().get(name);
+        return {
+          label: "@" + name,
+          description: t?.role ?? "",
+          completion: before + "@" + name + " " + after.replace(/^\s+/, ""),
+        };
+      });
+  }
+
+  /** Recompute matches and draw the wordwheel. */
+  private updateWordwheel(): void {
+    this.clearWordwheel();
+    const line: string = (this.rl as any).line ?? "";
+    const cursor: number = (this.rl as any).cursor ?? line.length;
+
+    // ── @mention anywhere in the line ──────────────────────────────
+    const mention = this.findAtMention(line, cursor);
+    if (mention) {
+      this.wordwheelItems = this.getAtMentionItems(line, mention.before, mention.partial, mention.atPos);
+      if (this.wordwheelItems.length > 0) {
+        if (this.wordwheelIndex >= this.wordwheelItems.length) {
+          this.wordwheelIndex = this.wordwheelItems.length - 1;
+        }
+        this.renderItems();
+        return;
+      }
+    }
+
+    // ── /command completion ─────────────────────────────────────────
+    if (!line.startsWith("/") || line.length < 2) {
+      this.wordwheelItems = [];
+      this.wordwheelIndex = -1;
+      return;
+    }
+
+    const spaceIdx = line.indexOf(" ");
+
+    if (spaceIdx > 0) {
+      // Command is known — check for param completions
+      const cmdName = line.slice(1, spaceIdx);
+      const cmd = this.commands.get(cmdName);
+      if (!cmd) { this.wordwheelItems = []; this.wordwheelIndex = -1; return; }
+
+      const afterCmd = line.slice(spaceIdx + 1);
+      // Split into completed args + current partial token
+      const lastSpace = afterCmd.lastIndexOf(" ");
+      const argsBefore = lastSpace >= 0 ? afterCmd.slice(0, lastSpace + 1) : "";
+      const partial = lastSpace >= 0 ? afterCmd.slice(lastSpace + 1) : afterCmd;
+
+      this.wordwheelItems = this.getParamItems(cmdName, argsBefore, partial);
+
+      if (this.wordwheelItems.length > 0) {
+        if (this.wordwheelIndex >= this.wordwheelItems.length) {
+          this.wordwheelIndex = this.wordwheelItems.length - 1;
+        }
+        this.renderItems();
+      } else {
+        // No param completions — show static usage hint
+        this.wordwheelIndex = -1;
+        this.writeWordwheel([
+          `  ${chalk.cyan(cmd.usage)}`,
+          `  ${chalk.gray(cmd.description)}`,
+        ]);
+      }
+      return;
+    }
+
+    // Partial command — find matching commands
+    const partial = line.slice(1).toLowerCase();
+    this.wordwheelItems = this.getUniqueCommands()
+      .filter(
+        (c) =>
+          c.name.startsWith(partial) ||
+          c.aliases.some((a) => a.startsWith(partial))
+      )
+      .map((c) => ({
+        label: "/" + c.name,
+        description: c.description,
+        completion: "/" + c.name + " ",
+      }));
+
+    if (this.wordwheelItems.length === 0) {
+      this.wordwheelIndex = -1;
+      return;
+    }
+
+    if (this.wordwheelIndex >= this.wordwheelItems.length) {
+      this.wordwheelIndex = this.wordwheelItems.length - 1;
+    }
+
+    this.renderItems();
+  }
+
+  /** Render the current wordwheelItems list with selection highlight. */
+  private renderItems(): void {
+    this.writeWordwheel(
+      this.wordwheelItems.map((item, i) => {
+        const prefix = i === this.wordwheelIndex ? chalk.cyan("▸ ") : "  ";
+        const label = item.label.padEnd(14);
+        if (i === this.wordwheelIndex) {
+          return prefix + chalk.cyanBright.bold(label) + " " + chalk.white(item.description);
+        }
+        return prefix + chalk.cyan(label) + " " + chalk.gray(item.description);
+      })
+    );
+  }
+
+  /** Accept the currently highlighted item into the input line. */
+  private acceptWordwheelSelection(): void {
+    const item = this.wordwheelItems[this.wordwheelIndex];
+    if (!item) return;
+    this.clearWordwheel();
+    (this.rl as any).line = item.completion;
+    (this.rl as any).cursor = item.completion.length;
+    (this.rl as any)._refreshLine();
+    this.wordwheelItems = [];
+    this.wordwheelIndex = -1;
+    // Re-render for next param or usage hint
+    this.updateWordwheel();
+  }
+
+  // ─── Lifecycle ────────────────────────────────────────────────────
 
   async start(): Promise<void> {
     // Init orchestrator
@@ -125,54 +366,57 @@ class TeammatesREPL {
     // Register commands
     this.registerCommands();
 
-    // Build completer
-    const commandNames = Array.from(this.commands.keys()).map((c) => `/${c}`);
-    const teammateNames = this.orchestrator.listTeammates();
-
-    const completer = (line: string): [string[], string] => {
-      // Complete /commands
-      if (line.startsWith("/")) {
-        const hits = commandNames.filter((c) => c.startsWith(line));
-        return [hits.length ? hits : commandNames, line];
-      }
-
-      // After /assign or /log or /handoff — complete teammate names
-      const match = line.match(/^\/(?:assign|log|handoff|recall)\s+(\S*)$/);
-      if (match) {
-        const partial = match[1];
-        const hits = teammateNames.filter((n) => n.startsWith(partial));
-        return [hits, partial];
-      }
-
-      // After /handoff <from> — complete second teammate
-      const handoffMatch = line.match(
-        /^\/handoff\s+\S+\s+(\S*)$/
-      );
-      if (handoffMatch) {
-        const partial = handoffMatch[1];
-        const hits = teammateNames.filter((n) => n.startsWith(partial));
-        return [hits, partial];
-      }
-
-      return [[], line];
-    };
-
-    // Create readline
+    // Create readline (no completer — wordwheel handles it)
     this.rl = createInterface({
       input: process.stdin,
       output: process.stdout,
-      completer,
       prompt: chalk.cyan("teammates") + chalk.gray("> "),
       terminal: true,
     });
 
+    // Intercept all keypress via _ttyWrite so we can capture
+    // arrow-down / arrow-up / Tab for wordwheel navigation.
+    const origTtyWrite = (this.rl as any)._ttyWrite.bind(this.rl);
+    (this.rl as any)._ttyWrite = (s: string, key: any) => {
+      const hasWheel = this.wordwheelItems.length > 0;
+
+      if (hasWheel && key) {
+        if (key.name === "down") {
+          this.wordwheelIndex = Math.min(
+            this.wordwheelIndex + 1,
+            this.wordwheelItems.length - 1
+          );
+          this.updateWordwheel();
+          return;
+        }
+        if (key.name === "up") {
+          this.wordwheelIndex = Math.max(this.wordwheelIndex - 1, -1);
+          this.updateWordwheel();
+          return;
+        }
+        if (key.name === "tab" && this.wordwheelIndex >= 0) {
+          this.acceptWordwheelSelection();
+          return;
+        }
+      }
+
+      // Any other key — clear, let readline handle it, then refresh
+      this.clearWordwheel();
+      this.wordwheelItems = [];
+      this.wordwheelIndex = -1;
+      origTtyWrite(s, key);
+      this.updateWordwheel();
+    };
+
     // Banner
-    this.printBanner(teammateNames);
+    this.printBanner(this.orchestrator.listTeammates());
 
     // REPL loop
     this.rl.prompt();
 
     this.rl.on("line", async (line: string) => {
+      this.clearWordwheel();
+
       const trimmed = line.trim();
       if (!trimmed) {
         this.rl.prompt();
@@ -189,6 +433,7 @@ class TeammatesREPL {
     });
 
     this.rl.on("close", async () => {
+      this.clearWordwheel();
       console.log(chalk.gray("\nShutting down..."));
       await this.orchestrator.shutdown();
       process.exit(0);
@@ -227,7 +472,7 @@ class TeammatesREPL {
         console.log(
           chalk.gray(" ") +
             chalk.cyan("●") +
-            chalk.bold(` ${name.padEnd(13)}`) +
+            chalk.cyan(` @${name}`.padEnd(14)) +
             chalk.gray(t.role)
         );
       }
@@ -253,7 +498,7 @@ class TeammatesREPL {
       ["/teammates", "list roster"],
       ["/help", "all commands"],
       ["Tab", "autocomplete"],
-      ["/quit", "exit session"],
+      ["/exit", "exit session"],
     ];
 
     for (let i = 0; i < col1.length; i++) {
@@ -333,9 +578,9 @@ class TeammatesREPL {
         run: () => this.cmdHelp(),
       },
       {
-        name: "quit",
-        aliases: ["q", "exit"],
-        usage: "/quit",
+        name: "exit",
+        aliases: ["q", "quit"],
+        usage: "/exit",
         description: "Exit the session",
         run: async () => {
           console.log(chalk.gray("Shutting down..."));
@@ -367,6 +612,31 @@ class TeammatesREPL {
         console.log(chalk.gray("Type /help for available commands"));
       }
     } else {
+      // Check for @mention — extract teammate and treat rest as task
+      const mentionMatch = input.match(/^@(\S+)\s+([\s\S]+)$/);
+      if (mentionMatch) {
+        const [, teammate, task] = mentionMatch;
+        const names = this.orchestrator.listTeammates();
+        if (names.includes(teammate)) {
+          await this.cmdAssign(`${teammate} ${task}`);
+          return;
+        }
+      }
+
+      // Also handle @mentions inline: strip @names and route to them
+      const inlineMention = input.match(/@(\S+)/);
+      if (inlineMention) {
+        const teammate = inlineMention[1];
+        const names = this.orchestrator.listTeammates();
+        if (names.includes(teammate)) {
+          const task = input.replace(/@\S+\s*/, "").trim();
+          if (task) {
+            await this.cmdAssign(`${teammate} ${task}`);
+            return;
+          }
+        }
+      }
+
       // Bare text — auto-route
       await this.cmdRoute(input);
     }
@@ -591,7 +861,7 @@ class TeammatesREPL {
     for (const name of names) {
       const t = registry.get(name)!;
       console.log(
-        chalk.bold(`  ${name.padEnd(14)}`) +
+        chalk.cyan(`  @${name}`.padEnd(16)) +
           chalk.gray(t.role)
       );
       if (t.ownership.primary.length > 0) {
@@ -689,22 +959,27 @@ function printUsage(): void {
 ${chalk.bold("@teammates/cli")} — Agent-agnostic teammate orchestrator
 
 ${chalk.bold("Usage:")}
-  teammates                  Launch interactive session
-  teammates --adapter codex  Use a specific agent adapter
-  teammates --model o4-mini  Override the agent model
-  teammates --dir <path>     Override .teammates/ location
+  teammates <agent>          Launch session with an agent
+  teammates claude           Use Claude Code
+  teammates codex            Use OpenAI Codex
+  teammates aider            Use Aider
 
-${chalk.bold("Available adapters:")}
-  echo       Test adapter — echoes prompts (no external agent)
+${chalk.bold("Options:")}
+  --model <model>            Override the agent model
+  --dir <path>               Override .teammates/ location
+
+${chalk.bold("Agents:")}
+  claude     Claude Code CLI (requires 'claude' on PATH)
   codex      OpenAI Codex CLI (requires 'codex' on PATH)
+  aider      Aider CLI (requires 'aider' on PATH)
+  echo       Test adapter — echoes prompts (no external agent)
 
-${chalk.bold("In-session commands:")}
+${chalk.bold("In-session:")}
+  @teammate <task>           Assign directly via @mention
   /assign <teammate> <task>  Assign a task to a teammate
   /route <task>              Auto-route to the best teammate
-  /approve, /reject          Handle pending handoffs
-  /status                    Show session status
-  /teammates                 List roster
-  /help                      Show all commands
+  /status                    Session overview
+  /help                      All commands
 `.trim());
 }
 
