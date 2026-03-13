@@ -12,6 +12,7 @@
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { resolve, join } from "node:path";
 import { stat } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import { Orchestrator } from "./orchestrator.js";
@@ -501,23 +502,43 @@ class TeammatesREPL {
     const termWidth = process.stdout.columns || 100;
     const divider = chalk.gray("─".repeat(termWidth));
 
+    // Detect recall system
+    let recallInstalled = false;
+    try {
+      execFileSync("teammates-recall", ["--help"], { stdio: "ignore" });
+      recallInstalled = true;
+    } catch { /* not found */ }
+
     // Logo + info block
     console.log();
     console.log(
-      chalk.cyan(" ▐▛▀▀▀▀▜▌   ") +
+      chalk.cyan(" ▐▛▀▀▀▀▀▀▜▌   ") +
         chalk.bold("Teammates") +
         chalk.gray(" v0.1.0")
     );
     console.log(
       chalk.cyan(" ▐▌") +
-        " 🧬 " +
+        "      " +
         chalk.cyan("▐▌   ") +
         chalk.white(`${this.adapterName}`) +
         chalk.gray(` · ${teammates.length} teammate${teammates.length === 1 ? "" : "s"}`)
     );
     console.log(
-      chalk.cyan(" ▐▙▄▄▄▄▟▌   ") +
+      chalk.cyan(" ▐▌") +
+        "  🧬  " +
+        chalk.cyan("▐▌   ") +
         chalk.gray(process.cwd())
+    );
+    console.log(
+      chalk.cyan(" ▐▌") +
+        "      " +
+        chalk.cyan("▐▌   ") +
+        (recallInstalled
+          ? chalk.green("● recall") + chalk.gray(" installed")
+          : chalk.yellow("○ recall") + chalk.gray(" not installed"))
+    );
+    console.log(
+      chalk.cyan(" ▐▙▄▄▄▄▄▄▟▌")
     );
 
     // Roster

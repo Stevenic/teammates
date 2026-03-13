@@ -21,6 +21,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - Read `memory/YYYY-MM-DD.md` for today and yesterday.
 - Read USER.md to understand who you're working with.
 - Update your files as you learn. If you change SOUL.md, tell the user.
+- You may create additional private docs under your folder (e.g., `.teammates/<name>/notes/`, `.teammates/<name>/specs/`). To share a doc with other teammates, add a pointer to it in [CROSS-TEAM.md](../CROSS-TEAM.md).
 
 ## Core Principles
 

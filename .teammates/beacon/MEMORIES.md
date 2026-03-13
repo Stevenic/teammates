@@ -6,6 +6,38 @@ This file is for durable knowledge that stays relevant over time. For day-to-day
 
 Categories: Bug | Decision | Pattern | Gotcha | Optimization
 
+### 2026-03-13: Full Codebase Architecture Map
+**Category:** Pattern | **Last updated:** 2026-03-13
+
+Complete file inventory and line counts for both packages:
+
+**CLI** (9 files, ~2,600 lines total):
+| File | Lines | Purpose |
+|------|-------|---------|
+| cli.ts | 1268 | REPL, banner, wordwheel, commands, queue |
+| cli-proxy.ts | 442 | Subprocess adapter, presets, output parsing |
+| orchestrator.ts | 265 | Task routing, handoff chains, event system |
+| adapter.ts | 216 | AgentAdapter interface, prompt building |
+| registry.ts | 177 | Teammate discovery, SOUL.md parsing |
+| dropdown.ts | 90 | ANSI dropdown overlay for readline |
+| types.ts | 84 | Core type definitions |
+| echo.ts | 37 | Test adapter |
+| index.ts | 29 | Public API re-exports |
+
+**Recall** (4 files, ~632 lines total):
+| File | Lines | Purpose |
+|------|-------|---------|
+| cli.ts | 276 | CLI commands (index/sync/add/search/status) |
+| indexer.ts | 204 | Vectra index management, file collection |
+| search.ts | 108 | Semantic search, auto-sync, multi-teammate |
+| embeddings.ts | 44 | transformers.js wrapper, lazy model load |
+
+### 2026-03-13: Gotcha — Missing /assign and /verbose Commands
+**Category:** Gotcha | **Last updated:** 2026-03-13
+
+- `TEAMMATE_ARG_POSITIONS` in cli.ts references "assign" for wordwheel completion, but no `/assign` slash command is registered. Assignment works via the `@mention` dispatch path in `dispatch()` which calls `cmdAssign()` directly.
+- `/verbose` is documented in SOUL.md as a REPL command but is not registered in `registerCommands()`. May have been removed or is planned.
+
 ### 2026-03-12: Scope Expansion — CLI Package
 **Category:** Decision | **Last updated:** 2026-03-12
 

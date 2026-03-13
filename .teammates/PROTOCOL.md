@@ -80,6 +80,7 @@ At the start of each session, a teammate should read:
 - Each teammate maintains their own MEMORIES.md and memory/ for domain-specific lessons
 - **Cross-team lessons** go in [CROSS-TEAM.md](CROSS-TEAM.md) — one entry, tagged with affected teammates
 - Do NOT duplicate entries across multiple MEMORIES.md files
+- **Private docs** — Teammates may create additional files and folders under their own `.teammates/<name>/` directory (e.g., `notes/`, `specs/`, `scratch/`). These are private by default. To make a doc visible to other teammates, add a pointer in [CROSS-TEAM.md](CROSS-TEAM.md) with a brief description of what it contains.
 
 ## Adding New Teammates
 
