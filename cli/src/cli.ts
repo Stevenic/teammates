@@ -10,6 +10,7 @@
  */
 
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
+import { Writable } from "node:stream";
 import { resolve, join } from "node:path";
 import { stat } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
@@ -151,6 +152,10 @@ class TeammatesREPL {
   private queueDraining = false;
   /** Mutex to prevent concurrent drainQueue invocations. Resolves when drain finishes. */
   private drainLock: Promise<void> | null = null;
+  /** True while a task is being dispatched — prevents concurrent dispatches from pasted text. */
+  private dispatching = false;
+  /** Stored pasted text keyed by paste number, expanded on Enter. */
+  private pastedTexts: Map<number, string> = new Map();
   private dropdown!: Dropdown;
   private wordwheelItems: WordwheelItem[] = [];
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
@@ -399,19 +404,63 @@ class TeammatesREPL {
     // Register commands
     this.registerCommands();
 
-    // Create readline (no completer — wordwheel handles it)
+    // Create readline with a mutable output stream so we can mute
+    // echo during paste detection.
+    let outputMuted = false;
+    const mutableOutput = new Writable({
+      write(chunk, _encoding, callback) {
+        if (!outputMuted) process.stdout.write(chunk);
+        callback();
+      },
+    });
+    // Trick readline into thinking it's a real TTY
+    (mutableOutput as any).columns = process.stdout.columns;
+    (mutableOutput as any).rows = process.stdout.rows;
+    (mutableOutput as any).isTTY = true;
+    (mutableOutput as any).cursorTo = process.stdout.cursorTo?.bind(process.stdout);
+    (mutableOutput as any).clearLine = process.stdout.clearLine?.bind(process.stdout);
+    (mutableOutput as any).moveCursor = process.stdout.moveCursor?.bind(process.stdout);
+    (mutableOutput as any).getWindowSize = () => [process.stdout.columns ?? 80, process.stdout.rows ?? 24];
+    process.stdout.on("resize", () => {
+      (mutableOutput as any).columns = process.stdout.columns;
+      (mutableOutput as any).rows = process.stdout.rows;
+      mutableOutput.emit("resize");
+    });
+
     this.rl = createInterface({
       input: process.stdin,
-      output: process.stdout,
+      output: mutableOutput,
       prompt: chalk.cyan("teammates") + chalk.gray("> "),
       terminal: true,
     });
     this.dropdown = new Dropdown(this.rl);
 
+    // Pre-mute: if stdin delivers a chunk with multiple newlines (paste),
+    // mute output immediately BEFORE readline echoes anything.
+    process.stdin.prependListener("data", (chunk: Buffer) => {
+      const str = chunk.toString();
+      if (str.includes("\n") && str.indexOf("\n") < str.length - 1) {
+        // Multiple lines in one chunk — it's a paste, mute now
+        outputMuted = true;
+      }
+    });
+
     // Intercept all keypress via _ttyWrite so we can capture
     // arrow-down / arrow-up / Tab for wordwheel navigation.
+    // Also used for paste prefix detection via timing heuristic.
+    let lastKeystrokeTime = 0;
     const origTtyWrite = (this.rl as any)._ttyWrite.bind(this.rl);
     (this.rl as any)._ttyWrite = (s: string, key: any) => {
+      // Timing-based paste prefix detection: if >50ms since last keystroke,
+      // this is a new input burst. Snapshot rl.line BEFORE readline processes
+      // this character — during a paste burst, characters arrive <5ms apart
+      // so the snapshot stays at the pre-paste value.
+      const now = Date.now();
+      if (now - lastKeystrokeTime > 50) {
+        prePastePrefix = (this.rl as any).line ?? "";
+      }
+      lastKeystrokeTime = now;
+
       const hasWheel = this.wordwheelItems.length > 0;
 
       if (hasWheel && key) {
@@ -471,30 +520,114 @@ class TeammatesREPL {
     // REPL loop
     this.rl.prompt();
 
-    this.rl.on("line", async (line: string) => {
-      // Clear dropdown state — readline's own refresh on Enter clears visually
-      this.dropdown.clear();
-      this.wordwheelItems = [];
-      this.wordwheelIndex = -1;
+    // ── Paste detection ──────────────────────────────────────────────
+    // Strategy: the first `line` event echoes normally. We immediately
+    // mute output so subsequent pasted lines are invisible. After 30ms
+    // of quiet, we check: if only 1 line arrived it was normal typing
+    // (already echoed, good). If multiple lines arrived, we erase the
+    // one echoed line and show a placeholder instead.
+    let pasteBuffer: string[] = [];
+    let pasteTimer: ReturnType<typeof setTimeout> | null = null;
+    let pasteCount = 0;
+    let prePastePrefix = ""; // text user typed before paste started
 
-      const trimmed = line.trim();
-      if (!trimmed) {
+    const processPaste = async () => {
+      pasteTimer = null;
+      outputMuted = false;
+      const lines = pasteBuffer;
+      pasteBuffer = [];
+
+      if (lines.length === 0) return;
+
+      if (lines.length > 1) {
+        // Multi-line paste — the first line was echoed, the rest were muted.
+        // Erase the first echoed line (move up 1, clear).
+        process.stdout.write("\x1b[A\x1b[2K");
+
+        pasteCount++;
+        const combined = lines.join("\n");
+        const sizeKB = Buffer.byteLength(combined, "utf-8") / 1024;
+        const tag = `[Pasted text #${pasteCount} +${lines.length} lines, ${sizeKB.toFixed(1)}KB] `;
+
+        // Store the pasted text — expanded when the user presses Enter.
+        this.pastedTexts.set(pasteCount, combined);
+
+        // Restore what the user typed before the paste, plus the placeholder.
+        const newLine = prePastePrefix + tag;
+        prePastePrefix = ""; // reset for next paste
+        (this.rl as any).line = newLine;
+        (this.rl as any).cursor = newLine.length;
+        this.rl.prompt(true);
+        return;
+      }
+
+      // Expand paste placeholders with actual content
+      const rawLine = lines[0];
+      const hasPaste = /\[Pasted text #\d+/.test(rawLine);
+
+      let input = rawLine.replace(/\[Pasted text #(\d+) \+\d+ lines, [\d.]+KB\]\s*/g, (_match, num) => {
+        const n = parseInt(num, 10);
+        const text = this.pastedTexts.get(n);
+        if (text) {
+          this.pastedTexts.delete(n);
+          return text + "\n";
+        }
+        return "";
+      }).trim();
+
+      // Show the expanded pasted content on Enter
+      if (hasPaste && input) {
+        const sizeKB = Buffer.byteLength(input, "utf-8") / 1024;
+        const lineCount = input.split("\n").length;
+        console.log();
+        console.log(chalk.gray(`  ┌ Expanded paste (${lineCount} lines, ${sizeKB.toFixed(1)}KB)`));
+        // Show first few lines as preview
+        const previewLines = input.split("\n").slice(0, 5);
+        for (const l of previewLines) {
+          console.log(chalk.gray(`  │ `) + l.slice(0, 120));
+        }
+        if (lineCount > 5) {
+          console.log(chalk.gray(`  │ ... ${lineCount - 5} more lines`));
+        }
+        console.log(chalk.gray(`  └`));
+      }
+
+      if (!input || this.dispatching) {
         this.rl.prompt();
         return;
       }
 
-      // Record user input in conversation history (skip slash commands)
-      if (!trimmed.startsWith("/")) {
-        this.conversationHistory.push({ role: "user", text: trimmed });
+      if (!input.startsWith("/")) {
+        this.conversationHistory.push({ role: "user", text: input });
       }
 
+      this.dispatching = true;
       try {
-        await this.dispatch(trimmed);
+        await this.dispatch(input);
       } catch (err: any) {
         console.log(chalk.red(`Error: ${err.message}`));
+      } finally {
+        this.dispatching = false;
       }
 
       this.rl.prompt();
+    };
+
+    this.rl.on("line", (line: string) => {
+      this.dropdown.clear();
+      this.wordwheelItems = [];
+      this.wordwheelIndex = -1;
+
+      pasteBuffer.push(line);
+
+      // After the first line, mute readline output so subsequent
+      // pasted lines don't echo to the terminal.
+      if (pasteBuffer.length === 1) {
+        outputMuted = true;
+      }
+
+      if (pasteTimer) clearTimeout(pasteTimer);
+      pasteTimer = setTimeout(processPaste, 30);
     });
 
     this.rl.on("close", async () => {
@@ -569,7 +702,7 @@ class TeammatesREPL {
     // Quick reference — 3 columns
     const col1 = [
       ["@mention", "assign to teammate"],
-      ["/route", "auto-route task"],
+      ["text", "auto-route task"],
       ["/queue", "queue tasks"],
     ];
     const col2 = [
@@ -596,13 +729,6 @@ class TeammatesREPL {
 
   private registerCommands(): void {
     const cmds: SlashCommand[] = [
-      {
-        name: "route",
-        aliases: ["r"],
-        usage: "/route <task...>",
-        description: "Auto-route a task to the best teammate",
-        run: (args) => this.cmdRoute(args),
-      },
       {
         name: "status",
         aliases: ["s"],
@@ -752,14 +878,23 @@ class TeammatesREPL {
           this.spinner = null;
         }
 
-        // Print the full response from the agent
+        // Print the agent's response, collapsing large output
         const raw = event.result.rawOutput ?? "";
         if (raw) {
           // Strip the trailing JSON protocol block from display
           const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
           if (cleaned) {
+            const sizeKB = Buffer.byteLength(cleaned, "utf-8") / 1024;
             console.log();
-            console.log(cleaned);
+            if (sizeKB > 5) {
+              console.log(chalk.gray("  ─".repeat(40)));
+              console.log(
+                chalk.yellow(`  ⚠ Response is ${sizeKB.toFixed(1)}KB — use /debug ${event.result.teammate} to view full output`)
+              );
+              console.log(chalk.gray("  ─".repeat(40)));
+            } else {
+              console.log(cleaned);
+            }
           }
         }
 
@@ -913,17 +1048,7 @@ class TeammatesREPL {
   }
 
   private async cmdRoute(argsStr: string): Promise<void> {
-    if (!argsStr) {
-      console.log(chalk.yellow("Usage: /route <task...>"));
-      return;
-    }
-
-    const match = this.orchestrator.route(argsStr);
-    if (!match) {
-      console.log(chalk.yellow("Could not determine a teammate for this task."));
-      console.log(chalk.gray("Use /assign <teammate> <task> to assign directly."));
-      return;
-    }
+    const match = this.orchestrator.route(argsStr) ?? this.adapterName;
 
     console.log(chalk.gray(`  Routed to: ${chalk.bold(match)}`));
 
@@ -1251,7 +1376,7 @@ ${chalk.bold("Agents:")}
 
 ${chalk.bold("In-session:")}
   @teammate <task>           Assign directly via @mention
-  /route <task>              Auto-route to the best teammate
+  <text>                     Auto-route to the best teammate
   /status                    Session overview
   /help                      All commands
 `.trim());
