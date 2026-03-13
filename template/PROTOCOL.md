@@ -60,6 +60,12 @@ If the team includes a cross-cutting teammate (e.g., for quality/testing):
 - They advise on testing strategy but do not override domain decisions
 - They maintain quality metrics and benchmarks
 
+## Services
+
+Optional services are declared in `.teammates/services.json`. This file is checked into git so the entire team shares the same service configuration. Each key is a service name; the value is a config object (`{}` means installed with defaults).
+
+The CLI reads `services.json` to detect which services are available and injects their capabilities into teammate prompts automatically. Services are installed via the `/install` command.
+
 ## Memory
 
 ### How memory works

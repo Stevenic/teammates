@@ -17,7 +17,7 @@ interface TeammateFiles {
 
 /**
  * Indexes teammate memory files (MEMORIES.md + memory/*.md) into Vectra.
- * One index per teammate, stored at .teammates/.index/<name>/
+ * One index per teammate, stored at .teammates/<name>/.index/
  */
 export class Indexer {
   private _config: IndexerConfig;
@@ -28,8 +28,9 @@ export class Indexer {
     this._embeddings = new LocalEmbeddings(config.model);
   }
 
-  get indexRoot(): string {
-    return path.join(this._config.teammatesDir, ".index");
+  /** Get the index path for a specific teammate */
+  indexPath(teammate: string): string {
+    return path.join(this._config.teammatesDir, teammate, ".index");
   }
 
   /**
@@ -98,7 +99,7 @@ export class Indexer {
     const { files } = await this.collectFiles(teammate);
     if (files.length === 0) return 0;
 
-    const indexPath = path.join(this.indexRoot, teammate);
+    const indexPath = this.indexPath(teammate);
     const index = new LocalDocumentIndex({
       folderPath: indexPath,
       embeddings: this._embeddings,
@@ -144,7 +145,7 @@ export class Indexer {
     const text = await fs.readFile(absolutePath, "utf-8");
     if (text.trim().length === 0) return;
 
-    const indexPath = path.join(this.indexRoot, teammate);
+    const indexPath = this.indexPath(teammate);
     const index = new LocalDocumentIndex({
       folderPath: indexPath,
       embeddings: this._embeddings,
@@ -165,7 +166,7 @@ export class Indexer {
     const { files } = await this.collectFiles(teammate);
     if (files.length === 0) return 0;
 
-    const indexPath = path.join(this.indexRoot, teammate);
+    const indexPath = this.indexPath(teammate);
     const index = new LocalDocumentIndex({
       folderPath: indexPath,
       embeddings: this._embeddings,

@@ -13,10 +13,11 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 import { Writable } from "node:stream";
 import { resolve, join } from "node:path";
 import { stat, mkdir, readdir } from "node:fs/promises";
-import { execFileSync, execFile as execFileCb } from "node:child_process";
+import { execSync, exec as execCb } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFileCb);
+const execAsync = promisify(execCb);
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import { Orchestrator } from "./orchestrator.js";
@@ -105,22 +106,34 @@ function relativeTime(date: Date): string {
 // ─── Service registry ────────────────────────────────────────────────
 
 interface ServiceEntry {
-  /** Directory relative to project root */
-  dir: string;
-  /** Build steps to run in order */
-  buildSteps: string[];
+  /** npm package to install globally */
+  package: string;
   /** Command to verify the service binary exists */
   checkCmd: string[];
+  /** Command to build the initial index after install */
+  indexCmd?: string[];
   /** Human-readable description */
   description: string;
+  /** Task to give the coding agent after install to wire the service into the project */
+  wireupTask?: string;
 }
 
 const SERVICE_REGISTRY: Record<string, ServiceEntry> = {
   recall: {
-    dir: "recall",
-    buildSteps: ["npm install", "npm run build"],
+    package: "@teammates/recall",
     checkCmd: ["teammates-recall", "--help"],
+    indexCmd: ["teammates-recall", "index"],
     description: "Local semantic search for teammate memory",
+    wireupTask: [
+      "The `teammates-recall` service was just installed globally.",
+      "Wire it up so every teammate knows it's available:",
+      "",
+      "1. Verify `teammates-recall --help` works. If it does, great. If not, figure out the correct path to the binary (check recall/package.json bin field) and note it.",
+      "2. Read .teammates/PROTOCOL.md and .teammates/CROSS-TEAM.md.",
+      "3. If recall is not already documented there, add a short section explaining that `teammates-recall` is now available for semantic memory search, with basic usage (e.g. `teammates-recall search \"query\"`).",
+      "4. Check each teammate's SOUL.md (under .teammates/*/SOUL.md). If a teammate's role involves memory or search, note in their SOUL.md that recall is installed and available.",
+      "5. Do NOT modify code files — only update .teammates/ markdown files.",
+    ].join("\n"),
   },
 };
 
@@ -620,6 +633,22 @@ class TeammatesREPL {
       });
     }
 
+    // Detect installed services from services.json and tell the adapter
+    if ("services" in this.adapter) {
+      const services: { name: string; description: string; usage: string }[] = [];
+      try {
+        const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+        if (svcJson && "recall" in svcJson) {
+          services.push({
+            name: "recall",
+            description: "Local semantic search across teammate memories and daily logs. Use this to find relevant context before starting a task.",
+            usage: 'teammates-recall search "your query" --dir .teammates',
+          });
+        }
+      } catch { /* no services.json or invalid */ }
+      (this.adapter as any).services = services;
+    }
+
     // Register commands
     this.registerCommands();
 
@@ -862,12 +891,12 @@ class TeammatesREPL {
     const termWidth = process.stdout.columns || 100;
     const divider = chalk.gray("─".repeat(termWidth));
 
-    // Detect recall system
+    // Detect recall from services.json
     let recallInstalled = false;
     try {
-      execFileSync("teammates-recall", ["--help"], { stdio: "ignore" });
-      recallInstalled = true;
-    } catch { /* not found */ }
+      const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+      recallInstalled = !!(svcJson && "recall" in svcJson);
+    } catch { /* no services.json or invalid */ }
 
     console.log();
     this.printLogo([
@@ -909,9 +938,9 @@ class TeammatesREPL {
       ["/log", "last task output"],
     ];
     const col3 = [
+      ["/install", "add a service"],
       ["/help", "all commands"],
       ["/exit", "exit session"],
-      ["Tab", "autocomplete"],
     ];
 
     for (let i = 0; i < col1.length; i++) {
@@ -1261,7 +1290,14 @@ class TeammatesREPL {
   }
 
   private async cmdRoute(argsStr: string): Promise<void> {
-    const match = this.orchestrator.route(argsStr) ?? this.adapterName;
+    let match = this.orchestrator.route(argsStr);
+
+    if (!match) {
+      // Keyword routing didn't find a strong match — ask the agent
+      match = await this.orchestrator.agentRoute(argsStr);
+    }
+
+    match = match ?? this.adapterName;
 
     console.log(chalk.gray(`  Routed to: ${chalk.bold(match)}`));
 
@@ -1561,47 +1597,72 @@ class TeammatesREPL {
       return;
     }
 
-    // Resolve service directory relative to project root (.teammates/..)
-    const projectRoot = resolve(this.teammatesDir, "..");
-    const serviceDir = join(projectRoot, service.dir);
-
-    try {
-      const s = await stat(serviceDir);
-      if (!s.isDirectory()) throw new Error("not a directory");
-    } catch {
-      console.log(chalk.red(`  Service directory not found: ${serviceDir}`));
-      return;
-    }
-
-    // Run build steps
+    // Install the package globally
     const spinner = ora({
-      text: chalk.blue(serviceName) + chalk.gray(` installing...`),
+      text: chalk.blue(serviceName) + chalk.gray(` installing ${service.package}...`),
       spinner: "dots",
     }).start();
 
     try {
-      for (const step of service.buildSteps) {
-        const [cmd, ...cmdArgs] = step.split(" ");
-        spinner.text = chalk.blue(serviceName) + chalk.gray(` running ${step}...`);
-        await execFileAsync(cmd, cmdArgs, {
-          cwd: serviceDir,
-          shell: true,
-          timeout: 5 * 60 * 1000,
-        });
-      }
+      await execAsync(`npm install -g ${service.package}`, {
+        timeout: 5 * 60 * 1000,
+      });
       spinner.stop();
     } catch (err: any) {
-      spinner.fail(chalk.red(`Build failed: ${err.message}`));
+      spinner.fail(chalk.red(`Install failed: ${err.message}`));
       return;
     }
 
     // Verify the binary works
+    const checkCmdStr = service.checkCmd.join(" ");
     try {
-      execFileSync(service.checkCmd[0], service.checkCmd.slice(1), { stdio: "ignore" });
-      console.log(chalk.green(`  ✔ ${serviceName}`) + chalk.gray(" installed successfully"));
+      execSync(checkCmdStr, { stdio: "ignore" });
     } catch {
-      console.log(chalk.yellow(`  ⚠ Build succeeded but ${service.checkCmd.join(" ")} failed.`));
-      console.log(chalk.gray("  You may need to add the binary to your PATH."));
+      console.log(chalk.green(`  ✔ ${serviceName}`) + chalk.gray(" installed"));
+      console.log(chalk.yellow(`  ⚠ Restart your terminal to add ${service.checkCmd[0]} to your PATH, then run /install ${serviceName} again to build the index.`));
+      return;
+    }
+
+    console.log(chalk.green(`  ✔ ${serviceName}`) + chalk.gray(" installed successfully"));
+
+    // Register in services.json
+    const svcPath = join(this.teammatesDir, "services.json");
+    let svcJson: Record<string, unknown> = {};
+    try { svcJson = JSON.parse(readFileSync(svcPath, "utf-8")); } catch { /* new file */ }
+    if (!(serviceName in svcJson)) {
+      svcJson[serviceName] = {};
+      writeFileSync(svcPath, JSON.stringify(svcJson, null, 2) + "\n");
+      console.log(chalk.gray(`  Registered in services.json`));
+    }
+
+    // Build initial index if this service supports it
+    if (service.indexCmd) {
+      const indexSpinner = ora({
+        text: chalk.blue(serviceName) + chalk.gray(` building index...`),
+        spinner: "dots",
+      }).start();
+
+      const indexCmdStr = service.indexCmd.join(" ");
+      try {
+        await execAsync(indexCmdStr, {
+          cwd: resolve(this.teammatesDir, ".."),
+          timeout: 5 * 60 * 1000,
+        });
+        indexSpinner.succeed(chalk.blue(serviceName) + chalk.gray(" index built"));
+      } catch (err: any) {
+        indexSpinner.warn(chalk.yellow(`Index build failed: ${err.message}`));
+      }
+    }
+
+    // Ask the coding agent to wire the service into the project
+    if (service.wireupTask) {
+      console.log();
+      console.log(chalk.gray(`  Wiring up ${serviceName}...`));
+      const result = await this.orchestrator.assign({
+        teammate: this.adapterName,
+        task: service.wireupTask,
+      });
+      this.storeResult(result);
     }
   }
 

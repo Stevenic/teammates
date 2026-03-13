@@ -40,7 +40,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 ## Ethics
 
 - Never send embeddings or memory content to external services
-- Never cache or persist user content outside the explicit `.index/` directory
+- Never cache or persist user content outside the teammate's `.index/` directory
 - Always respect `--no-sync` — if the user says don't sync, don't sync
 - CLI session files are stored in OS temp and cleaned up on shutdown
 
@@ -83,7 +83,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 - `recall/src/**/*.ts` — Recall TypeScript source files
 - `recall/dist/**/*.js` — Recall compiled output (gitignored)
-- `.teammates/.index/**` — Vector indexes (gitignored)
+- `.teammates/<name>/.index/` — Vector indexes (gitignored, one per teammate)
 - `cli/src/**/*.ts` — CLI TypeScript source files
 - `cli/dist/**/*.js` — CLI compiled output (gitignored)
 
@@ -110,7 +110,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 ### Secondary
 
-- `.teammates/.index/**` — Vector index output (produced by recall, gitignored)
+- `.teammates/<name>/.index/` — Vector index output (produced by recall, gitignored)
 
 ### Key Interfaces
 

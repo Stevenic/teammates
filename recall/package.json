@@ -1,6 +1,6 @@
 {
   "name": "@teammates/recall",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local semantic memory search for teammates. Indexes MEMORIES.md and daily logs using Vectra + transformers.js.",
   "type": "module",
   "main": "dist/index.js",

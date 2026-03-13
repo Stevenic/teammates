@@ -223,7 +223,7 @@ async function cmdStatus(args: Args): Promise<void> {
 
   for (const teammate of teammates) {
     const { files } = await indexer.collectFiles(teammate);
-    const indexPath = path.join(indexer.indexRoot, teammate);
+    const indexPath = indexer.indexPath(teammate);
     let indexed = false;
     try {
       await fs.access(indexPath);

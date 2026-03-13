@@ -61,6 +61,7 @@ Copy the following files from this repo's `template/` directory into the target 
 | `template/TEMPLATE.md` | `.teammates/TEMPLATE.md` |
 | `template/USER.md` | `.teammates/USER.md` |
 | `template/.gitignore` | `.teammates/.gitignore` |
+| `template/services.json` | `.teammates/services.json` |
 
 **Populate CROSS-TEAM.md immediately** — fill in the Ownership Scopes table with one row per teammate. Each row should list the teammate's self-owned folder (`.teammates/<name>/**`) and their codebase ownership paths (matching the Primary Ownership section of their SOUL.md). Do not leave the placeholder row.
 

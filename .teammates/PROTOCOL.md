@@ -59,6 +59,27 @@ This is a small team without a dedicated quality teammate. Each teammate owns te
 - Beacon owns recall test coverage and search quality
 - Scribe owns template completeness and onboarding correctness
 
+## Services
+
+Optional services are declared in `.teammates/services.json`. This file is checked into git so the entire team shares the same service configuration. Each key is a service name; the value is a config object (`{}` means installed with defaults).
+
+The CLI reads `services.json` to detect which services are available and injects their capabilities into teammate prompts automatically.
+
+### teammates-recall — Semantic Memory Search
+
+**Enabled when:** `"recall"` key exists in `services.json`.
+
+`teammates-recall` provides local semantic search across teammate memory files (MEMORIES.md, daily logs, SOUL.md). Runs fully locally with zero cloud dependencies.
+
+| Command | Description |
+|---|---|
+| `teammates-recall search "query"` | Search across all teammate memories |
+| `teammates-recall search "query" --teammate beacon` | Search scoped to one teammate |
+| `teammates-recall sync` | Incremental index update (run after writing memory files) |
+| `teammates-recall status` | Show index health and stats |
+
+**When to use:** When you need context from another teammate's past work or decisions, or when searching your own memories for a half-remembered detail. Prefer this over manually reading through memory files.
+
 ## Memory
 
 ### How memory works

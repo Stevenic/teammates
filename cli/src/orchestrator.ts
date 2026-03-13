@@ -249,7 +249,32 @@ export class Orchestrator {
       }
     }
 
+    // Require a meaningful match — weak/ambiguous scores fall through
+    // so the caller can default to the base coding agent
+    if (bestScore < 2) return null;
+
     return bestMatch;
+  }
+
+  /**
+   * Ask the agent to pick the best teammate for a task.
+   * Used as a fallback when keyword routing doesn't find a strong match.
+   */
+  async agentRoute(task: string): Promise<string | null> {
+    if (!this.adapter.routeTask) return null;
+
+    const roster: Array<{ name: string; role: string; ownership: { primary: string[]; secondary: string[] } }> = [];
+    for (const [name, config] of this.registry.all()) {
+      roster.push({ name, role: config.role, ownership: config.ownership });
+    }
+    // Include the base agent as an option
+    roster.push({
+      name: this.adapter.name,
+      role: "General-purpose coding agent",
+      ownership: { primary: [], secondary: [] },
+    });
+
+    return this.adapter.routeTask(task, roster);
   }
 
   /** Reset all teammate statuses to idle and clear sessions */

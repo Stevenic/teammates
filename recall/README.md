@@ -90,7 +90,7 @@ teammates-recall status --dir ./.teammates
 1. **Discovers** teammate directories (any folder under `.teammates/` with a `SOUL.md`)
 2. **Collects** memory files: `MEMORIES.md` + `memory/*.md`
 3. **Chunks and embeds** text using transformers.js (`Xenova/all-MiniLM-L6-v2`, 384-dim vectors)
-4. **Stores** the index at `.teammates/.index/<teammate>/` (gitignored)
+4. **Stores** the index at `.teammates/<teammate>/.index/` (gitignored)
 5. **Searches** using Vectra's semantic similarity matching
 
 ## Auto-Sync
@@ -165,4 +165,4 @@ Default: `Xenova/all-MiniLM-L6-v2` (~23 MB, 384 dimensions)
 
 ## Storage
 
-Indexes live at `.teammates/.index/` and are gitignored. They're derived from the markdown source files and can be rebuilt at any time with `teammates-recall index`.
+Indexes live at `.teammates/<teammate>/.index/` and are gitignored. They're derived from the markdown source files and can be rebuilt at any time with `teammates-recall index`.

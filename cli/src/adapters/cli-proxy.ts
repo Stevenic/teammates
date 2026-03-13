@@ -20,7 +20,7 @@ import { writeFile, unlink, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentAdapter, RosterEntry } from "../adapter.js";
+import type { AgentAdapter, RosterEntry, InstalledService } from "../adapter.js";
 import { buildTeammatePrompt } from "../adapter.js";
 import type { TeammateConfig, TaskResult, HandoffEnvelope, SandboxLevel } from "../types.js";
 
@@ -104,6 +104,8 @@ export class CliProxyAdapter implements AgentAdapter {
   readonly name: string;
   /** Team roster — set by the orchestrator so prompts include teammate info. */
   public roster: RosterEntry[] = [];
+  /** Installed services — set by the CLI so prompts include service info. */
+  public services: InstalledService[] = [];
   private preset: AgentPreset;
   private options: CliProxyOptions;
   /** Session files per teammate — persists state across task invocations. */
@@ -155,6 +157,7 @@ export class CliProxyAdapter implements AgentAdapter {
     if (teammate.soul) {
       fullPrompt = buildTeammatePrompt(teammate, prompt, {
         roster: this.roster,
+        services: this.services,
         sessionFile,
       });
     } else {
@@ -185,9 +188,86 @@ export class CliProxyAdapter implements AgentAdapter {
 
     try {
       const output = await this.spawnAndProxy(teammate, promptFile, fullPrompt);
-      return parseResult(teammate.name, output);
+      const teammateNames = this.roster.map((r) => r.name);
+      return parseResult(teammate.name, output, teammateNames, prompt);
     } finally {
       this.pendingTempFiles.delete(promptFile);
+      await unlink(promptFile).catch(() => {});
+    }
+  }
+
+  async routeTask(task: string, roster: RosterEntry[]): Promise<string | null> {
+    const lines = [
+      "You are a task router. Given a task and a list of teammates, reply with ONLY the name of the teammate who should handle it. No explanation, no punctuation — just the name.",
+      "",
+      "Teammates:",
+    ];
+    for (const t of roster) {
+      const owns = t.ownership.primary.length > 0
+        ? ` — owns: ${t.ownership.primary.join(", ")}`
+        : "";
+      lines.push(`- ${t.name}: ${t.role}${owns}`);
+    }
+    lines.push("", `Task: ${task}`);
+
+    const prompt = lines.join("\n");
+    const promptFile = join(tmpdir(), `teammates-route-${randomUUID()}.md`);
+    await writeFile(promptFile, prompt, "utf-8");
+
+    try {
+      const command = this.options.commandPath ?? this.preset.command;
+      const args = this.preset.buildArgs(
+        { promptFile, prompt },
+        { name: "_router", role: "", soul: "", memories: "", dailyLogs: [], ownership: { primary: [], secondary: [] } },
+        { ...this.options, model: this.options.model ?? "haiku" }
+      );
+      const env = { ...process.env, ...this.preset.env };
+
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = spawn(command, args, {
+          cwd: process.cwd(),
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+          shell: this.preset.shell ?? false,
+        });
+
+        const captured: Buffer[] = [];
+        child.stdout?.on("data", (chunk: Buffer) => captured.push(chunk));
+        child.stderr?.on("data", (chunk: Buffer) => captured.push(chunk));
+
+        const timer = setTimeout(() => {
+          if (!child.killed) child.kill("SIGTERM");
+        }, 30_000);
+
+        child.on("close", () => {
+          clearTimeout(timer);
+          resolve(Buffer.concat(captured).toString("utf-8"));
+        });
+        child.on("error", (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
+
+      // Extract the teammate name from the output
+      const rosterNames = roster.map((r) => r.name);
+      const trimmed = output.trim().toLowerCase();
+      // Check each name — the agent should have returned just one
+      for (const name of rosterNames) {
+        if (trimmed === name.toLowerCase() || trimmed.endsWith(name.toLowerCase())) {
+          return name;
+        }
+      }
+      // Fuzzy: check if any name appears in the output
+      for (const name of rosterNames) {
+        if (trimmed.includes(name.toLowerCase())) {
+          return name;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
       await unlink(promptFile).catch(() => {});
     }
   }
@@ -295,7 +375,7 @@ export class CliProxyAdapter implements AgentAdapter {
 
 // ─── Output parsing (shared across all agents) ─────────────────────
 
-function parseResult(teammateName: string, output: string): TaskResult {
+function parseResult(teammateName: string, output: string, teammateNames: string[] = [], originalTask?: string): TaskResult {
   // Try to parse the structured JSON block the agent was asked to produce
   const structured = parseStructuredOutput(output);
   if (structured) {
@@ -308,7 +388,7 @@ function parseResult(teammateName: string, output: string): TaskResult {
     success: true,
     summary: extractSummary(output),
     changedFiles: parseChangedFiles(output),
-    handoff: parseHandoffEnvelope(output) ?? undefined,
+    handoff: parseHandoffEnvelope(output) ?? parseHandoffFromMention(teammateName, output, teammateNames, originalTask) ?? undefined,
     rawOutput: output,
   };
 }
@@ -409,6 +489,46 @@ function parseHandoffEnvelope(output: string): HandoffEnvelope | null {
       }
     } catch {
       // Not valid JSON, skip
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Detect handoff intent from plain-text @mentions in the agent's response.
+ * Catches cases like "This is in @beacon's domain. Let me hand it off."
+ * where the agent didn't produce the structured JSON block.
+ */
+/**
+ * Detect handoff intent from plain-text @mentions in the agent's response.
+ * Catches cases like "This is in @beacon's domain. Let me hand it off."
+ * where the agent didn't produce the structured JSON block.
+ */
+function parseHandoffFromMention(
+  fromTeammate: string,
+  output: string,
+  teammateNames: string[],
+  originalTask?: string
+): HandoffEnvelope | null {
+  if (teammateNames.length === 0) return null;
+
+  // Look for @teammate mentions (excluding the agent's own name)
+  const others = teammateNames.filter((n) => n !== fromTeammate);
+  if (others.length === 0) return null;
+
+  // Match @name patterns — require handoff-like language nearby
+  const handoffPatterns = /\bhand(?:ing)?\s*(?:it\s+)?off\b|\bdelegate\b|\broute\b|\bpass(?:ing)?\s+(?:it\s+)?(?:to|along)\b|\bbelong(?:s)?\s+to\b|\b(?:is\s+in)\s+@\w+'?s?\s+domain\b/i;
+
+  for (const name of others) {
+    const mentionPattern = new RegExp(`@${name}\\b`, "i");
+    if (mentionPattern.test(output) && handoffPatterns.test(output)) {
+      return {
+        from: fromTeammate,
+        to: name,
+        task: originalTask || output.slice(0, 200).trim(),
+        context: output.replace(/```json[\s\S]*?```/g, "").trim().slice(0, 500),
+      };
     }
   }
 

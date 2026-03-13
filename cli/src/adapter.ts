@@ -36,6 +36,12 @@ export interface AgentAdapter {
 
   /** Clean up a session. */
   destroySession?(sessionId: string): Promise<void>;
+
+  /**
+   * Quick routing call — ask the agent which teammate should handle a task.
+   * Returns a teammate name. The agent can return its own name if it should handle it.
+   */
+  routeTask?(task: string, roster: RosterEntry[]): Promise<string | null>;
 }
 
 /** Minimal teammate info for the roster section of a prompt. */
@@ -43,6 +49,13 @@ export interface RosterEntry {
   name: string;
   role: string;
   ownership: { primary: string[]; secondary: string[] };
+}
+
+/** A service that's been installed and is available to teammates. */
+export interface InstalledService {
+  name: string;
+  description: string;
+  usage: string;
 }
 
 /**
@@ -55,6 +68,7 @@ export function buildTeammatePrompt(
   options?: {
     handoffContext?: string;
     roster?: RosterEntry[];
+    services?: InstalledService[];
     sessionFile?: string;
   }
 ): string {
@@ -90,6 +104,18 @@ export function buildTeammatePrompt(
         ? ` — owns: ${t.ownership.primary.join(", ")}`
         : "";
       parts.push(`- **@${t.name}**: ${t.role}${owns}`);
+    }
+    parts.push("\n---\n");
+  }
+
+  // ── Installed services ──────────────────────────────────────────────
+  if (options?.services && options.services.length > 0) {
+    parts.push("## Available Services\n");
+    parts.push("These services are installed and available for you to use:\n");
+    for (const svc of options.services) {
+      parts.push(`### ${svc.name}\n`);
+      parts.push(svc.description);
+      parts.push(`\n**Usage:** \`${svc.usage}\`\n`);
     }
     parts.push("\n---\n");
   }

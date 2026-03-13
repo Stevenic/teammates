@@ -21,7 +21,10 @@ export class LocalEmbeddings implements EmbeddingsModel {
   ): Promise<EmbeddingsResponse> {
     try {
       const extractor = await this._getExtractor();
-      const texts = Array.isArray(inputs) ? inputs : [inputs];
+      const texts = (Array.isArray(inputs) ? inputs : [inputs]).filter((t) => t.trim().length > 0);
+      if (texts.length === 0) {
+        return { status: "success", output: [] };
+      }
       const output = await extractor(texts, {
         pooling: "mean",
         normalize: true,

@@ -40,7 +40,7 @@ Local semantic search over teammate memory files. Zero cloud dependencies.
 | `search.ts` | Semantic search with auto-sync before queries |
 | `embeddings.ts` | transformers.js wrapper (Xenova/all-MiniLM-L6-v2, 384-dim) |
 
-**Index storage:** `.teammates/.index/<teammate>/` (gitignored, auto-generated)
+**Index storage:** `.teammates/<teammate>/.index/` (gitignored, auto-generated)
 
 ### Framework (`template/` + `.teammates/`)
 
@@ -109,7 +109,7 @@ recall search (auto-syncs before query)
 indexer.ts ─── detect changed files ─── chunk text ─── embed locally
     │
     ▼
-Vectra index at .teammates/.index/<name>/
+Vectra index at .teammates/<name>/.index/
     │
     ▼
 search.ts ─── query embeddings ─── return scored results

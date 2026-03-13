@@ -58,6 +58,6 @@ Beacon's scope expanded to include `@teammates/cli` alongside `@teammates/recall
 Beacon created to own the `@teammates/recall` package. Key initial decisions:
 - Vectra for local vector search (simple file-based index, no server needed)
 - transformers.js with `Xenova/all-MiniLM-L6-v2` for embeddings (384-dim, ~23 MB, runs on-device)
-- One index per teammate, stored at `.teammates/.index/<name>/`
+- One index per teammate, stored at `.teammates/<name>/.index/`
 - Auto-sync before search by default — agents shouldn't need to manually manage index state
 - CLI designed for agent consumption: `--json` flag for structured output, no interactive prompts

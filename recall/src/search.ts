@@ -35,15 +35,14 @@ export async function search(
   query: string,
   options: SearchOptions
 ): Promise<SearchResult[]> {
-  const indexRoot = path.join(options.teammatesDir, ".index");
   const embeddings = new LocalEmbeddings(options.model);
+  const indexer = new Indexer({ teammatesDir: options.teammatesDir, model: options.model });
   const maxResults = options.maxResults ?? 5;
   const maxChunks = options.maxChunks ?? 3;
   const maxTokens = options.maxTokens ?? 500;
 
   // Auto-sync: upsert any new/changed files before searching
   if (!options.skipSync) {
-    const indexer = new Indexer({ teammatesDir: options.teammatesDir, model: options.model });
     if (options.teammate) {
       await indexer.syncTeammate(options.teammate);
     } else {
@@ -56,20 +55,13 @@ export async function search(
   if (options.teammate) {
     teammates = [options.teammate];
   } else {
-    try {
-      const entries = await fs.readdir(indexRoot, { withFileTypes: true });
-      teammates = entries
-        .filter((e) => e.isDirectory())
-        .map((e) => e.name);
-    } catch {
-      return [];
-    }
+    teammates = await indexer.discoverTeammates();
   }
 
   const allResults: SearchResult[] = [];
 
   for (const teammate of teammates) {
-    const indexPath = path.join(indexRoot, teammate);
+    const indexPath = indexer.indexPath(teammate);
     try {
       await fs.access(indexPath);
     } catch {

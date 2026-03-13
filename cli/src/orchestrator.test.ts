@@ -62,7 +62,7 @@ describe("Orchestrator.route", () => {
       makeTeammate("scribe", "Documentation writer.", ["docs/**", "README.md"]),
     ]);
     expect(orch.route("fix the recall search")).toBe("beacon");
-    expect(orch.route("update the README documentation")).toBe("scribe");
+    expect(orch.route("update the docs README")).toBe("scribe");
   });
 
   it("returns null when no keywords match", () => {
@@ -84,9 +84,19 @@ describe("Orchestrator.route", () => {
   it("considers role keywords", () => {
     const { orch } = createOrchestrator([
       makeTeammate("beacon", "Platform engineer with search expertise."),
+      makeTeammate("scribe", "Documentation writer.", ["docs/**"]),
+    ]);
+    // "write documentation" matches role word "documentation" (1pt) + ownership keyword "docs" (2pt)
+    expect(orch.route("write docs and documentation")).toBe("scribe");
+  });
+
+  it("returns null for weak matches (score < 2)", () => {
+    const { orch } = createOrchestrator([
+      makeTeammate("beacon", "Platform engineer."),
       makeTeammate("scribe", "Documentation writer."),
     ]);
-    expect(orch.route("write documentation")).toBe("scribe");
+    // "documentation" only matches a role word (1pt) — too weak to route confidently
+    expect(orch.route("write documentation")).toBeNull();
   });
 });
 
