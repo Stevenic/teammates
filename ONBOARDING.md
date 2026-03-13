@@ -116,4 +116,5 @@ Before finishing, check:
 - **Prompt the user to fill in USER.md.** It's gitignored and stays local. It helps teammates tailor their communication style and technical depth.
 - **Daily logs start empty.** The `memory/` folders are created during onboarding but daily log files are created naturally as teammates work.
 - **Souls evolve.** Teammates should update their own SOUL.md as they learn more about their domain. If a teammate changes their SOUL.md, they should tell the user what changed and why.
+- **Boundaries are strict.** Teammates must never modify files outside their ownership, even for small or obvious fixes. If a task touches another teammate's domain, they should hand off that portion with a clear description. This prevents stepping on toes and keeps ownership clean.
 - **Memory search is optional.** For projects that accumulate many daily logs, suggest installing `@teammates/recall` for semantic search. It's not required — teammates work fine by reading files directly.

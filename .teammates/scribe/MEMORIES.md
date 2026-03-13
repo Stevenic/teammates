@@ -6,6 +6,11 @@ This file is for durable knowledge that stays relevant over time. For day-to-day
 
 Categories: Bug | Decision | Pattern | Gotcha | Optimization
 
+### 2026-03-13: Boundary Violation — CLI Code
+**Category:** Gotcha | **Last updated:** 2026-03-13
+
+Scribe directly modified `cli/src/cli.ts` and created `cli/src/onboard.ts` instead of handing off to Beacon. User corrected this. **Rule: always hand off CLI implementation to @beacon**, even when the feature originates from Scribe's domain (onboarding). Scribe designs, Beacon implements CLI code.
+
 ### 2026-03-11: Initial Setup
 **Category:** Decision | **Last updated:** 2026-03-11
 

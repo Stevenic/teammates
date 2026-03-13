@@ -12,11 +12,18 @@ Individual teammates may define additional ethics in their SOUL.md specific to t
 
 ## Handoff Conventions
 
+### Boundary Rule
+
+**Never write code or modify files outside your ownership.** If a task requires changes to files you don't own, hand off that portion to the owning teammate. Design the behavior, write a spec if needed, then hand off — don't implement it yourself, even if the fix seems small or obvious. Your Boundaries section lists what you do NOT touch and who does.
+
+### Cross-Domain Tasks
+
 When a task spans multiple teammates' domains:
 
 1. **Identify the primary owner** — the teammate whose domain is most affected by the change.
 2. **The primary owner leads** — they coordinate the work and make final decisions within their domain.
 3. **Secondary owners review** — teammates with secondary ownership of affected paths should review changes that touch their interfaces.
+4. **Hand off, don't reach across** — if you need changes in another teammate's domain, hand off with a clear task description. Do not modify their files directly.
 
 ## Dependency Direction
 

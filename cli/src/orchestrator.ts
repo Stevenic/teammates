@@ -252,6 +252,19 @@ export class Orchestrator {
     return bestMatch;
   }
 
+  /** Reset all teammate statuses to idle and clear sessions */
+  async reset(): Promise<void> {
+    for (const [name, sessionId] of this.sessions) {
+      if (this.adapter.destroySession) {
+        await this.adapter.destroySession(sessionId);
+      }
+    }
+    this.sessions.clear();
+    for (const name of this.registry.list()) {
+      this.statuses.set(name, { state: "idle" });
+    }
+  }
+
   /** Destroy all sessions */
   async shutdown(): Promise<void> {
     for (const [name, sessionId] of this.sessions) {

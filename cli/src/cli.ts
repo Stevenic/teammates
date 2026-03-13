@@ -12,7 +12,7 @@
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { resolve, join } from "node:path";
-import { stat } from "node:fs/promises";
+import { stat, mkdir, readdir } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
@@ -22,6 +22,7 @@ import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js"
 import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
 import { Dropdown } from "./dropdown.js";
+import { getOnboardingPrompt } from "./onboard.js";
 
 // ─── Argument parsing ────────────────────────────────────────────────
 
@@ -54,7 +55,7 @@ args.length = 0;
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-async function findTeammatesDir(): Promise<string> {
+async function findTeammatesDir(): Promise<string | null> {
   if (dirOverride) return resolve(dirOverride);
   let dir = process.cwd();
   while (true) {
@@ -67,8 +68,7 @@ async function findTeammatesDir(): Promise<string> {
     if (parent === dir) break;
     dir = parent;
   }
-  console.error(chalk.red("No .teammates/ directory found. Are you in a teammates project?"));
-  process.exit(1);
+  return null;
 }
 
 function resolveAdapter(name: string): AgentAdapter {
@@ -162,6 +162,172 @@ class TeammatesREPL {
 
   constructor(adapterName: string) {
     this.adapterName = adapterName;
+  }
+
+  // ─── Onboarding ───────────────────────────────────────────────────
+
+  /**
+   * Interactive prompt when no .teammates/ directory is found.
+   * Returns the new .teammates/ path, or null if user chose to exit.
+   */
+  private async promptOnboarding(adapter: AgentAdapter): Promise<string | null> {
+    const cwd = process.cwd();
+    const teammatesDir = join(cwd, ".teammates");
+    const termWidth = process.stdout.columns || 100;
+
+    console.log();
+    this.printLogo([
+      chalk.bold("Teammates") + chalk.gray(" v0.1.0"),
+      chalk.yellow("No .teammates/ directory found"),
+      chalk.gray(cwd),
+    ]);
+    console.log();
+    console.log(chalk.gray("─".repeat(termWidth)));
+    console.log();
+    console.log(chalk.white("  Set up teammates for this project?\n"));
+    console.log(
+      chalk.cyan("  1") + chalk.gray(") ") +
+        chalk.white("Run onboarding") +
+        chalk.gray(" — analyze this codebase and create .teammates/")
+    );
+    console.log(
+      chalk.cyan("  2") + chalk.gray(") ") +
+        chalk.white("Solo mode") +
+        chalk.gray(` — use ${this.adapterName} without teammates`)
+    );
+    console.log(
+      chalk.cyan("  3") + chalk.gray(") ") +
+        chalk.white("Exit")
+    );
+    console.log();
+
+    const choice = await this.askChoice("Pick an option (1/2/3): ", ["1", "2", "3"]);
+
+    if (choice === "3") {
+      console.log(chalk.gray("  Goodbye."));
+      return null;
+    }
+
+    if (choice === "2") {
+      await mkdir(teammatesDir, { recursive: true });
+      console.log();
+      console.log(chalk.green("  ✔") + chalk.gray(` Created ${teammatesDir}`));
+      console.log(chalk.gray(`  Running in solo mode — all tasks go to ${this.adapterName}.`));
+      console.log(chalk.gray("  Run /init later to set up teammates."));
+      console.log();
+      return teammatesDir;
+    }
+
+    // choice === "1": Run onboarding via the agent
+    await mkdir(teammatesDir, { recursive: true });
+    await this.runOnboardingAgent(adapter, cwd);
+    return teammatesDir;
+  }
+
+  /**
+   * Run the onboarding agent to analyze the codebase and create teammates.
+   * Used by both promptOnboarding (pre-orchestrator) and cmdInit (post-orchestrator).
+   */
+  private async runOnboardingAgent(adapter: AgentAdapter, projectDir: string): Promise<void> {
+    console.log();
+    console.log(
+      chalk.blue("  Starting onboarding...") +
+        chalk.gray(` ${this.adapterName} will analyze your codebase and create .teammates/`)
+    );
+    console.log();
+
+    const onboardingPrompt = await getOnboardingPrompt(projectDir);
+    const tempConfig = {
+      name: this.adapterName,
+      role: "Onboarding agent",
+      soul: "",
+      memories: "",
+      dailyLogs: [] as { date: string; content: string }[],
+      ownership: { primary: [] as string[], secondary: [] as string[] },
+    };
+
+    const sessionId = await adapter.startSession(tempConfig);
+    const spinner = ora({
+      text: chalk.blue(this.adapterName) + chalk.gray(" is analyzing your codebase..."),
+      spinner: "dots",
+    }).start();
+
+    try {
+      const result = await adapter.executeTask(sessionId, tempConfig, onboardingPrompt);
+      spinner.stop();
+      this.printAgentOutput(result.rawOutput);
+
+      if (result.success) {
+        console.log(chalk.green("  ✔ Onboarding complete!"));
+      } else {
+        console.log(chalk.yellow("  ⚠ Onboarding finished with issues: " + result.summary));
+      }
+    } catch (err: any) {
+      spinner.fail(chalk.red("Onboarding failed: " + err.message));
+    }
+
+    if (adapter.destroySession) {
+      await adapter.destroySession(sessionId);
+    }
+
+    // Verify .teammates/ now has content
+    const teammatesDir = join(projectDir, ".teammates");
+    try {
+      const entries = await readdir(teammatesDir);
+      if (!entries.some(e => !e.startsWith("."))) {
+        console.log(chalk.yellow("  ⚠ .teammates/ was created but appears empty."));
+        console.log(chalk.gray("  You may need to run the onboarding agent again or set up manually."));
+      }
+    } catch { /* dir might not exist if onboarding failed badly */ }
+    console.log();
+  }
+
+  /**
+   * Simple blocking prompt — reads one line from stdin and validates.
+   */
+  private askChoice(prompt: string, valid: string[]): Promise<string> {
+    return new Promise((resolve) => {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const ask = () => {
+        rl.question(chalk.cyan("  ") + prompt, (answer) => {
+          const trimmed = answer.trim();
+          if (valid.includes(trimmed)) {
+            rl.close();
+            resolve(trimmed);
+          } else {
+            ask();
+          }
+        });
+      };
+      ask();
+    });
+  }
+
+  // ─── Display helpers ──────────────────────────────────────────────
+
+  /**
+   * Render the box logo with up to 4 info lines on the right side.
+   */
+  private printLogo(infoLines: string[]): void {
+    const pad = (i: number) => infoLines[i] ? "   " + infoLines[i] : "";
+    console.log(chalk.cyan(" ▐▛▀▀▀▀▀▀▜▌") + pad(0));
+    console.log(chalk.cyan(" ▐▌") + "      " + chalk.cyan("▐▌") + pad(1));
+    console.log(chalk.cyan(" ▐▌") + "  🧬  " + chalk.cyan("▐▌") + pad(2));
+    console.log(chalk.cyan(" ▐▌") + "      " + chalk.cyan("▐▌") + pad(3));
+    console.log(chalk.cyan(" ▐▙▄▄▄▄▄▄▟▌"));
+  }
+
+  /**
+   * Print agent raw output, stripping the trailing JSON protocol block.
+   */
+  private printAgentOutput(rawOutput: string | undefined): void {
+    const raw = rawOutput ?? "";
+    if (!raw) return;
+    const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
+    if (cleaned) {
+      console.log(cleaned);
+    }
+    console.log();
   }
 
   // ─── Wordwheel ─────────────────────────────────────────────────────
@@ -368,10 +534,17 @@ class TeammatesREPL {
   // ─── Lifecycle ────────────────────────────────────────────────────
 
   async start(): Promise<void> {
-    // Init orchestrator
-    const teammatesDir = await findTeammatesDir();
+    let teammatesDir = await findTeammatesDir();
     const adapter = resolveAdapter(this.adapterName);
     this.adapter = adapter;
+
+    // No .teammates/ found — offer onboarding or solo mode
+    if (!teammatesDir) {
+      teammatesDir = await this.promptOnboarding(adapter);
+      if (!teammatesDir) return; // user chose to exit
+    }
+
+    // Init orchestrator
     this.orchestrator = new Orchestrator({
       teammatesDir,
       adapter,
@@ -650,37 +823,16 @@ class TeammatesREPL {
       recallInstalled = true;
     } catch { /* not found */ }
 
-    // Logo + info block
     console.log();
-    console.log(
-      chalk.cyan(" ▐▛▀▀▀▀▀▀▜▌   ") +
-        chalk.bold("Teammates") +
-        chalk.gray(" v0.1.0")
-    );
-    console.log(
-      chalk.cyan(" ▐▌") +
-        "      " +
-        chalk.cyan("▐▌   ") +
-        chalk.white(`${this.adapterName}`) +
-        chalk.gray(` · ${teammates.length} teammate${teammates.length === 1 ? "" : "s"}`)
-    );
-    console.log(
-      chalk.cyan(" ▐▌") +
-        "  🧬  " +
-        chalk.cyan("▐▌   ") +
-        chalk.gray(process.cwd())
-    );
-    console.log(
-      chalk.cyan(" ▐▌") +
-        "      " +
-        chalk.cyan("▐▌   ") +
-        (recallInstalled
-          ? chalk.green("● recall") + chalk.gray(" installed")
-          : chalk.yellow("○ recall") + chalk.gray(" not installed"))
-    );
-    console.log(
-      chalk.cyan(" ▐▙▄▄▄▄▄▄▟▌")
-    );
+    this.printLogo([
+      chalk.bold("Teammates") + chalk.gray(" v0.1.0"),
+      chalk.white(this.adapterName) +
+        chalk.gray(` · ${teammates.length} teammate${teammates.length === 1 ? "" : "s"}`),
+      chalk.gray(process.cwd()),
+      recallInstalled
+        ? chalk.green("● recall") + chalk.gray(" installed")
+        : chalk.yellow("○ recall") + chalk.gray(" not installed"),
+    ]);
 
     // Roster
     console.log();
@@ -779,6 +931,20 @@ class TeammatesREPL {
         run: (args) => this.cmdCancel(args),
       },
       {
+        name: "init",
+        aliases: ["onboard", "setup"],
+        usage: "/init",
+        description: "Run onboarding to set up teammates for this project",
+        run: () => this.cmdInit(),
+      },
+      {
+        name: "clear",
+        aliases: ["cls", "reset"],
+        usage: "/clear",
+        description: "Clear history and reset the session",
+        run: () => this.cmdClear(),
+      },
+      {
         name: "exit",
         aliases: ["q", "quit"],
         usage: "/exit",
@@ -851,7 +1017,6 @@ class TeammatesREPL {
 
   // ─── Event handler ───────────────────────────────────────────────
 
-
   private handleEvent(event: OrchestratorEvent): void {
     // When queue is draining in background, never use spinner — it blocks the prompt
     const useSpinner = !this.queueDraining;
@@ -878,24 +1043,19 @@ class TeammatesREPL {
           this.spinner = null;
         }
 
-        // Print the agent's response, collapsing large output
         const raw = event.result.rawOutput ?? "";
-        if (raw) {
-          // Strip the trailing JSON protocol block from display
-          const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
-          if (cleaned) {
-            const sizeKB = Buffer.byteLength(cleaned, "utf-8") / 1024;
-            console.log();
-            if (sizeKB > 5) {
-              console.log(chalk.gray("  ─".repeat(40)));
-              console.log(
-                chalk.yellow(`  ⚠ Response is ${sizeKB.toFixed(1)}KB — use /debug ${event.result.teammate} to view full output`)
-              );
-              console.log(chalk.gray("  ─".repeat(40)));
-            } else {
-              console.log(cleaned);
-            }
-          }
+        const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
+        const sizeKB = cleaned ? Buffer.byteLength(cleaned, "utf-8") / 1024 : 0;
+
+        console.log();
+        if (sizeKB > 5) {
+          console.log(chalk.gray("  ─".repeat(40)));
+          console.log(
+            chalk.yellow(`  ⚠ Response is ${sizeKB.toFixed(1)}KB — use /debug ${event.result.teammate} to view full output`)
+          );
+          console.log(chalk.gray("  ─".repeat(40)));
+        } else if (cleaned) {
+          console.log(cleaned);
         }
 
         console.log();
@@ -1051,7 +1211,6 @@ class TeammatesREPL {
     const match = this.orchestrator.route(argsStr) ?? this.adapterName;
 
     console.log(chalk.gray(`  Routed to: ${chalk.bold(match)}`));
-
 
     const extraContext = this.buildConversationContext();
     const result = await this.orchestrator.assign({ teammate: match, task: argsStr, extraContext: extraContext || undefined });
@@ -1318,6 +1477,31 @@ class TeammatesREPL {
     } finally {
       this.queueDraining = false;
     }
+  }
+
+  private async cmdInit(): Promise<void> {
+    const cwd = process.cwd();
+    await mkdir(join(cwd, ".teammates"), { recursive: true });
+    await this.runOnboardingAgent(this.adapter, cwd);
+
+    // Reload the registry to pick up newly created teammates
+    await this.orchestrator.init();
+    console.log(chalk.gray("  Run /teammates to see the roster."));
+  }
+
+  private async cmdClear(): Promise<void> {
+    // Reset all session state
+    this.conversationHistory.length = 0;
+    this.lastResult = null;
+    this.lastResults.clear();
+    this.taskQueue.length = 0;
+    this.queueActive = null;
+    this.pastedTexts.clear();
+    await this.orchestrator.reset();
+
+    // Clear terminal and reprint banner
+    process.stdout.write("\x1b[2J\x1b[H");
+    this.printBanner(this.orchestrator.listTeammates());
   }
 
   private async cmdHelp(): Promise<void> {
