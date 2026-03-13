@@ -102,8 +102,6 @@ let nextId = 1;
 
 export class CliProxyAdapter implements AgentAdapter {
   readonly name: string;
-  /** When true, agent stdout/stderr streams to the terminal live. */
-  public verbose = false;
   /** Team roster — set by the orchestrator so prompts include teammate info. */
   public roster: RosterEntry[] = [];
   private preset: AgentPreset;
@@ -112,6 +110,8 @@ export class CliProxyAdapter implements AgentAdapter {
   private sessionFiles: Map<string, string> = new Map();
   /** Base directory for session files. */
   private sessionsDir = "";
+  /** Temp prompt files that need cleanup — guards against crashes before finally. */
+  private pendingTempFiles: Set<string> = new Set();
 
   constructor(options: CliProxyOptions) {
     this.options = options;
@@ -181,16 +181,24 @@ export class CliProxyAdapter implements AgentAdapter {
     // Write prompt to temp file to avoid shell escaping issues
     const promptFile = join(tmpdir(), `teammates-${this.name}-${randomUUID()}.md`);
     await writeFile(promptFile, fullPrompt, "utf-8");
+    this.pendingTempFiles.add(promptFile);
 
     try {
       const output = await this.spawnAndProxy(teammate, promptFile, fullPrompt);
       return parseResult(teammate.name, output);
     } finally {
+      this.pendingTempFiles.delete(promptFile);
       await unlink(promptFile).catch(() => {});
     }
   }
 
   async destroySession(sessionId: string): Promise<void> {
+    // Clean up any leaked temp prompt files
+    for (const file of this.pendingTempFiles) {
+      await unlink(file).catch(() => {});
+    }
+    this.pendingTempFiles.clear();
+
     // Clean up session files
     for (const [, file] of this.sessionFiles) {
       await unlink(file).catch(() => {});
@@ -211,16 +219,30 @@ export class CliProxyAdapter implements AgentAdapter {
       const command = this.options.commandPath ?? this.preset.command;
       const env = { ...process.env, ...this.preset.env };
       const timeout = this.options.timeout ?? 600_000;
-
       const interactive = this.preset.interactive ?? false;
 
       const child: ChildProcess = spawn(command, args, {
         cwd: teammate.cwd ?? process.cwd(),
         env,
         stdio: [interactive ? "pipe" : "ignore", "pipe", "pipe"],
-        timeout,
         shell: this.preset.shell ?? false,
       });
+
+      // ── Timeout with SIGTERM → SIGKILL escalation ──────────────
+      let killed = false;
+      let killTimer: ReturnType<typeof setTimeout> | null = null;
+      const timeoutTimer = setTimeout(() => {
+        if (!child.killed) {
+          killed = true;
+          child.kill("SIGTERM");
+          // If SIGTERM doesn't work after 5s, force-kill
+          killTimer = setTimeout(() => {
+            if (!child.killed) {
+              child.kill("SIGKILL");
+            }
+          }, 5_000);
+        }
+      }, timeout);
 
       // Connect user's stdin → child only if agent may ask questions
       let onUserInput: ((chunk: Buffer) => void) | null = null;
@@ -237,19 +259,17 @@ export class CliProxyAdapter implements AgentAdapter {
 
       const captured: Buffer[] = [];
 
-      // Tee stdout: live to terminal (if verbose) + always capture
       child.stdout?.on("data", (chunk: Buffer) => {
         captured.push(chunk);
-        if (this.verbose) process.stdout.write(chunk);
       });
 
-      // Tee stderr: live to terminal (if verbose) + always capture
       child.stderr?.on("data", (chunk: Buffer) => {
         captured.push(chunk);
-        if (this.verbose) process.stderr.write(chunk);
       });
 
       const cleanup = () => {
+        clearTimeout(timeoutTimer);
+        if (killTimer) clearTimeout(killTimer);
         if (onUserInput) {
           process.stdin.removeListener("data", onUserInput);
         }
@@ -258,7 +278,11 @@ export class CliProxyAdapter implements AgentAdapter {
       child.on("close", (code) => {
         cleanup();
         const output = Buffer.concat(captured).toString("utf-8");
-        resolve(output);
+        if (killed) {
+          resolve(output + `\n\n[TIMEOUT] Agent process killed after ${timeout}ms`);
+        } else {
+          resolve(output);
+        }
       });
 
       child.on("error", (err) => {

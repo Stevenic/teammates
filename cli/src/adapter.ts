@@ -119,6 +119,23 @@ This is how you maintain continuity across tasks. Always read it, always update 
     parts.push("\n---\n");
   }
 
+  // ── Memory updates ─────────────────────────────────────────────────
+  const today = new Date().toISOString().slice(0, 10);
+  parts.push("## Memory Updates\n");
+  parts.push(`**Before returning your result**, update your memory files:
+
+1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist.
+   - What you did
+   - Key decisions made
+   - Files changed
+   - Anything the next task should know
+
+2. **MEMORIES.md** — If you learned something durable (a decision, pattern, gotcha, or bug), read \`.teammates/${teammate.name}/MEMORIES.md\`, then write it back with your entry added.
+
+These files are your persistent memory. Without them, your next session starts from scratch.
+`);
+  parts.push("\n---\n");
+
   // ── Output protocol ───────────────────────────────────────────────
   parts.push("## Output Protocol\n");
   parts.push(`When you finish, you MUST end your response with exactly one of these two blocks:

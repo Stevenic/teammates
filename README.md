@@ -49,10 +49,16 @@ Route tasks to teammates, manage handoffs, and run any coding agent backend from
 
 ```bash
 cd cli && npm install && npm run build
-teammates claude           # or codex, aider, echo
+teammates claude       # or codex, aider, echo
 ```
 
-Inside the session, assign tasks with `@mentions`, auto-route with bare text, queue background work, and approve or reject handoffs between teammates. See [cli/README.md](cli/README.md) for details.
+Inside the session:
+- **`@mention`** — assign directly to a teammate (`@beacon fix the search index`)
+- **Bare text** — auto-routes to the best teammate based on keywords
+- **`/queue`** — queue tasks to run sequentially in the background
+- **Handoff approval** — teammates can propose handoffs; you approve, auto-approve, or reject
+
+See [cli/README.md](cli/README.md) for the full command reference and adapter docs.
 
 ## Memory Search (Optional)
 
@@ -84,7 +90,7 @@ teammates works with any AI coding tool that can read and write files:
 ## Getting Started
 
 ```bash
-git clone https://github.com/anthropics/teammates.git
+git clone https://github.com/Stevenic/teammates.git
 ```
 
 Then tell your AI agent:
@@ -109,6 +115,7 @@ teammates/
     package.json        # @teammates/recall package
     README.md           # Recall documentation
   docs/                 # Vision and design documents
+    teammates-vision.md # Architecture and Microsoft Teams roadmap
   template/
     .gitignore          # Keeps USER.md out of version control
     README.md           # Roster template with placeholders

@@ -123,15 +123,33 @@ class TeammatesREPL {
   private commands: Map<string, SlashCommand> = new Map();
   private lastResult: TaskResult | null = null;
   private lastResults: Map<string, TaskResult> = new Map();
+  private conversationHistory: { role: string; text: string }[] = [];
 
   private storeResult(result: TaskResult): void {
     this.lastResult = result;
     this.lastResults.set(result.teammate, result);
+    this.conversationHistory.push({
+      role: result.teammate,
+      text: result.rawOutput ?? result.summary,
+    });
+  }
+
+  private buildConversationContext(): string {
+    if (this.conversationHistory.length === 0) return "";
+    // Keep last 10 exchanges to avoid blowing up prompt size
+    const recent = this.conversationHistory.slice(-10);
+    const lines = ["## Conversation History\n"];
+    for (const entry of recent) {
+      lines.push(`**${entry.role}:** ${entry.text}\n`);
+    }
+    return lines.join("\n");
   }
   private adapterName: string;
   private taskQueue: { teammate: string; task: string }[] = [];
   private queueActive: { teammate: string; task: string } | null = null;
   private queueDraining = false;
+  /** Mutex to prevent concurrent drainQueue invocations. Resolves when drain finishes. */
+  private drainLock: Promise<void> | null = null;
   private dropdown!: Dropdown;
   private wordwheelItems: WordwheelItem[] = [];
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
@@ -456,6 +474,11 @@ class TeammatesREPL {
         return;
       }
 
+      // Record user input in conversation history (skip slash commands)
+      if (!trimmed.startsWith("/")) {
+        this.conversationHistory.push({ role: "user", text: trimmed });
+      }
+
       try {
         await this.dispatch(trimmed);
       } catch (err: any) {
@@ -522,7 +545,7 @@ class TeammatesREPL {
     ];
     const col2 = [
       ["/status", "session overview"],
-      ["/verbose", "toggle output"],
+      ["/debug", "raw agent output"],
       ["/log", "last task output"],
     ];
     const col3 = [
@@ -578,24 +601,6 @@ class TeammatesREPL {
         usage: "/help",
         description: "Show available commands",
         run: () => this.cmdHelp(),
-      },
-      {
-        name: "verbose",
-        aliases: ["v"],
-        usage: "/verbose",
-        description: "Toggle agent output streaming",
-        run: async () => {
-          if ("verbose" in this.adapter) {
-            const proxy = this.adapter as any;
-            proxy.verbose = !proxy.verbose;
-            console.log(
-              chalk.gray("  Agent output: ") +
-                (proxy.verbose ? chalk.green("visible") : chalk.yellow("hidden"))
-            );
-          } else {
-            console.log(chalk.gray("  Adapter does not support output toggling."));
-          }
-        },
       },
       {
         name: "debug",
@@ -691,13 +696,10 @@ class TeammatesREPL {
 
   // ─── Event handler ───────────────────────────────────────────────
 
-  private isVerbose(): boolean {
-    return "verbose" in this.adapter && (this.adapter as any).verbose === true;
-  }
 
   private handleEvent(event: OrchestratorEvent): void {
     // When queue is draining in background, never use spinner — it blocks the prompt
-    const useSpinner = !this.queueDraining && !this.isVerbose();
+    const useSpinner = !this.queueDraining;
 
     switch (event.type) {
       case "task_assigned":
@@ -715,22 +717,30 @@ class TeammatesREPL {
         }
         break;
 
-      case "task_completed":
+      case "task_completed": {
         if (this.spinner) {
-          this.spinner.succeed(
-            chalk.green(event.result.teammate) +
-              chalk.gray(": ") +
-              event.result.summary
-          );
+          this.spinner.stop();
           this.spinner = null;
-        } else {
-          console.log();
-          console.log(
-            chalk.green(`  ✔ ${event.result.teammate}`) +
-              chalk.gray(": ") +
-              event.result.summary
-          );
         }
+
+        // Print the full response from the agent
+        const raw = event.result.rawOutput ?? "";
+        if (raw) {
+          // Strip the trailing JSON protocol block from display
+          const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
+          if (cleaned) {
+            console.log();
+            console.log(cleaned);
+          }
+        }
+
+        console.log();
+        console.log(
+          chalk.green(`  ✔ ${event.result.teammate}`) +
+            chalk.gray(": ") +
+            event.result.summary
+        );
+      }
         break;
 
       case "handoff_initiated":
@@ -811,11 +821,13 @@ class TeammatesREPL {
     switch (choice) {
       case "1": {
         this.orchestrator.clearPendingHandoff(pending.from);
+    
         const result = await this.orchestrator.assign({
           teammate: pending.to,
           task: pending.task,
           handoff: pending,
         });
+    
         this.storeResult(result);
         return true;
       }
@@ -823,11 +835,13 @@ class TeammatesREPL {
         this.orchestrator.requireApproval = false;
         this.orchestrator.clearPendingHandoff(pending.from);
         console.log(chalk.gray("  Auto-approving all future handoffs."));
+    
         const result = await this.orchestrator.assign({
           teammate: pending.to,
           task: pending.task,
           handoff: pending,
         });
+    
         this.storeResult(result);
         return true;
       }
@@ -856,7 +870,12 @@ class TeammatesREPL {
     }
 
     const [, teammate, task] = parts;
-    const result = await this.orchestrator.assign({ teammate, task });
+
+    // Pause readline so streamed agent output isn't garbled by the prompt
+
+    const extraContext = this.buildConversationContext();
+    const result = await this.orchestrator.assign({ teammate, task, extraContext: extraContext || undefined });
+
     this.storeResult(result);
 
     if (result.handoff && this.orchestrator.requireApproval) {
@@ -878,7 +897,11 @@ class TeammatesREPL {
     }
 
     console.log(chalk.gray(`  Routed to: ${chalk.bold(match)}`));
-    const result = await this.orchestrator.assign({ teammate: match, task: argsStr });
+
+
+    const extraContext = this.buildConversationContext();
+    const result = await this.orchestrator.assign({ teammate: match, task: argsStr, extraContext: extraContext || undefined });
+
     this.storeResult(result);
   }
 
@@ -1095,46 +1118,52 @@ class TeammatesREPL {
     );
     console.log();
 
-    // Start draining if not already
-    if (!this.queueDraining) {
-      this.drainQueue();
+    // Start draining if not already (mutex-protected)
+    if (!this.drainLock) {
+      this.drainLock = this.drainQueue().finally(() => { this.drainLock = null; });
     }
   }
 
-  /** Drain the queue in the background — REPL stays responsive. */
+  /** Drain the queue in the background — REPL stays responsive. Mutex via drainLock. */
   private async drainQueue(): Promise<void> {
-    if (this.queueDraining) return;
     this.queueDraining = true;
 
-    while (this.taskQueue.length > 0) {
-      // If a handoff is pending, pause until it's resolved
-      if (this.orchestrator.getPendingHandoff()) {
-        await new Promise<void>((resolve) => {
-          const check = () => {
-            if (!this.orchestrator.getPendingHandoff()) {
-              resolve();
-            } else {
-              setTimeout(check, 500);
-            }
-          };
-          setTimeout(check, 500);
+    try {
+      while (this.taskQueue.length > 0) {
+        // If a handoff is pending, pause until it's resolved
+        if (this.orchestrator.getPendingHandoff()) {
+          await new Promise<void>((resolve) => {
+            const check = () => {
+              if (!this.orchestrator.getPendingHandoff()) {
+                resolve();
+              } else {
+                setTimeout(check, 500);
+              }
+            };
+            setTimeout(check, 500);
+          });
+          continue;
+        }
+
+        const entry = this.taskQueue.shift()!;
+        this.queueActive = entry;
+
+        const extraContext = this.buildConversationContext();
+        const result = await this.orchestrator.assign({
+          teammate: entry.teammate,
+          task: entry.task,
+          extraContext: extraContext || undefined,
         });
-        continue;
+
+        this.queueActive = null;
+        this.storeResult(result);
       }
 
-      const entry = this.taskQueue.shift()!;
-      this.queueActive = entry;
-      const result = await this.orchestrator.assign({
-        teammate: entry.teammate,
-        task: entry.task,
-      });
-      this.queueActive = null;
-      this.storeResult(result);
+      console.log(chalk.green("  ✔ Queue complete."));
+      this.rl.prompt();
+    } finally {
+      this.queueDraining = false;
     }
-
-    console.log(chalk.green("  ✔ Queue complete."));
-    this.rl.prompt();
-    this.queueDraining = false;
   }
 
   private async cmdHelp(): Promise<void> {

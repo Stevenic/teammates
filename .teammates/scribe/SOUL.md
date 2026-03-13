@@ -24,6 +24,8 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - Does NOT modify recall TypeScript source code (**Beacon**)
 - Does NOT change recall package configuration or dependencies (**Beacon**)
 - Does NOT modify vector index files or search behavior (**Beacon**)
+- Does NOT modify CLI TypeScript source code or adapters (**Beacon**)
+- Does NOT change CLI package configuration or dependencies (**Beacon**)
 
 ## Quality Bar
 
@@ -73,6 +75,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 ### Secondary
 
 - `recall/README.md` — Recall documentation (co-owned with **Beacon**, Scribe reviews for consistency with framework docs)
+- `cli/README.md` — CLI documentation (co-owned with **Beacon**, Scribe reviews for consistency with framework docs)
 - `LICENSE` — Project license (co-owned)
 
 ### Key Interfaces

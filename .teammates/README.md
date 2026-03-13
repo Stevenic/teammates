@@ -1,6 +1,6 @@
 # Teammates AI Team
 
-Two teammates covering the teammates framework: Beacon owns the recall search package, Scribe owns the templates and onboarding system.
+Two teammates covering the teammates framework: Beacon owns the recall search package and the CLI orchestrator, Scribe owns the templates and onboarding system.
 
 ## Roster
 
@@ -8,16 +8,17 @@ Two teammates covering the teammates framework: Beacon owns the recall search pa
 
 | Name | Persona | Primary Ownership | Last Active |
 |---|---|---|---|
-| **Beacon** | Semantic memory engineer | `recall/src/**`, `recall/package.json`, `recall/tsconfig.json` | 2026-03-11 |
-| **Scribe** | Framework & onboarding architect | `template/**`, `ONBOARDING.md`, `README.md` | 2026-03-11 |
+| **Beacon** | Teammates platform engineer | `recall/src/**`, `recall/package.json`, `recall/tsconfig.json`, `cli/src/**`, `cli/package.json`, `cli/tsconfig.json` | 2026-03-12 |
+| **Scribe** | Framework & onboarding architect | `template/**`, `ONBOARDING.md`, `README.md` | 2026-03-12 |
 
 ## Dependency Flow
 
 ```
 Templates (Scribe) → Onboarding (Scribe) → Recall (Beacon)
+                                          → CLI (Beacon)
 ```
 
-Scribe defines the framework structure (templates, onboarding instructions). Beacon builds the tooling that operates on the output of that framework (indexing and searching memory files). Templates are upstream, recall is downstream.
+Scribe defines the framework structure (templates, onboarding instructions). Beacon builds the tooling that operates on the output of that framework: recall for indexing and searching memory files, and the CLI orchestrator for routing tasks to teammates. Templates are upstream, recall and CLI are downstream.
 
 ## Routing Guide
 
@@ -25,7 +26,8 @@ Scribe defines the framework structure (templates, onboarding instructions). Bea
 
 | Keywords | Teammate |
 |---|---|
-| recall, search, embeddings, vectra, indexer, CLI, vector, semantic | **Beacon** |
+| recall, search, embeddings, vectra, indexer, vector, semantic | **Beacon** |
+| cli, orchestrator, adapter, REPL, handoff, agent, routing, queue | **Beacon** |
 | template, onboarding, SOUL.md, MEMORIES.md, protocol, framework, roster, markdown | **Scribe** |
 
 ## Structure

@@ -102,7 +102,7 @@ export class Orchestrator {
    * Assign a task to a specific teammate and execute it.
    * If the result contains a handoff, follows the chain automatically.
    */
-  async assign(assignment: TaskAssignment, depth = 0): Promise<TaskResult> {
+  async assign(assignment: TaskAssignment, depth = 0, visited?: Set<string>): Promise<TaskResult> {
     // Normalize: strip leading @ from teammate names (agents may use @mentions)
     assignment.teammate = assignment.teammate.replace(/^@/, "");
     if (assignment.handoff) {
@@ -120,6 +120,21 @@ export class Orchestrator {
         changedFiles: [],
       };
     }
+
+    // ── Handoff cycle detection ──────────────────────────────────
+    const chain = visited ?? new Set<string>();
+    if (chain.has(assignment.teammate)) {
+      const cycle = [...chain, assignment.teammate].join(" → ");
+      const error = `Handoff cycle detected: ${cycle}`;
+      this.onEvent({ type: "error", teammate: assignment.teammate, error });
+      return {
+        teammate: assignment.teammate,
+        success: false,
+        summary: error,
+        changedFiles: [],
+      };
+    }
+    chain.add(assignment.teammate);
 
     this.onEvent({ type: "task_assigned", assignment });
 
@@ -176,7 +191,7 @@ export class Orchestrator {
         handoff: result.handoff,
       };
 
-      const handoffResult = await this.assign(nextAssignment, depth + 1);
+      const handoffResult = await this.assign(nextAssignment, depth + 1, chain);
       this.onEvent({
         type: "handoff_completed",
         envelope: result.handoff,
