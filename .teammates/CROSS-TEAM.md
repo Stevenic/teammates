@@ -6,4 +6,6 @@ This file also serves as a **shared index** — teammates can add pointers to pr
 
 Reverse chronological. Tag affected teammates.
 
-_(No entries yet — add the first one when a cross-team lesson arises.)_
+## Shared Docs
+
+- **[Architecture](scribe/docs/ARCHITECTURE.md)** — Full project architecture: packages, data flow, key patterns, tech stack. Maintained by Scribe. _(added 2026-03-13)_
