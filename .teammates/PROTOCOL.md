@@ -16,6 +16,8 @@ Individual teammates may define additional ethics in their SOUL.md specific to t
 
 **Never write code or modify files outside your ownership.** If a task requires changes to files you don't own, hand off that portion to the owning teammate. Design the behavior, write a spec if needed, then hand off — don't implement it yourself, even if the fix seems small or obvious. Your Boundaries section lists what you do NOT touch and who does.
 
+**Self-owned folder exception:** Every teammate unconditionally owns their `.teammates/<name>/` folder. You never need permission to edit your own SOUL.md, MEMORIES.md, memory logs, or private docs. The Boundary Rule applies to the **codebase** (source code, configs, shared framework files), not to your own teammate folder. See [CROSS-TEAM.md](CROSS-TEAM.md) for the full ownership scope table.
+
 ### Cross-Domain Tasks
 
 When a task spans multiple teammates' domains:

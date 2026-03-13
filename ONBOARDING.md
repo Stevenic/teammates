@@ -51,7 +51,7 @@ For each proposed teammate, define:
 
 Once the user approves the roster, create the `.teammates/` directory in the target project.
 
-### 3a: Copy framework files
+### 3a: Copy and populate framework files
 
 Copy the following files from this repo's `template/` directory into the target project's `.teammates/` directory:
 
@@ -61,6 +61,8 @@ Copy the following files from this repo's `template/` directory into the target 
 | `template/TEMPLATE.md` | `.teammates/TEMPLATE.md` |
 | `template/USER.md` | `.teammates/USER.md` |
 | `template/.gitignore` | `.teammates/.gitignore` |
+
+**Populate CROSS-TEAM.md immediately** — fill in the Ownership Scopes table with one row per teammate. Each row should list the teammate's self-owned folder (`.teammates/<name>/**`) and their codebase ownership paths (matching the Primary Ownership section of their SOUL.md). Do not leave the placeholder row.
 
 ### 3b: Create README.md
 
@@ -101,6 +103,7 @@ Before finishing, check:
 - [ ] Boundaries in each SOUL.md correctly reference the teammate who DOES own that area
 - [ ] Dependency flow in README.md and PROTOCOL.md are consistent
 - [ ] PROTOCOL.md conflict resolution table makes sense for this project's domain structure
+- [ ] CROSS-TEAM.md Ownership Scopes table has one row per teammate with correct paths
 - [ ] `.gitignore` is in place (USER.md should not be committed)
 - [ ] USER.md exists and the user has been prompted to fill it in
 

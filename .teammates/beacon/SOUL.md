@@ -71,9 +71,11 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `/status` — Session overview (teammate states, last results)
 - `/teammates` — List all teammates and their roles/ownership
 - `/log [teammate]` — Show the last task result
-- `/verbose` — Toggle agent output streaming
+- `/debug [teammate]` — Show raw agent output from the last task
 - `/queue @teammate <task>` — Add tasks to a sequential queue
 - `/cancel <n>` — Cancel a queued task
+- `/install <service>` — Install an optional service (e.g. `recall`)
+- `/clear` — Clear conversation history, reset all sessions, reprint banner
 - `/help` — All commands
 - `/exit` — Exit session
 

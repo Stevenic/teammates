@@ -61,6 +61,8 @@ Once inside the REPL, you can interact with teammates using `@mentions`, `/comma
 | `/queue @teammate <task>` | `/qu` | Add a task to the background queue |
 | `/queue` | `/qu` | Show the current queue |
 | `/cancel <n>` | | Cancel a queued task by number |
+| `/install <service>` | | Install an optional service (e.g. `recall`) |
+| `/clear` | `/cls`, `/reset` | Clear conversation history, reset all sessions, and reprint banner |
 | `/help` | `/h`, `/?` | Show available commands |
 | `/exit` | `/q`, `/quit` | Exit the session |
 
@@ -178,6 +180,30 @@ Or for handoffs:
 ```
 
 The CLI parses the last JSON fence in the output. If no structured block is found, it falls back to scraping file paths and summaries from freeform output.
+
+## Testing
+
+Run the test suite:
+
+```bash
+cd cli
+npm test
+```
+
+Run tests in watch mode during development:
+
+```bash
+npm run test:watch
+```
+
+Tests use [Vitest](https://vitest.dev/) and cover the core modules:
+
+| File | Covers |
+|---|---|
+| `src/adapter.test.ts` | `buildTeammatePrompt`, `formatHandoffContext` |
+| `src/orchestrator.test.ts` | Task routing, assignment, handoff chains, cycle detection, reset |
+| `src/registry.test.ts` | Teammate discovery, SOUL.md parsing (role, ownership), daily logs |
+| `src/adapters/echo.test.ts` | Echo adapter session and task execution |
 
 ## Requirements
 

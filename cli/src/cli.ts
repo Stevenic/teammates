@@ -13,7 +13,10 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 import { Writable } from "node:stream";
 import { resolve, join } from "node:path";
 import { stat, mkdir, readdir } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFileCb);
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import { Orchestrator } from "./orchestrator.js";
@@ -22,7 +25,7 @@ import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js"
 import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
 import { Dropdown } from "./dropdown.js";
-import { getOnboardingPrompt } from "./onboard.js";
+import { getOnboardingPrompt, copyTemplateFiles } from "./onboard.js";
 
 // ─── Argument parsing ────────────────────────────────────────────────
 
@@ -99,6 +102,28 @@ function relativeTime(date: Date): string {
   return `${hrs}h ago`;
 }
 
+// ─── Service registry ────────────────────────────────────────────────
+
+interface ServiceEntry {
+  /** Directory relative to project root */
+  dir: string;
+  /** Build steps to run in order */
+  buildSteps: string[];
+  /** Command to verify the service binary exists */
+  checkCmd: string[];
+  /** Human-readable description */
+  description: string;
+}
+
+const SERVICE_REGISTRY: Record<string, ServiceEntry> = {
+  recall: {
+    dir: "recall",
+    buildSteps: ["npm install", "npm run build"],
+    checkCmd: ["teammates-recall", "--help"],
+    description: "Local semantic search for teammate memory",
+  },
+};
+
 // ─── Slash commands ──────────────────────────────────────────────────
 
 interface SlashCommand {
@@ -147,6 +172,7 @@ class TeammatesREPL {
     return lines.join("\n");
   }
   private adapterName: string;
+  private teammatesDir!: string;
   private taskQueue: { teammate: string; task: string }[] = [];
   private queueActive: { teammate: string; task: string } | null = null;
   private queueDraining = false;
@@ -236,6 +262,14 @@ class TeammatesREPL {
     );
     console.log();
 
+    // Copy framework files from bundled template
+    const teammatesDir = join(projectDir, ".teammates");
+    const copied = await copyTemplateFiles(teammatesDir);
+    if (copied.length > 0) {
+      console.log(chalk.green("  ✔") + chalk.gray(` Copied template files: ${copied.join(", ")}`));
+      console.log();
+    }
+
     const onboardingPrompt = await getOnboardingPrompt(projectDir);
     const tempConfig = {
       name: this.adapterName,
@@ -271,7 +305,6 @@ class TeammatesREPL {
     }
 
     // Verify .teammates/ now has content
-    const teammatesDir = join(projectDir, ".teammates");
     try {
       const entries = await readdir(teammatesDir);
       if (!entries.some(e => !e.startsWith("."))) {
@@ -363,6 +396,18 @@ class TeammatesREPL {
 
   /** Build param-completion items for the current line, if any. */
   private getParamItems(cmdName: string, argsBefore: string, partial: string): WordwheelItem[] {
+    // Service-name completions for /install
+    if (cmdName === "install" && !argsBefore.trim()) {
+      const lower = partial.toLowerCase();
+      return Object.entries(SERVICE_REGISTRY)
+        .filter(([name]) => name.startsWith(lower))
+        .map(([name, svc]) => ({
+          label: name,
+          description: svc.description,
+          completion: "/install " + name + " ",
+        }));
+    }
+
     const positions = TeammatesREPL.TEAMMATE_ARG_POSITIONS[cmdName];
     if (!positions) return [];
 
@@ -545,6 +590,7 @@ class TeammatesREPL {
     }
 
     // Init orchestrator
+    this.teammatesDir = teammatesDir;
     this.orchestrator = new Orchestrator({
       teammatesDir,
       adapter,
@@ -943,6 +989,13 @@ class TeammatesREPL {
         usage: "/clear",
         description: "Clear history and reset the session",
         run: () => this.cmdClear(),
+      },
+      {
+        name: "install",
+        aliases: [],
+        usage: "/install <service>",
+        description: "Install a teammates service (e.g. recall)",
+        run: (args) => this.cmdInstall(args),
       },
       {
         name: "exit",
@@ -1487,6 +1540,69 @@ class TeammatesREPL {
     // Reload the registry to pick up newly created teammates
     await this.orchestrator.init();
     console.log(chalk.gray("  Run /teammates to see the roster."));
+  }
+
+  private async cmdInstall(argsStr: string): Promise<void> {
+    const serviceName = argsStr.trim().toLowerCase();
+
+    if (!serviceName) {
+      console.log(chalk.bold("\n  Available services:"));
+      for (const [name, svc] of Object.entries(SERVICE_REGISTRY)) {
+        console.log(`  ${chalk.cyan(name.padEnd(16))}${chalk.gray(svc.description)}`);
+      }
+      console.log();
+      return;
+    }
+
+    const service = SERVICE_REGISTRY[serviceName];
+    if (!service) {
+      console.log(chalk.red(`  Unknown service: ${serviceName}`));
+      console.log(chalk.gray(`  Available: ${Object.keys(SERVICE_REGISTRY).join(", ")}`));
+      return;
+    }
+
+    // Resolve service directory relative to project root (.teammates/..)
+    const projectRoot = resolve(this.teammatesDir, "..");
+    const serviceDir = join(projectRoot, service.dir);
+
+    try {
+      const s = await stat(serviceDir);
+      if (!s.isDirectory()) throw new Error("not a directory");
+    } catch {
+      console.log(chalk.red(`  Service directory not found: ${serviceDir}`));
+      return;
+    }
+
+    // Run build steps
+    const spinner = ora({
+      text: chalk.blue(serviceName) + chalk.gray(` installing...`),
+      spinner: "dots",
+    }).start();
+
+    try {
+      for (const step of service.buildSteps) {
+        const [cmd, ...cmdArgs] = step.split(" ");
+        spinner.text = chalk.blue(serviceName) + chalk.gray(` running ${step}...`);
+        await execFileAsync(cmd, cmdArgs, {
+          cwd: serviceDir,
+          shell: true,
+          timeout: 5 * 60 * 1000,
+        });
+      }
+      spinner.stop();
+    } catch (err: any) {
+      spinner.fail(chalk.red(`Build failed: ${err.message}`));
+      return;
+    }
+
+    // Verify the binary works
+    try {
+      execFileSync(service.checkCmd[0], service.checkCmd.slice(1), { stdio: "ignore" });
+      console.log(chalk.green(`  ✔ ${serviceName}`) + chalk.gray(" installed successfully"));
+    } catch {
+      console.log(chalk.yellow(`  ⚠ Build succeeded but ${service.checkCmd.join(" ")} failed.`));
+      console.log(chalk.gray("  You may need to add the binary to your PATH."));
+    }
   }
 
   private async cmdClear(): Promise<void> {

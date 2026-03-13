@@ -1,15 +1,91 @@
 /**
  * Onboarding flow — guides users through setting up .teammates/ when none exists.
  *
- * Embeds a condensed version of ONBOARDING.md so the CLI works regardless of
- * installation method (monorepo, global install, npx).
+ * Ships with a copy of the template/ folder. Framework files (CROSS-TEAM.md,
+ * PROTOCOL.md, TEMPLATE.md, USER.md, .gitignore, example/) are copied into the
+ * target .teammates/ directory before the agent runs, so the agent only needs to
+ * analyze the codebase and create teammate-specific folders.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, copyFile, mkdir, stat } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Resolve the bundled template/ directory.
+ * Works from both dist/ (compiled) and src/ (dev).
+ */
+function getTemplateDir(): string {
+  const candidates = [
+    resolve(__dirname, "../template"),       // dist/ → cli/template
+    resolve(__dirname, "../../template"),     // src/ → cli/template (dev)
+  ];
+  return candidates[0]; // both resolve to the same cli/template
+}
+
+/**
+ * Copy framework files from the bundled template into the target .teammates/ dir.
+ * Skips files that already exist (idempotent).
+ * Returns the list of files that were copied.
+ */
+export async function copyTemplateFiles(teammatesDir: string): Promise<string[]> {
+  const templateDir = getTemplateDir();
+  const copied: string[] = [];
+
+  // Framework files to copy at the top level
+  const frameworkFiles = [
+    "CROSS-TEAM.md",
+    "PROTOCOL.md",
+    "TEMPLATE.md",
+    "USER.md",
+    "README.md",
+  ];
+
+  for (const file of frameworkFiles) {
+    const src = join(templateDir, file);
+    const dest = join(teammatesDir, file);
+    try {
+      await stat(dest);
+      // Already exists, skip
+    } catch {
+      try {
+        await copyFile(src, dest);
+        copied.push(file);
+      } catch { /* template file missing, skip */ }
+    }
+  }
+
+  // Create .gitignore if it doesn't exist
+  const gitignoreDest = join(teammatesDir, ".gitignore");
+  try {
+    await stat(gitignoreDest);
+  } catch {
+    const gitignoreContent = "USER.md\n.index/\n";
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(gitignoreDest, gitignoreContent, "utf-8");
+    copied.push(".gitignore");
+  }
+
+  // Copy example/ directory if it doesn't exist
+  const exampleDir = join(teammatesDir, "example");
+  try {
+    await stat(exampleDir);
+  } catch {
+    const templateExampleDir = join(templateDir, "example");
+    try {
+      await mkdir(exampleDir, { recursive: true });
+      const exampleFiles = await readdir(templateExampleDir);
+      for (const file of exampleFiles) {
+        await copyFile(join(templateExampleDir, file), join(exampleDir, file));
+        copied.push(`example/${file}`);
+      }
+    } catch { /* template example dir missing, skip */ }
+  }
+
+  return copied;
+}
 
 /**
  * Load ONBOARDING.md from the project dir, package root, or built-in fallback.
@@ -38,9 +114,25 @@ function wrapPrompt(onboardingContent: string, projectDir: string): string {
 
 **Target project directory:** ${projectDir}
 
-Follow the onboarding instructions below. Work through each step, pausing after Step 1 and Step 2 to present your analysis and proposed roster to the user for approval before proceeding.
+**Framework files have already been copied** into \`${projectDir}/.teammates/\` from the template. The following files are already in place:
+- CROSS-TEAM.md — fill in the Ownership Scopes table as you create teammates
+- PROTOCOL.md — team protocol (ready to use)
+- TEMPLATE.md — reference for creating teammate SOUL.md and MEMORIES.md files
+- USER.md — user profile (gitignored, user fills in later)
+- README.md — update with project-specific roster and info
+- .gitignore — configured for USER.md and .index/
+- example/ — example SOUL.md and MEMORIES.md for reference
 
-Create all files inside \`${projectDir}/.teammates/\`.
+**Your job is to:**
+1. Analyze the codebase (Step 1)
+2. Design the team roster (Step 2)
+3. Create teammate folders with SOUL.md and MEMORIES.md (Step 3) — use TEMPLATE.md for the structure
+4. Update README.md and CROSS-TEAM.md with the roster info (Step 3)
+5. Verify everything is in place (Step 4)
+
+You do NOT need to create the framework files listed above — they're already there.
+
+Follow the onboarding instructions below. Work through each step, pausing after Step 1 and Step 2 to present your analysis and proposed roster to the user for approval before proceeding.
 
 ---
 
@@ -84,34 +176,20 @@ For each proposed teammate, define:
 
 ## Step 3: Create the Directory Structure
 
-Once approved, create \`.teammates/\` containing:
-
-### Framework files
-- \`.teammates/.gitignore\` — should contain: USER.md and .index/
-- \`.teammates/CROSS-TEAM.md\` — shared notes between teammates
-- \`.teammates/USER.md\` — user profile (gitignored, stays local)
-
-### README.md
-Create \`.teammates/README.md\` with:
-- Project name and team description
-- Roster table (name, persona, ownership paths, date)
-- Dependency flow diagram
-- Routing guide mapping keywords to teammates
-
-### PROTOCOL.md
-Create \`.teammates/PROTOCOL.md\` with:
-- Dependency direction diagram
-- Conflict resolution rules
-- Cross-cutting concerns
+Once approved, create teammate folders under \`.teammates/\`:
 
 ### Teammate folders
 For each teammate, create \`.teammates/<name>/\` with:
 
-**SOUL.md** — Identity, core principles, boundaries, capabilities, ownership, ethics. This is the teammate's persona definition.
+**SOUL.md** — Use the template from \`.teammates/TEMPLATE.md\`. Fill in identity, core principles, boundaries, capabilities, ownership, ethics.
 
 **MEMORIES.md** — Start with one entry recording creation and key decisions.
 
 **memory/** — Empty directory for daily logs.
+
+### Update framework files
+- Update \`.teammates/README.md\` with the roster table, dependency flow, and routing guide
+- Update \`.teammates/CROSS-TEAM.md\` Ownership Scopes table with one row per teammate
 
 ## Step 4: Verify
 
@@ -119,6 +197,7 @@ Check:
 - Every roster teammate has a folder with SOUL.md and MEMORIES.md
 - Ownership globs cover the codebase without major gaps
 - Boundaries reference the correct owning teammate
+- CROSS-TEAM.md Ownership Scopes table has one row per teammate with correct paths
 - .gitignore is in place (USER.md not committed)
 
 ## Tips
