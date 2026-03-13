@@ -434,9 +434,17 @@ class TeammatesREPL {
         }
       }
 
-      // Enter/return — clear dropdown visually before readline processes it
-      // (readline doesn't call _refreshLine on Enter, so dropdown would linger)
+      // Enter/return — if a wordwheel item is highlighted, accept it into the
+      // input line first.  For no-arg commands this means a single Enter both
+      // populates and executes (e.g. arrow-down to /exit → Enter → exits).
       if (key && key.name === "return") {
+        if (hasWheel && this.wordwheelIndex >= 0) {
+          const item = this.wordwheelItems[this.wordwheelIndex];
+          if (item) {
+            (this.rl as any).line = item.completion;
+            (this.rl as any).cursor = item.completion.length;
+          }
+        }
         this.dropdown.clear();
         this.wordwheelItems = [];
         this.wordwheelIndex = -1;
