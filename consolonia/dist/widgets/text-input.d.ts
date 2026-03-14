@@ -11,6 +11,12 @@ import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
 /** Returns the style to use at each character position in the input value. */
 export type InputColorizer = (value: string) => (TextStyle | null)[];
+/**
+ * Called on backspace/delete to determine how many characters to remove.
+ * Receives the value and cursor position. Returns the number of chars to
+ * delete (backward for backspace, forward for delete). Default: 1.
+ */
+export type DeleteSizer = (value: string, cursor: number, direction: "backward" | "forward") => number;
 export interface TextInputOptions {
     placeholder?: string;
     placeholderStyle?: TextStyle;
@@ -22,6 +28,8 @@ export interface TextInputOptions {
     history?: string[];
     /** Optional per-character colorizer. Return null to use default style. */
     colorize?: InputColorizer;
+    /** Optional callback to determine delete size for backspace/delete. */
+    deleteSize?: DeleteSizer;
 }
 export declare class TextInput extends Control {
     private _value;
@@ -33,6 +41,7 @@ export declare class TextInput extends Control {
     private _cursorStyle;
     private _promptStyle;
     private _colorize;
+    private _deleteSize;
     /** Command history entries (most recent last). */
     private _history;
     /** Current position in history (-1 = not browsing, 0 = oldest). */

@@ -151,7 +151,7 @@ export { Stack, type StackOptions } from "./layout/stack.js";
 export { Text, type TextOptions } from "./widgets/text.js";
 export { Border, type BorderOptions } from "./widgets/border.js";
 export { Panel, type PanelOptions } from "./widgets/panel.js";
-export { TextInput, type TextInputOptions, type InputColorizer } from "./widgets/text-input.js";
+export { TextInput, type TextInputOptions, type InputColorizer, type DeleteSizer } from "./widgets/text-input.js";
 export { ScrollView, type ScrollViewOptions } from "./widgets/scroll-view.js";
 export { StyledText, type StyledTextOptions, type StyledLine } from "./widgets/styled-text.js";
 export {

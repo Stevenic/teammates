@@ -499,6 +499,7 @@ class TeammatesREPL {
   private dispatching = false;
   /** Stored pasted text keyed by paste number, expanded on Enter. */
   private pastedTexts: Map<number, string> = new Map();
+  private pasteCounter = 0;
   private wordwheelItems: DropdownItem[] = [];
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
 
@@ -1275,6 +1276,22 @@ class TeammatesREPL {
         }
         return styles;
       },
+      inputDeleteSize: (value: string, cursor: number, direction: "backward" | "forward") => {
+        // Delete entire paste placeholder blocks as a unit
+        const placeholder = /\[Pasted text #\d+ \+\d+ lines, [\d.]+KB\]/g;
+        let m;
+        while ((m = placeholder.exec(value)) !== null) {
+          const start = m.index;
+          const end = start + m[0].length;
+          if (direction === "backward" && cursor > start && cursor <= end) {
+            return cursor - start;
+          }
+          if (direction === "forward" && cursor >= start && cursor < end) {
+            return end - cursor;
+          }
+        }
+        return 1;
+      },
       maxInputHeight: 3,
       separatorStyle: { fg: t.separator },
       progressStyle: { fg: t.progress, italic: true },
@@ -1308,6 +1325,9 @@ class TeammatesREPL {
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
     });
+    this.chatView.on("paste", (text: string) => {
+      this.handlePaste(text);
+    });
 
     this.app = new App({
       root: this.chatView,
@@ -1321,6 +1341,37 @@ class TeammatesREPL {
     const runPromise = this.app.run();
     bannerWidget.start();
     await runPromise;
+  }
+
+  /**
+   * Handle paste events from ChatView.
+   * For multi-line or large pastes, store the text and replace
+   * the input with a compact placeholder that gets expanded on submit.
+   */
+  private handlePaste(text: string): void {
+    if (!this.chatView) return;
+    const lines = text.split(/\r?\n/).length;
+    const sizeKB = (text.length / 1024).toFixed(1);
+    // Only use placeholder for multi-line or large pastes
+    if (lines <= 1 && text.length < 200) return;
+
+    const n = ++this.pasteCounter;
+    this.pastedTexts.set(n, text);
+
+    // Replace the pasted text in the input with a placeholder.
+    // The paste was already inserted by TextInput, so we need to
+    // remove it and insert the placeholder instead.
+    const current = this.chatView.inputValue;
+    // The pasted text (with newlines stripped) was inserted at the cursor.
+    // Find it and replace with placeholder.
+    const clean = text.replace(/[\r\n]/g, "");
+    const idx = current.indexOf(clean);
+    if (idx >= 0) {
+      const placeholder = `[Pasted text #${n} +${lines} lines, ${sizeKB}KB]`;
+      const newVal = current.slice(0, idx) + placeholder + current.slice(idx + clean.length);
+      this.chatView.inputValue = newVal;
+    }
+    this.refreshView();
   }
 
   /** Handle line submission from ChatView. */

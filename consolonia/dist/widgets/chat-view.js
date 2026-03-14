@@ -122,6 +122,7 @@ export class ChatView extends Control {
             placeholderStyle: options.placeholderStyle ?? { italic: true },
             history: options.history,
             colorize: options.inputColorize,
+            deleteSize: options.inputDeleteSize,
         });
         this._input.focusable = true;
         this._input.onFocus();
@@ -140,6 +141,7 @@ export class ChatView extends Control {
         // Wire input events to ChatView events
         this._input.on("submit", (text) => this.emit("submit", text));
         this._input.on("change", (text) => this.emit("change", text));
+        this._input.on("paste", (text) => this.emit("paste", text));
         this._input.on("cancel", () => {
             if (this._dropdownItems.length > 0) {
                 this.hideDropdown();

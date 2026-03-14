@@ -36,7 +36,7 @@ import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
 import { Text } from "./text.js";
 import { StyledText, type StyledLine } from "./styled-text.js";
-import { TextInput, type InputColorizer } from "./text-input.js";
+import { TextInput, type InputColorizer, type DeleteSizer } from "./text-input.js";
 import type { StyledSpan } from "../styled.js";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -67,6 +67,8 @@ export interface ChatViewOptions {
   cursorStyle?: TextStyle;
   /** Per-character colorizer for input text. */
   inputColorize?: InputColorizer;
+  /** Callback to determine delete size for backspace/delete in input. */
+  inputDeleteSize?: DeleteSizer;
   /** Placeholder when input is empty. */
   placeholder?: string;
   /** Style for placeholder text. */
@@ -195,6 +197,7 @@ export class ChatView extends Control {
       placeholderStyle: options.placeholderStyle ?? { italic: true },
       history: options.history,
       colorize: options.inputColorize,
+      deleteSize: options.inputDeleteSize,
     });
     this._input.focusable = true;
     this._input.onFocus();
@@ -216,6 +219,7 @@ export class ChatView extends Control {
     // Wire input events to ChatView events
     this._input.on("submit", (text: string) => this.emit("submit", text));
     this._input.on("change", (text: string) => this.emit("change", text));
+    this._input.on("paste", (text: string) => this.emit("paste", text));
     this._input.on("cancel", () => {
       if (this._dropdownItems.length > 0) {
         this.hideDropdown();

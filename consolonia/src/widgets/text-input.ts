@@ -14,6 +14,13 @@ import type { InputEvent, KeyEvent, PasteEvent } from "../input/events.js";
 /** Returns the style to use at each character position in the input value. */
 export type InputColorizer = (value: string) => (TextStyle | null)[];
 
+/**
+ * Called on backspace/delete to determine how many characters to remove.
+ * Receives the value and cursor position. Returns the number of chars to
+ * delete (backward for backspace, forward for delete). Default: 1.
+ */
+export type DeleteSizer = (value: string, cursor: number, direction: "backward" | "forward") => number;
+
 export interface TextInputOptions {
   placeholder?: string;
   placeholderStyle?: TextStyle;
@@ -25,6 +32,8 @@ export interface TextInputOptions {
   history?: string[];
   /** Optional per-character colorizer. Return null to use default style. */
   colorize?: InputColorizer;
+  /** Optional callback to determine delete size for backspace/delete. */
+  deleteSize?: DeleteSizer;
 }
 
 export class TextInput extends Control {
@@ -37,6 +46,7 @@ export class TextInput extends Control {
   private _cursorStyle: TextStyle;
   private _promptStyle: TextStyle;
   private _colorize: InputColorizer | null;
+  private _deleteSize: DeleteSizer | null;
 
   /** Command history entries (most recent last). */
   private _history: string[];
@@ -62,6 +72,7 @@ export class TextInput extends Control {
     this._promptStyle = options.promptStyle ?? {};
     this._history = options.history ? [...options.history] : [];
     this._colorize = options.colorize ?? null;
+    this._deleteSize = options.deleteSize ?? null;
   }
 
   // ── Public properties ─────────────────────────────────────────
@@ -236,25 +247,32 @@ export class TextInput extends Control {
       return true;
     }
 
-    // ── Backspace → delete char before cursor ───────────────
+    // ── Backspace → delete char(s) before cursor ─────────────
     if (key.key === "backspace") {
       if (this._cursor > 0) {
+        const count = this._deleteSize
+          ? Math.max(1, this._deleteSize(this._value, this._cursor, "backward"))
+          : 1;
+        const deleteFrom = Math.max(0, this._cursor - count);
         this._value =
-          this._value.slice(0, this._cursor - 1) +
+          this._value.slice(0, deleteFrom) +
           this._value.slice(this._cursor);
-        this._cursor--;
+        this._cursor = deleteFrom;
         this.emit("change", this._value);
         this.invalidate();
       }
       return true;
     }
 
-    // ── Delete → delete char at cursor ──────────────────────
+    // ── Delete → delete char(s) at cursor ────────────────────
     if (key.key === "delete") {
       if (this._cursor < this._value.length) {
+        const count = this._deleteSize
+          ? Math.max(1, this._deleteSize(this._value, this._cursor, "forward"))
+          : 1;
         this._value =
           this._value.slice(0, this._cursor) +
-          this._value.slice(this._cursor + 1);
+          this._value.slice(this._cursor + count);
         this.emit("change", this._value);
         this.invalidate();
       }

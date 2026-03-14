@@ -34,7 +34,7 @@ import type { Size, Constraint, Rect } from "../layout/types.js";
 import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
 import { type StyledLine } from "./styled-text.js";
-import { TextInput, type InputColorizer } from "./text-input.js";
+import { TextInput, type InputColorizer, type DeleteSizer } from "./text-input.js";
 import type { StyledSpan } from "../styled.js";
 export interface DropdownItem {
     /** Display label (left column). */
@@ -61,6 +61,8 @@ export interface ChatViewOptions {
     cursorStyle?: TextStyle;
     /** Per-character colorizer for input text. */
     inputColorize?: InputColorizer;
+    /** Callback to determine delete size for backspace/delete in input. */
+    inputDeleteSize?: DeleteSizer;
     /** Placeholder when input is empty. */
     placeholder?: string;
     /** Style for placeholder text. */
