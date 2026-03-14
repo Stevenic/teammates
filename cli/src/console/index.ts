@@ -16,6 +16,7 @@ export { PasteHandler, type PasteResult, type PasteHandlerOptions } from "./past
 export { FileDropHandler, type FileAttachment } from "./file-drop.js";
 export { Dropdown } from "./dropdown.js";
 export { PromptBox, type PromptBoxOptions } from "./prompt-box.js";
+export { PromptInput, type PromptInputOptions } from "./prompt-input.js";
 export { Wordwheel, type WordwheelItem, type WordwheelOptions } from "./wordwheel.js";
 export {
   cursorUp,

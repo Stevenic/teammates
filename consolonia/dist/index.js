@@ -43,3 +43,5 @@ export { Border } from "./widgets/border.js";
 export { Panel } from "./widgets/panel.js";
 export { TextInput } from "./widgets/text-input.js";
 export { ScrollView } from "./widgets/scroll-view.js";
+// ── App shell ────────────────────────────────────────────────────────
+export { App } from "./app.js";

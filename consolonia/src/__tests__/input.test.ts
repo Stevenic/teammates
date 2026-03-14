@@ -880,22 +880,13 @@ describe('InputProcessor', () => {
     expect(keys).toEqual(['h', 'e', 'l', 'l', 'o']);
   });
 
-  // NOTE: The PasteMatcher has highest priority and claims ESC as Partial
-  // because ESC starts the paste start marker (\x1b[200~). When the sequence
-  // turns out not to be a paste (e.g., \x1b[A for up-arrow), the ESC and [
-  // chars are consumed and lost. Only the final char (e.g., 'A') is re-tried
-  // against all matchers. This is the current processor behavior — non-paste
-  // escape sequences that share the \x1b[ prefix are degraded.
-
-  it('escape sequences starting with \\x1b[ are consumed by paste matcher priority (known behavior)', () => {
-    // \x1b[A: PasteMatcher eats ESC and [, then A falls through to TextMatcher
+  it('parses arrow key \\x1b[A as up through parallel matching', () => {
     const events = collectEvents('\x1b[A');
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe('key');
     if (events[0].type === 'key') {
-      // Due to paste matcher priority, only 'A' survives as a text key
-      expect(events[0].event.key).toBe('A');
-      expect(events[0].event.shift).toBe(true);
+      expect(events[0].event.key).toBe('up');
+      expect(events[0].event.shift).toBe(false);
     }
   });
 
@@ -908,14 +899,15 @@ describe('InputProcessor', () => {
     }
   });
 
-  it('SGR mouse sequence chars are individually parsed as text (paste matcher priority)', () => {
-    // \x1b[<0;5;10M: PasteMatcher eats ESC and [, then < and the rest are
-    // processed individually by TextMatcher. This is the current behavior.
+  it('parses SGR mouse sequence through parallel matching', () => {
     const events = collectEvents('\x1b[<0;5;10M');
-    expect(events).toHaveLength(8);
-    // All events should be key events for the individual characters
-    for (const ev of events) {
-      expect(ev.type).toBe('key');
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('mouse');
+    if (events[0].type === 'mouse') {
+      expect(events[0].event.button).toBe('left');
+      expect(events[0].event.type).toBe('press');
+      expect(events[0].event.x).toBe(4);
+      expect(events[0].event.y).toBe(9);
     }
   });
 
@@ -923,27 +915,20 @@ describe('InputProcessor', () => {
     const events = collectEvents('ab\x1b[Acd');
     expect(events).toHaveLength(5);
 
-    // 'a', 'b', then ESC+[ consumed by paste matcher, 'A' as text, 'c', 'd'
-    expect(events[0].type).toBe('key');
-    expect(events[1].type).toBe('key');
-    expect(events[2].type).toBe('key');
-    expect(events[3].type).toBe('key');
-    expect(events[4].type).toBe('key');
-
+    // 'a', 'b', up-arrow, 'c', 'd'
     if (events[0].type === 'key') expect(events[0].event.key).toBe('a');
     if (events[1].type === 'key') expect(events[1].event.key).toBe('b');
-    if (events[2].type === 'key') expect(events[2].event.key).toBe('A');
+    if (events[2].type === 'key') expect(events[2].event.key).toBe('up');
     if (events[3].type === 'key') expect(events[3].event.key).toBe('c');
     if (events[4].type === 'key') expect(events[4].event.key).toBe('d');
   });
 
-  it('handles multiple escape sequences in a row (degraded by paste priority)', () => {
+  it('handles multiple escape sequences in a row', () => {
     const events = collectEvents('\x1b[A\x1b[B\x1b[C');
-    // Each \x1b[X sequence: ESC+[ consumed by paste matcher, final char as text
     expect(events).toHaveLength(3);
-    if (events[0].type === 'key') expect(events[0].event.key).toBe('A');
-    if (events[1].type === 'key') expect(events[1].event.key).toBe('B');
-    if (events[2].type === 'key') expect(events[2].event.key).toBe('C');
+    if (events[0].type === 'key') expect(events[0].event.key).toBe('up');
+    if (events[1].type === 'key') expect(events[1].event.key).toBe('down');
+    if (events[2].type === 'key') expect(events[2].event.key).toBe('right');
   });
 
   it('handles control characters mixed with text', () => {
@@ -963,15 +948,15 @@ describe('InputProcessor', () => {
     }
   });
 
-  it('paste matcher priority means mouse sequences are not recognized', () => {
-    // Both PasteMatcher and MouseMatcher start with \x1b[, but PasteMatcher
-    // has higher priority and claims the ESC first. When it fails (sees < instead
-    // of 2), the remaining chars are re-tried individually.
+  it('mouse sequences are recognized through parallel matching', () => {
     const events = collectEvents('\x1b[<0;1;1M');
-    expect(events.length).toBeGreaterThan(1);
-    // The individual chars <, 0, ;, 1, ;, 1, M are emitted as text key events
-    for (const ev of events) {
-      expect(ev.type).toBe('key');
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('mouse');
+    if (events[0].type === 'mouse') {
+      expect(events[0].event.button).toBe('left');
+      expect(events[0].event.type).toBe('press');
+      expect(events[0].event.x).toBe(0);
+      expect(events[0].event.y).toBe(0);
     }
   });
 
@@ -990,24 +975,22 @@ describe('InputProcessor', () => {
     if (events[5].type === 'key') expect(events[5].event.key).toBe('r');
   });
 
-  it('SS3 F-keys: \\x1bOP degraded by paste matcher (ESC consumed, O and P as text)', () => {
-    // \x1bOP: PasteMatcher takes ESC as Partial, then O does not match [ -> NoMatch.
-    // O is retried: PasteMatcher NoMatch, MouseMatcher NoMatch, EscapeMatcher NoMatch
-    // (O is code 79, printable), TextMatcher matches O.
-    // Then P is processed: TextMatcher matches P.
+  it('SS3 F-keys: \\x1bOP recognized as F1 through parallel matching', () => {
     const events = collectEvents('\x1bOP');
-    expect(events).toHaveLength(2);
-    if (events[0].type === 'key') expect(events[0].event.key).toBe('O');
-    if (events[1].type === 'key') expect(events[1].event.key).toBe('P');
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('key');
+    if (events[0].type === 'key') {
+      expect(events[0].event.key).toBe('f1');
+    }
   });
 
-  it('delete key \\x1b[3~ degraded by paste matcher', () => {
-    // \x1b[3~: PasteMatcher eats ESC, [, then 3 does not match '2' -> NoMatch.
-    // 3 retried -> TextMatcher. ~ retried -> TextMatcher.
+  it('delete key \\x1b[3~ recognized through parallel matching', () => {
     const events = collectEvents('\x1b[3~');
-    expect(events).toHaveLength(2);
-    if (events[0].type === 'key') expect(events[0].event.key).toBe('3');
-    if (events[1].type === 'key') expect(events[1].event.key).toBe('~');
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('key');
+    if (events[0].type === 'key') {
+      expect(events[0].event.key).toBe('delete');
+    }
   });
 
   it('control characters are handled even with paste matcher priority', () => {

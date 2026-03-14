@@ -2,9 +2,9 @@
  * InputProcessor — the central input pipeline.
  * Port of Consolonia's InputProcessor.cs.
  *
- * Maintains an ordered list of matchers. Raw stdin data is fed character
- * by character through the matcher chain. When a matcher completes a
- * sequence, the corresponding InputEvent is emitted.
+ * All matchers run in parallel on each character. When multiple matchers
+ * return Partial, all of them continue receiving input. The first matcher
+ * (by priority order) to return Complete wins, and the others are reset.
  *
  * Matcher priority order: PasteMatcher > MouseMatcher > EscapeMatcher > TextMatcher
  *
@@ -25,20 +25,21 @@ export class InputProcessor {
     matchers;
     escapeMatcher;
     emitter;
-    /** Index of the matcher currently holding a partial match, or -1. */
-    activeIndex = -1;
+    /** Which matchers are still active (Partial or not yet tried) for the current sequence. */
+    active;
     /** Timer for the escape key timeout. */
     escTimer = null;
     constructor(emitter) {
         this.emitter = emitter;
         this.escapeMatcher = new EscapeMatcher();
-        // Priority order — first matcher to claim a sequence wins.
+        // Priority order — first matcher to complete wins.
         this.matchers = [
             new PasteMatcher(),
             new MouseMatcher(),
             this.escapeMatcher,
             new TextMatcher(),
         ];
+        this.active = this.matchers.map(() => true);
     }
     /**
      * Feed a chunk of raw stdin data into the processor.
@@ -56,64 +57,68 @@ export class InputProcessor {
     feedChar(char) {
         // Cancel any pending ESC timeout — we got more input.
         this.clearEscTimer();
-        // If a matcher is actively consuming a partial sequence, try it first.
-        if (this.activeIndex >= 0) {
-            const matcher = this.matchers[this.activeIndex];
-            const result = matcher.append(char);
-            if (result === MatchResult.Complete) {
-                const ev = matcher.flush();
-                this.activeIndex = -1;
-                if (ev) {
-                    this.emit(ev);
-                }
-                this.scheduleEscTimeoutIfNeeded();
-                return;
-            }
-            if (result === MatchResult.Partial) {
-                this.scheduleEscTimeoutIfNeeded();
-                return;
-            }
-            // NoMatch from the active matcher — it failed to continue.
-            // Reset it and fall through to try all matchers from scratch.
-            matcher.reset();
-            this.activeIndex = -1;
-        }
-        // Try each matcher in priority order.
+        let completed = -1;
+        // Feed the character to ALL active matchers in priority order.
         for (let i = 0; i < this.matchers.length; i++) {
-            const matcher = this.matchers[i];
-            const result = matcher.append(char);
+            if (!this.active[i])
+                continue;
+            const result = this.matchers[i].append(char);
             if (result === MatchResult.Complete) {
-                const ev = matcher.flush();
-                if (ev) {
-                    this.emit(ev);
-                }
-                this.scheduleEscTimeoutIfNeeded();
-                return;
+                completed = i;
+                break; // Highest-priority complete wins
             }
-            if (result === MatchResult.Partial) {
-                this.activeIndex = i;
-                this.scheduleEscTimeoutIfNeeded();
-                return;
+            if (result === MatchResult.NoMatch) {
+                this.matchers[i].reset();
+                this.active[i] = false;
             }
-            // NoMatch — try next matcher
+            // Partial: matcher stays active
         }
-        // No matcher claimed this character. Silently discard.
+        if (completed >= 0) {
+            const ev = this.matchers[completed].flush();
+            // Reset all matchers EXCEPT the completed one (it manages its own state,
+            // e.g. EscapeMatcher stays in GotEsc after double-ESC).
+            for (let i = 0; i < this.matchers.length; i++) {
+                if (i !== completed) {
+                    this.matchers[i].reset();
+                }
+                this.active[i] = true;
+            }
+            if (ev) {
+                this.emit(ev);
+            }
+            this.scheduleEscTimeoutIfNeeded();
+            return;
+        }
+        // Check if any matcher is still active (in Partial state).
+        const anyActive = this.active.some(a => a);
+        if (!anyActive) {
+            // No matcher claimed this sequence. Reset all for next input.
+            this.resetAll();
+            return;
+        }
+        // Some matchers still in Partial state — check for ESC timeout.
+        this.scheduleEscTimeoutIfNeeded();
+    }
+    /** Reset all matchers and re-activate them. */
+    resetAll() {
+        for (let i = 0; i < this.matchers.length; i++) {
+            this.matchers[i].reset();
+            this.active[i] = true;
+        }
     }
     /**
-     * If the escape matcher is currently the active matcher (holding a
-     * partial \x1b), schedule a timeout to emit the escape key event.
+     * If the escape matcher is active and holding a partial \x1b,
+     * schedule a timeout to emit the escape key event.
      */
     scheduleEscTimeoutIfNeeded() {
-        if (this.activeIndex < 0)
-            return;
-        const activeMatcher = this.matchers[this.activeIndex];
-        if (activeMatcher !== this.escapeMatcher)
+        const escIdx = this.matchers.indexOf(this.escapeMatcher);
+        if (escIdx < 0 || !this.active[escIdx])
             return;
         this.escTimer = setTimeout(() => {
             this.escTimer = null;
             const ev = this.escapeMatcher.flushEscapeTimeout();
             if (ev) {
-                this.activeIndex = -1;
+                this.resetAll();
                 this.emit(ev);
             }
         }, ESC_TIMEOUT_MS);

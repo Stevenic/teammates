@@ -39,3 +39,4 @@ export { Border, type BorderOptions } from "./widgets/border.js";
 export { Panel, type PanelOptions } from "./widgets/panel.js";
 export { TextInput, type TextInputOptions } from "./widgets/text-input.js";
 export { ScrollView, type ScrollViewOptions } from "./widgets/scroll-view.js";
+export { App, type AppOptions } from "./app.js";

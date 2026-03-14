@@ -9,8 +9,7 @@
  *   teammates --dir <path>        Override .teammates/ location
  */
 
-import { createInterface, type Interface as ReadlineInterface } from "node:readline";
-import { Writable } from "node:stream";
+import { createInterface } from "node:readline";
 import { resolve, join } from "node:path";
 import { stat, mkdir, readdir } from "node:fs/promises";
 import { execSync, exec as execCb, spawn as cpSpawn, type ChildProcess } from "node:child_process";
@@ -25,7 +24,8 @@ import type { AgentAdapter } from "./adapter.js";
 import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js";
 import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
-import { PromptBox } from "./console/prompt-box.js";
+import { PromptInput } from "./console/prompt-input.js";
+import { playStartup, buildTitle } from "./console/startup.js";
 import { getOnboardingPrompt, copyTemplateFiles } from "./onboard.js";
 import { compactEpisodic } from "./compact.js";
 
@@ -164,7 +164,7 @@ interface WordwheelItem {
 class TeammatesREPL {
   private orchestrator!: Orchestrator;
   private adapter!: AgentAdapter;
-  private rl!: ReadlineInterface;
+  private input!: PromptInput;
   private spinner: Ora | null = null;
   private commands: Map<string, SlashCommand> = new Map();
   private lastResult: TaskResult | null = null;
@@ -202,7 +202,6 @@ class TeammatesREPL {
   private dispatching = false;
   /** Stored pasted text keyed by paste number, expanded on Enter. */
   private pastedTexts: Map<number, string> = new Map();
-  private promptBox!: PromptBox;
   private wordwheelItems: WordwheelItem[] = [];
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
 
@@ -210,10 +209,9 @@ class TeammatesREPL {
     this.adapterName = adapterName;
   }
 
-  /** Show the prompt with the top border fence. */
+  /** Show the prompt with the fenced border. */
   private showPrompt(): void {
-    this.promptBox.drawTopBorder();
-    this.rl.prompt();
+    this.input.activate();
   }
 
   // ─── Onboarding ───────────────────────────────────────────────────
@@ -369,12 +367,15 @@ class TeammatesREPL {
    * Render the box logo with up to 4 info lines on the right side.
    */
   private printLogo(infoLines: string[]): void {
-    const pad = (i: number) => infoLines[i] ? "   " + infoLines[i] : "";
-    console.log(chalk.cyan(" ▐▛▀▀▀▀▀▀▜▌") + pad(0));
-    console.log(chalk.cyan(" ▐▌") + "      " + chalk.cyan("▐▌") + pad(1));
-    console.log(chalk.cyan(" ▐▌") + "  🧬  " + chalk.cyan("▐▌") + pad(2));
-    console.log(chalk.cyan(" ▐▌") + "      " + chalk.cyan("▐▌") + pad(3));
-    console.log(chalk.cyan(" ▐▙▄▄▄▄▄▄▟▌"));
+    const [top, bot] = buildTitle("teammates");
+    console.log("  " + chalk.cyan(top));
+    console.log("  " + chalk.cyan(bot));
+    if (infoLines.length > 0) {
+      console.log();
+      for (const line of infoLines) {
+        console.log("  " + line);
+      }
+    }
   }
 
   /**
@@ -404,11 +405,11 @@ class TeammatesREPL {
   }
 
   private clearWordwheel(): void {
-    this.promptBox.clearDropdown();
+    this.input.clearDropdown();
   }
 
   private writeWordwheel(lines: string[]): void {
-    this.promptBox.setDropdown(lines);
+    this.input.setDropdown(lines);
   }
 
   /**
@@ -496,8 +497,8 @@ class TeammatesREPL {
   /** Recompute matches and draw the wordwheel. */
   private updateWordwheel(): void {
     this.clearWordwheel();
-    const line: string = (this.rl as any).line ?? "";
-    const cursor: number = (this.rl as any).cursor ?? line.length;
+    const line: string = this.input.line;
+    const cursor: number = this.input.cursor;
 
     // ── @mention anywhere in the line ──────────────────────────────
     const mention = this.findAtMention(line, cursor);
@@ -596,9 +597,7 @@ class TeammatesREPL {
     const item = this.wordwheelItems[this.wordwheelIndex];
     if (!item) return;
     this.clearWordwheel();
-    (this.rl as any).line = item.completion;
-    (this.rl as any).cursor = item.completion.length;
-    (this.rl as any)._refreshLine();
+    this.input.setLine(item.completion);
     this.wordwheelItems = [];
     this.wordwheelIndex = -1;
     // Re-render for next param or usage hint
@@ -675,175 +674,64 @@ class TeammatesREPL {
     // Register commands
     this.registerCommands();
 
-    // Create readline with a mutable output stream so we can mute
-    // echo during paste detection.
-    let outputMuted = false;
-    const mutableOutput = new Writable({
-      write(chunk, _encoding, callback) {
-        if (!outputMuted) process.stdout.write(chunk);
-        callback();
-      },
-    });
-    // Trick readline into thinking it's a real TTY
-    (mutableOutput as any).columns = process.stdout.columns;
-    (mutableOutput as any).rows = process.stdout.rows;
-    (mutableOutput as any).isTTY = true;
-    (mutableOutput as any).cursorTo = process.stdout.cursorTo?.bind(process.stdout);
-    (mutableOutput as any).clearLine = process.stdout.clearLine?.bind(process.stdout);
-    (mutableOutput as any).moveCursor = process.stdout.moveCursor?.bind(process.stdout);
-    (mutableOutput as any).getWindowSize = () => [process.stdout.columns ?? 80, process.stdout.rows ?? 24];
-    process.stdout.on("resize", () => {
-      (mutableOutput as any).columns = process.stdout.columns;
-      (mutableOutput as any).rows = process.stdout.rows;
-      mutableOutput.emit("resize");
-    });
-
-    this.rl = createInterface({
-      input: process.stdin,
-      output: mutableOutput,
+    // Create PromptInput — consolonia-based replacement for readline.
+    // Uses raw stdin + InputProcessor for proper escape/paste/mouse parsing.
+    this.input = new PromptInput({
       prompt: chalk.cyan("teammates") + chalk.gray("> "),
-      terminal: true,
-    });
-    this.promptBox = new PromptBox({
-      rl: this.rl,
       borderStyle: (s) => chalk.gray(s),
-    });
-
-    // Pre-mute: if stdin delivers a large chunk (paste), mute output
-    // immediately BEFORE readline echoes anything.
-    process.stdin.prependListener("data", (chunk: Buffer) => {
-      const str = chunk.toString();
-      const hasMultipleNewlines = str.includes("\n") && str.indexOf("\n") < str.length - 1;
-      const isLongChunk = str.length > 100;
-      if (hasMultipleNewlines || isLongChunk) {
-        outputMuted = true;
-      }
-    });
-
-    // Intercept all keypress via _ttyWrite so we can capture
-    // arrow-down / arrow-up / Tab for wordwheel navigation.
-    // Also used for paste prefix detection via timing heuristic.
-    let lastKeystrokeTime = 0;
-    const origTtyWrite = (this.rl as any)._ttyWrite.bind(this.rl);
-    (this.rl as any)._ttyWrite = (s: string, key: any) => {
-      // Timing-based paste prefix detection: if >50ms since last keystroke,
-      // this is a new input burst. Snapshot rl.line BEFORE readline processes
-      // this character — during a paste burst, characters arrive <5ms apart
-      // so the snapshot stays at the pre-paste value.
-      const now = Date.now();
-      if (now - lastKeystrokeTime > 50) {
-        prePastePrefix = (this.rl as any).line ?? "";
-      }
-      lastKeystrokeTime = now;
-
-      const hasWheel = this.wordwheelItems.length > 0;
-
-      if (hasWheel && key) {
-        if (key.name === "down") {
+      onUpDown: (dir) => {
+        if (this.wordwheelItems.length === 0) return false;
+        if (dir === "up") {
+          this.wordwheelIndex = Math.max(this.wordwheelIndex - 1, -1);
+        } else {
           this.wordwheelIndex = Math.min(
             this.wordwheelIndex + 1,
             this.wordwheelItems.length - 1
           );
-          this.renderItems(); // calls dropdown.render() → _refreshLine()
-          return;
         }
-        if (key.name === "up") {
-          this.wordwheelIndex = Math.max(this.wordwheelIndex - 1, -1);
-          this.renderItems(); // calls dropdown.render() → _refreshLine()
-          return;
-        }
-        if (key.name === "tab" && this.wordwheelIndex >= 0) {
-          this.acceptWordwheelSelection();
-          return;
-        }
-      }
-
-      // Enter/return — if a wordwheel item is highlighted, accept it into the
-      // input line first.  For no-arg commands this means a single Enter both
-      // populates and executes (e.g. arrow-down to /exit → Enter → exits).
-      if (key && key.name === "return") {
-        if (hasWheel && this.wordwheelIndex >= 0) {
+        this.renderItems();
+        return true;
+      },
+      beforeSubmit: (currentValue) => {
+        // If a wordwheel item is highlighted, accept it into the line
+        if (this.wordwheelItems.length > 0 && this.wordwheelIndex >= 0) {
           const item = this.wordwheelItems[this.wordwheelIndex];
           if (item) {
-            (this.rl as any).line = item.completion;
-            (this.rl as any).cursor = item.completion.length;
+            this.clearWordwheel();
+            this.wordwheelItems = [];
+            this.wordwheelIndex = -1;
+            return item.completion;
           }
         }
-        this.promptBox.clearDropdown();
+        this.clearWordwheel();
         this.wordwheelItems = [];
         this.wordwheelIndex = -1;
-        // Force a refresh to erase dropdown, then let readline process Enter
-        (this.rl as any)._refreshLine();
-        origTtyWrite(s, key);
-        return;
-      }
+        return currentValue;
+      },
+    });
 
-      // Any other key — clear dropdown, let readline handle keystroke,
-      // then recompute and render the new dropdown.
-      this.promptBox.clearDropdown();
+    this.input.on("tab", () => {
+      if (this.wordwheelItems.length > 0 && this.wordwheelIndex >= 0) {
+        this.acceptWordwheelSelection();
+      }
+    });
+
+    this.input.on("change", () => {
+      // Clear old wordwheel, recompute from new input
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
-      origTtyWrite(s, key);
-      // origTtyWrite called _refreshLine which cleared old dropdown.
-      // Now compute new items and render (calls _refreshLine again with new suffix).
       this.updateWordwheel();
-    };
+    });
 
-    // Banner
-    this.printBanner(this.orchestrator.listTeammates());
+    // ── Line submission ──────────────────────────────────────────────
 
-    // REPL loop
-    this.showPrompt();
+    this.input.on("line", async (rawLine: string) => {
+      this.clearWordwheel();
+      this.wordwheelItems = [];
+      this.wordwheelIndex = -1;
 
-    // ── Paste detection ──────────────────────────────────────────────
-    // Strategy: the first `line` event echoes normally. We immediately
-    // mute output so subsequent pasted lines are invisible. After 30ms
-    // of quiet, we check: if only 1 line arrived it was normal typing
-    // (already echoed, good). If multiple lines arrived, we erase the
-    // one echoed line and show a placeholder instead.
-    let pasteBuffer: string[] = [];
-    let pasteTimer: ReturnType<typeof setTimeout> | null = null;
-    let pasteCount = 0;
-    let prePastePrefix = ""; // text user typed before paste started
-
-    const processPaste = async () => {
-      pasteTimer = null;
-      outputMuted = false;
-      const lines = pasteBuffer;
-      pasteBuffer = [];
-
-      if (lines.length === 0) return;
-
-      if (lines.length > 1) {
-        // Multi-line paste — the first line was echoed, the rest were muted.
-        // Erase the first echoed line (move up 1, clear).
-        process.stdout.write("\x1b[A\x1b[2K");
-
-        pasteCount++;
-        const combined = lines.join("\n");
-        const sizeKB = Buffer.byteLength(combined, "utf-8") / 1024;
-        const tag = `[Pasted text #${pasteCount} +${lines.length} lines, ${sizeKB.toFixed(1)}KB] `;
-
-        // Store the pasted text — expanded when the user presses Enter.
-        this.pastedTexts.set(pasteCount, combined);
-
-        // Restore what the user typed before the paste, plus the placeholder.
-        const newLine = prePastePrefix + tag;
-        prePastePrefix = ""; // reset for next paste
-        (this.rl as any).line = newLine;
-        (this.rl as any).cursor = newLine.length;
-        this.rl.prompt(true);
-        return;
-      }
-
-      // Single line — may have been muted if it was a long paste.
-      const rawLine = lines[0];
-      if (rawLine.length > 100) {
-        // Was muted — show a truncated version so user sees what was submitted
-        const preview = rawLine.slice(0, 80) + chalk.gray("...");
-        process.stdout.write(`\r\x1b[2K`);
-        console.log(chalk.cyan("teammates") + chalk.gray("> ") + preview);
-      }
+      // Deactivate prompt so agent output doesn't garble it
+      this.input.deactivate();
 
       // Expand paste placeholders with actual content
       const hasPaste = /\[Pasted text #\d+/.test(rawLine);
@@ -858,13 +746,12 @@ class TeammatesREPL {
         return "";
       }).trim();
 
-      // Show the expanded pasted content on Enter
+      // Show the expanded pasted content
       if (hasPaste && input) {
         const sizeKB = Buffer.byteLength(input, "utf-8") / 1024;
         const lineCount = input.split("\n").length;
         console.log();
         console.log(chalk.gray(`  ┌ Expanded paste (${lineCount} lines, ${sizeKB.toFixed(1)}KB)`));
-        // Show first few lines as preview
         const previewLines = input.split("\n").slice(0, 5);
         for (const l of previewLines) {
           console.log(chalk.gray(`  │ `) + l.slice(0, 120));
@@ -885,7 +772,6 @@ class TeammatesREPL {
       }
 
       this.dispatching = true;
-      this.promptBox.deactivate();
       try {
         await this.dispatch(input);
       } catch (err: any) {
@@ -895,31 +781,71 @@ class TeammatesREPL {
       }
 
       this.showPrompt();
-    };
-
-    this.rl.on("line", (line: string) => {
-      this.promptBox.clearDropdown();
-      this.wordwheelItems = [];
-      this.wordwheelIndex = -1;
-
-      pasteBuffer.push(line);
-
-      // After the first line, mute readline output so subsequent
-      // pasted lines don't echo to the terminal.
-      if (pasteBuffer.length === 1) {
-        outputMuted = true;
-      }
-
-      if (pasteTimer) clearTimeout(pasteTimer);
-      pasteTimer = setTimeout(processPaste, 30);
     });
 
-    this.rl.on("close", async () => {
+    // ── Paste handling (bracketed paste from consolonia) ──────────────
+
+    let pasteCount = 0;
+
+    this.input.on("paste", (text: string) => {
+      const lines = text.split("\n");
+
+      if (lines.length > 1) {
+        // Multi-line paste — collapse into a placeholder tag
+        pasteCount++;
+        const combined = text;
+        const sizeKB = Buffer.byteLength(combined, "utf-8") / 1024;
+        const tag = `[Pasted text #${pasteCount} +${lines.length} lines, ${sizeKB.toFixed(1)}KB] `;
+
+        this.pastedTexts.set(pasteCount, combined);
+
+        // Append the placeholder tag to the current line
+        const current = this.input.line;
+        this.input.setLine(current + tag);
+      } else {
+        // Single line paste — insert directly
+        const current = this.input.line;
+        const cursor = this.input.cursor;
+        this.input.setLine(
+          current.slice(0, cursor) + text + current.slice(cursor)
+        );
+      }
+    });
+
+    // ── Close handler ────────────────────────────────────────────────
+
+    this.input.on("close", async () => {
       this.clearWordwheel();
       console.log(chalk.gray("\nShutting down..."));
       await this.orchestrator.shutdown();
       process.exit(0);
     });
+
+    // Animated startup
+    {
+      const names = this.orchestrator.listTeammates();
+      const reg = this.orchestrator.getRegistry();
+      let hasRecall = false;
+      try {
+        const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+        hasRecall = !!(svcJson && "recall" in svcJson);
+      } catch { /* no services.json */ }
+
+      await playStartup({
+        version: "0.1.0",
+        adapterName: this.adapterName,
+        teammateCount: names.length,
+        cwd: process.cwd(),
+        recallInstalled: hasRecall,
+        teammates: names.map((name) => {
+          const t = reg.get(name);
+          return { name, role: t?.role ?? "" };
+        }),
+      });
+    }
+
+    // REPL loop
+    this.showPrompt();
   }
 
   private printBanner(teammates: string[]): void {
@@ -1319,8 +1245,6 @@ class TeammatesREPL {
     }
 
     const [, teammate, task] = parts;
-
-    // Pause readline so streamed agent output isn't garbled by the prompt
 
     const extraContext = this.buildConversationContext();
     const result = await this.orchestrator.assign({ teammate, task, extraContext: extraContext || undefined });

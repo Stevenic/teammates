@@ -2,9 +2,9 @@
  * InputProcessor — the central input pipeline.
  * Port of Consolonia's InputProcessor.cs.
  *
- * Maintains an ordered list of matchers. Raw stdin data is fed character
- * by character through the matcher chain. When a matcher completes a
- * sequence, the corresponding InputEvent is emitted.
+ * All matchers run in parallel on each character. When multiple matchers
+ * return Partial, all of them continue receiving input. The first matcher
+ * (by priority order) to return Complete wins, and the others are reset.
  *
  * Matcher priority order: PasteMatcher > MouseMatcher > EscapeMatcher > TextMatcher
  *
@@ -18,8 +18,8 @@ export declare class InputProcessor {
     private readonly matchers;
     private readonly escapeMatcher;
     private readonly emitter;
-    /** Index of the matcher currently holding a partial match, or -1. */
-    private activeIndex;
+    /** Which matchers are still active (Partial or not yet tried) for the current sequence. */
+    private active;
     /** Timer for the escape key timeout. */
     private escTimer;
     constructor(emitter: EventEmitter);
@@ -31,9 +31,11 @@ export declare class InputProcessor {
     /** Destroy timers and clean up. */
     destroy(): void;
     private feedChar;
+    /** Reset all matchers and re-activate them. */
+    private resetAll;
     /**
-     * If the escape matcher is currently the active matcher (holding a
-     * partial \x1b), schedule a timeout to emit the escape key event.
+     * If the escape matcher is active and holding a partial \x1b,
+     * schedule a timeout to emit the escape key event.
      */
     private scheduleEscTimeoutIfNeeded;
     private clearEscTimer;
