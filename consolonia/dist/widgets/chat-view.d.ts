@@ -166,8 +166,8 @@ export declare class ChatView extends Control {
     /** Set the input prompt text. */
     set prompt(text: string);
     get prompt(): string;
-    /** Show a progress/status message just above the input box. */
-    setProgress(text: string | null): void;
+    /** Show a progress/status message just above the separator. */
+    setProgress(content: StyledLine | null): void;
     /** Show dropdown items below the input box. */
     showDropdown(items: DropdownItem[]): void;
     /** Hide the dropdown. */

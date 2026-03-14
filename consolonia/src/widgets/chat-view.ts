@@ -105,7 +105,7 @@ export class ChatView extends Control {
   private _topSeparator: _Separator;
   private _feedLines: StyledText[] = [];
   private _bottomSeparator: _Separator;
-  private _progressText: Text;
+  private _progressText: StyledText;
   private _input: TextInput;
   private _inputSeparator: _Separator;
   private _footer: StyledText;
@@ -178,10 +178,10 @@ export class ChatView extends Control {
     this._bottomSeparator = new _Separator(this._separatorChar, this._separatorStyle);
     this.addChild(this._bottomSeparator);
 
-    // Progress text (above input, below bottom separator)
-    this._progressText = new Text({
-      text: "",
-      style: this._progressStyle,
+    // Progress text (above separator, fixed)
+    this._progressText = new StyledText({
+      lines: [],
+      defaultStyle: this._progressStyle,
       wrap: false,
     });
     this._progressText.visible = false;
@@ -384,13 +384,13 @@ export class ChatView extends Control {
 
   // ── Public API: Progress ───────────────────────────────────────
 
-  /** Show a progress/status message just above the input box. */
-  setProgress(text: string | null): void {
-    if (text === null || text.length === 0) {
-      this._progressText.text = "";
+  /** Show a progress/status message just above the separator. */
+  setProgress(content: StyledLine | null): void {
+    if (content === null || (typeof content === "string" && content.length === 0)) {
+      this._progressText.lines = [];
       this._progressText.visible = false;
     } else {
-      this._progressText.text = text;
+      this._progressText.lines = [content];
       this._progressText.visible = true;
     }
     this.invalidate();
@@ -583,11 +583,10 @@ export class ChatView extends Control {
 
     // ── Measure fixed-height sections ────────────────────────
 
-    // Progress text height
+    // Progress text height (always 1 row when visible)
     let progressH = 0;
-    if (this._progressText.visible && this._progressText.text.length > 0) {
-      const progressSize = this._progressText.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: 2 });
-      progressH = progressSize.height;
+    if (this._progressText.visible && this._progressText.lines.length > 0) {
+      progressH = 1;
     }
 
     // Bottom separator: 1 row
@@ -625,17 +624,18 @@ export class ChatView extends Control {
       y += feedH;
     }
 
-    // 2. Bottom separator
-    this._bottomSeparator.arrange({ x: b.x, y, width: W, height: 1 });
-    this._bottomSeparator.render(ctx);
-    y += 1;
-
-    // 3. Progress text
+    // 2. Progress text (above separator, fixed — not part of scrollable feed)
     if (progressH > 0) {
+      this._progressText.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: 1 });
       this._progressText.arrange({ x: b.x, y, width: W, height: progressH });
       this._progressText.render(ctx);
       y += progressH;
     }
+
+    // 3. Bottom separator
+    this._bottomSeparator.arrange({ x: b.x, y, width: W, height: 1 });
+    this._bottomSeparator.render(ctx);
+    y += 1;
 
     // 4. Input
     this._input.arrange({ x: b.x, y, width: W, height: inputH });

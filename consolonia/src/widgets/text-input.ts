@@ -219,8 +219,24 @@ export class TextInput extends Control {
   }
 
   private _handleKey(key: KeyEvent): boolean {
-    // ── Enter → submit ──────────────────────────────────────
+    // ── Shift+Enter or Alt+Enter → insert newline ─────────────
+    if (key.key === "enter" && (key.shift || key.alt)) {
+      this.insert("\n");
+      return true;
+    }
+
+    // ── Enter → submit or newline (trailing \ continues) ─────
     if (key.key === "enter") {
+      // Trailing backslash = line continuation: replace \ with newline
+      if (this._cursor > 0 && this._value[this._cursor - 1] === "\\") {
+        this._value =
+          this._value.slice(0, this._cursor - 1) +
+          this._value.slice(this._cursor);
+        this._cursor--;
+        this.insert("\n");
+        return true;
+      }
+
       const val = this._value;
       // Add to history if non-empty and different from last entry
       if (
@@ -467,29 +483,46 @@ export class TextInput extends Control {
   private _wrapLines(firstRowW: number, fullW: number): string[] {
     if (this._value.length === 0) return [""];
 
+    // Split on hard newlines first, then word-wrap each segment
+    const segments = this._value.split("\n");
     const lines: string[] = [];
-    let remaining = this._value;
     let rowW = firstRowW;
 
-    while (remaining.length > 0) {
-      if (remaining.length <= rowW) {
-        lines.push(remaining);
-        remaining = "";
-      } else {
-        // Find a space to break on within the row width
-        let breakAt = remaining.lastIndexOf(" ", rowW - 1);
-        if (breakAt <= 0) {
-          // No space found — hard break
-          breakAt = rowW;
-          lines.push(remaining.slice(0, breakAt));
-          remaining = remaining.slice(breakAt);
-        } else {
-          // Break after the space (space stays on this line)
-          lines.push(remaining.slice(0, breakAt + 1));
-          remaining = remaining.slice(breakAt + 1);
-        }
+    for (let s = 0; s < segments.length; s++) {
+      let remaining = segments[s];
+      // For segments after a newline, include the \n in the previous line
+      // so character offsets stay correct. We append \n to the end of the
+      // last wrapped line of the previous segment.
+      if (s > 0 && lines.length > 0) {
+        lines[lines.length - 1] += "\n";
       }
-      rowW = fullW; // subsequent rows use full width
+
+      if (remaining.length === 0) {
+        lines.push("");
+        rowW = fullW;
+        continue;
+      }
+
+      while (remaining.length > 0) {
+        if (remaining.length <= rowW) {
+          lines.push(remaining);
+          remaining = "";
+        } else {
+          // Find a space to break on within the row width
+          let breakAt = remaining.lastIndexOf(" ", rowW - 1);
+          if (breakAt <= 0) {
+            // No space found — hard break
+            breakAt = rowW;
+            lines.push(remaining.slice(0, breakAt));
+            remaining = remaining.slice(breakAt);
+          } else {
+            // Break after the space (space stays on this line)
+            lines.push(remaining.slice(0, breakAt + 1));
+            remaining = remaining.slice(breakAt + 1);
+          }
+        }
+        rowW = fullW; // subsequent rows use full width
+      }
     }
 
     return lines;
@@ -629,20 +662,24 @@ export class TextInput extends Control {
         ctx.drawText(bx, screenY, this._prompt, this._promptStyle);
       }
 
-      // Draw characters
+      // Draw characters (skip newlines — they're just line-break markers)
+      let drawCol = 0;
       for (let col = 0; col < lineText.length; col++) {
+        const ch = lineText[col];
+        if (ch === "\n") continue;
         const charIdx = lineOffset + col;
         if (isFocused && charIdx === this._cursor) {
-          this._drawCursor(ctx, rowX + col, screenY, lineText[col]);
+          this._drawCursor(ctx, rowX + drawCol, screenY, ch);
         } else {
           const style = charStyles?.[charIdx] ?? this._style;
-          ctx.drawChar(rowX + col, screenY, lineText[col], style);
+          ctx.drawChar(rowX + drawCol, screenY, ch, style);
         }
+        drawCol++;
       }
 
       // Cursor at end of this line (append position)
-      if (isFocused && lineIdx === cursorRow && cursorCol === lineText.length) {
-        this._drawCursor(ctx, rowX + cursorCol, screenY, " ");
+      if (isFocused && lineIdx === cursorRow && cursorCol >= drawCol) {
+        this._drawCursor(ctx, rowX + drawCol, screenY, " ");
       }
     }
   }

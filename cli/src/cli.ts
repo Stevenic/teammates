@@ -502,6 +502,9 @@ class TeammatesREPL {
   private pasteCounter = 0;
   private wordwheelItems: DropdownItem[] = [];
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
+  private escPending = false;         // true after first ESC, waiting for second
+  private escTimer: ReturnType<typeof setTimeout> | null = null;
+  private defaultFooter: StyledSpan | null = null; // cached default footer content
 
   // ── Animated status tracker ─────────────────────────────────────
   private activeTasks: Map<string, { teammate: string; task: string }> = new Map();
@@ -581,8 +584,16 @@ class TeammatesREPL {
       : "";
 
     if (this.chatView) {
-      const line = `${spinChar} ${teammate}… ${taskPreview}${queueInfo}`;
-      this.chatView.setProgress(line);
+      // Strip newlines and truncate task text for single-line display
+      const cleanTask = task.replace(/[\r\n]+/g, " ").trim();
+      const maxLen = Math.max(20, (process.stdout.columns || 80) - teammate.length - 10);
+      const taskText = cleanTask.length > maxLen ? cleanTask.slice(0, maxLen - 1) + "…" : cleanTask;
+      const queueTag = this.activeTasks.size > 1 ? ` (${idx + 1}/${this.activeTasks.size})` : "";
+
+      this.chatView.setProgress(concat(
+        tp.accent(`${spinChar} ${teammate}… `),
+        tp.muted(taskText + queueTag),
+      ));
       this.app.refresh();
     } else {
       // Mostly bright blue, periodically flicker to dark blue
@@ -1292,7 +1303,7 @@ class TeammatesREPL {
         }
         return 1;
       },
-      maxInputHeight: 3,
+      maxInputHeight: 5,
       separatorStyle: { fg: t.separator },
       progressStyle: { fg: t.progress, italic: true },
       dropdownHighlightStyle: { fg: t.dropdownHighlight, bold: true },
@@ -1301,6 +1312,7 @@ class TeammatesREPL {
       footer: concat(tp.accent(" Teammates"), tp.dim(" v0.1.0")),
       footerStyle: { fg: t.textDim },
     });
+    this.defaultFooter = concat(tp.accent(" Teammates"), tp.dim(" v0.1.0"));
 
     // Wire ChatView events for input handling
     this.chatView.on("submit", (rawLine: string) => {
@@ -1313,6 +1325,13 @@ class TeammatesREPL {
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
       this.updateWordwheel();
+      // Reset ESC pending state on any text change
+      if (this.escPending) {
+        this.escPending = false;
+        if (this.escTimer) { clearTimeout(this.escTimer); this.escTimer = null; }
+        this.chatView.setFooter(this.defaultFooter!);
+        this.refreshView();
+      }
     });
     this.chatView.on("tab", () => {
       if (this.wordwheelItems.length > 0) {
@@ -1324,6 +1343,32 @@ class TeammatesREPL {
       this.clearWordwheel();
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
+
+      if (this.escPending) {
+        // Second ESC — clear input and restore footer
+        this.escPending = false;
+        if (this.escTimer) { clearTimeout(this.escTimer); this.escTimer = null; }
+        this.chatView.inputValue = "";
+        this.chatView.setFooter(this.defaultFooter!);
+        this.pastedTexts.clear();
+        this.refreshView();
+      } else if (this.chatView.inputValue.length > 0) {
+        // First ESC with text — show hint in footer, auto-expire after 2s
+        this.escPending = true;
+        const termW = process.stdout.columns || 80;
+        const hint = "ESC again to clear";
+        const pad = Math.max(0, termW - hint.length - 1);
+        this.chatView.setFooter(concat(tp.dim(" ".repeat(pad)), tp.muted(hint)));
+        this.refreshView();
+        this.escTimer = setTimeout(() => {
+          this.escTimer = null;
+          if (this.escPending) {
+            this.escPending = false;
+            this.chatView.setFooter(this.defaultFooter!);
+            this.refreshView();
+          }
+        }, 2000);
+      }
     });
     this.chatView.on("paste", (text: string) => {
       this.handlePaste(text);
