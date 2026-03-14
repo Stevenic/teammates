@@ -1,8 +1,8 @@
 /**
  * Animated startup sequence for the teammates CLI.
  *
- * Renders a large "teammates" title using Unicode block characters,
- * revealed letter by letter, then rolls out the info panel.
+ * Phase 1: Reveals "teammates" letter by letter in block font, left-aligned.
+ * Phase 2: Replaces with compact "TM" block logo + stats panel to the right.
  */
 
 import chalk from "chalk";
@@ -44,21 +44,6 @@ export function buildTitle(word: string): [string, string] {
   return [top.join(" "), bot.join(" ")];
 }
 
-/** Get the glyph column ranges for each letter (start col, width). */
-function getLetterPositions(word: string): { start: number; width: number }[] {
-  const positions: { start: number; width: number }[] = [];
-  let col = 0;
-  for (const ch of word) {
-    const g = GLYPHS[ch.toLowerCase()];
-    if (g) {
-      const w = g[0].length;
-      positions.push({ start: col, width: w });
-      col += w + 1; // +1 for the space between letters
-    }
-  }
-  return positions;
-}
-
 // ── Main animation ───────────────────────────────────────────────
 
 export interface StartupInfo {
@@ -73,89 +58,78 @@ export interface StartupInfo {
 export async function playStartup(info: StartupInfo): Promise<void> {
   const termWidth = process.stdout.columns || 100;
   const word = "teammates";
-  const [topFull, botFull] = buildTitle(word);
-  const positions = getLetterPositions(word);
-  const titleWidth = topFull.length;
-
-  // Center the title
-  const pad = Math.max(0, Math.floor((termWidth - titleWidth) / 2));
-  const indent = " ".repeat(pad);
+  const indent = "  ";
 
   console.log();
 
-  // Phase 1: reveal title letter by letter
-  // Draw two empty lines for the title area
-  write(indent);
-  const topLine = pad; // track where we are
-  write("\n" + indent + "\n");
-
-  // Move back up to the first title line
-  write("\x1b[2A");
+  // Phase 1: reveal full "teammates" title letter by letter, left-aligned
+  // Reserve two lines for the title area
+  write(indent + "\n" + indent + "\n");
+  write("\x1b[2A"); // move back up
 
   let builtTop = "";
   let builtBot = "";
 
-  for (let i = 0; i < positions.length; i++) {
-    const ch = word[i];
+  for (const ch of word) {
     const g = GLYPHS[ch.toLowerCase()];
     if (!g) continue;
 
-    if (i > 0) {
+    if (builtTop.length > 0) {
       builtTop += " ";
       builtBot += " ";
     }
     builtTop += g[0];
     builtBot += g[1];
 
-    // Draw top line — flash bright then settle
-    write("\r" + indent + chalk.whiteBright(builtTop));
-    // Move down, draw bottom line
-    write("\n\r" + indent + chalk.whiteBright(builtBot));
-    // Move back up
-    write("\x1b[1A");
-
-    await sleep(35);
-
-    // Re-draw in resting color (cyan)
     write("\r" + indent + chalk.cyan(builtTop));
     write("\n\r" + indent + chalk.cyan(builtBot));
     write("\x1b[1A");
 
-    await sleep(15);
+    await sleep(60);
   }
 
-  // Move past the title
-  write("\n\n");
+  // Pause on the full title
+  await sleep(1000);
 
-  await sleep(100);
+  // Roll out version to the right of the logo on the bottom row
+  const versionTag = chalk.gray(` v${info.version}`);
+  write("\n\r" + indent + chalk.cyan(builtBot) + versionTag);
+  write("\x1b[1A"); // back to top line
 
-  // Phase 2: version tag centered under the title
-  const versionTag = `v${info.version}`;
-  const tagPad = Math.max(0, Math.floor((termWidth - versionTag.length) / 2));
-  console.log(" ".repeat(tagPad) + chalk.gray(versionTag));
+  await sleep(2000);
+
+  // Phase 2: Replace title with compact TM + stats
+  // Erase the two title lines and rewrite
+  write("\r\x1b[K"); // erase top line
+  write("\n\r\x1b[K"); // erase bottom line
+  write("\x1b[1A"); // back to top
+
+  const [tmTop, tmBot] = buildTitle("tm");
+  const tmWidth = tmTop.length; // "▀█▀ █▀▄▀█" = 9 chars
+  const gap = "   ";
+
+  // Build info lines to sit to the right of TM
+  const rightLine1 =
+    chalk.white(info.adapterName) +
+    chalk.gray(` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`) +
+    chalk.gray(` · v${info.version}`);
+  const rightLine2 = chalk.gray(info.cwd);
+  const rightLine3 = info.recallInstalled
+    ? chalk.green("● recall") + chalk.gray(" installed")
+    : chalk.yellow("○ recall") + chalk.gray(" not installed");
+
+  // TM row 1 + first stat
+  write(indent + chalk.cyan(tmTop) + gap + rightLine1 + "\n");
+  await sleep(40);
+  // TM row 2 + second stat
+  write(indent + chalk.cyan(tmBot) + gap + rightLine2 + "\n");
+  await sleep(40);
+  // Blank TM area + third stat
+  write(indent + " ".repeat(tmWidth) + gap + rightLine3 + "\n");
 
   await sleep(80);
 
-  // Phase 3: info panel
-  console.log();
-
-  const infoLines = [
-    chalk.white("  " + info.adapterName) +
-      chalk.gray(` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`),
-    chalk.gray("  " + info.cwd),
-    info.recallInstalled
-      ? "  " + chalk.green("● recall") + chalk.gray(" installed")
-      : "  " + chalk.yellow("○ recall") + chalk.gray(" not installed"),
-  ];
-
-  for (const line of infoLines) {
-    console.log(line);
-    await sleep(25);
-  }
-
-  await sleep(60);
-
-  // Phase 4: roster
+  // Phase 3: roster
   if (info.teammates.length > 0) {
     console.log();
     for (const t of info.teammates) {
@@ -165,13 +139,13 @@ export async function playStartup(info: StartupInfo): Promise<void> {
         chalk.cyan(` @${t.name}`.padEnd(14)) +
         chalk.gray(t.role);
       console.log(line);
-      await sleep(25);
+      await sleep(40);
     }
   }
 
-  await sleep(60);
+  await sleep(80);
 
-  // Phase 5: quick reference
+  // Phase 4: quick reference
   console.log();
   console.log(chalk.gray("─".repeat(termWidth)));
 
@@ -196,7 +170,7 @@ export async function playStartup(info: StartupInfo): Promise<void> {
     const c2 = chalk.cyan(col2[i][0].padEnd(12)) + chalk.gray(col2[i][1].padEnd(22));
     const c3 = chalk.cyan(col3[i][0].padEnd(12)) + chalk.gray(col3[i][1]);
     console.log(`  ${c1}${c2}${c3}`);
-    await sleep(20);
+    await sleep(30);
   }
 
   console.log();
