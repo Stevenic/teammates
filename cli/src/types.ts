@@ -17,6 +17,8 @@ export interface TeammateConfig {
   wisdom: string;
   /** Daily log entries (most recent first) */
   dailyLogs: DailyLog[];
+  /** Weekly summary entries (most recent first) */
+  weeklyLogs: WeeklyLog[];
   /** File ownership patterns from SOUL.md */
   ownership: OwnershipRules;
   /** Working directory scope (defaults to repo root) */
@@ -27,6 +29,18 @@ export interface TeammateConfig {
 
 export interface DailyLog {
   date: string;
+  content: string;
+}
+
+export interface WeeklyLog {
+  /** ISO week string, e.g. "2026-W11" */
+  week: string;
+  content: string;
+}
+
+export interface MonthlyLog {
+  /** Month string, e.g. "2026-03" */
+  month: string;
   content: string;
 }
 

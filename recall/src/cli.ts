@@ -2,6 +2,7 @@
 
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import { watch as fsWatch, type FSWatcher } from "node:fs";
 import { Indexer } from "./indexer.js";
 import { search } from "./search.js";
 
@@ -14,6 +15,7 @@ Usage:
   teammates-recall add     <file> [options]       Add a single file to a teammate's index
   teammates-recall search  <query> [options]      Search teammate memories (auto-syncs)
   teammates-recall status  [options]              Show index status
+  teammates-recall watch   [options]              Watch for changes and auto-sync
 
 Options:
   --dir <path>         Path to .teammates directory (default: ./.teammates)
@@ -244,6 +246,82 @@ async function cmdStatus(args: Args): Promise<void> {
   }
 }
 
+async function cmdWatch(args: Args): Promise<void> {
+  const teammatesDir = await resolveTeammatesDir(args.dir);
+  const indexer = new Indexer({ teammatesDir, model: args.model });
+
+  // Initial sync
+  console.error("Initial sync...");
+  const results = await indexer.syncAll();
+  for (const [teammate, count] of results) {
+    console.error(`  ${teammate}: ${count} files`);
+  }
+  console.error("Watching for changes...");
+
+  if (args.json) {
+    console.log(JSON.stringify({ status: "watching", dir: teammatesDir }));
+  }
+
+  // Debounce: collect changes, sync after 2s of quiet
+  let syncTimer: ReturnType<typeof setTimeout> | null = null;
+  const pendingTeammates = new Set<string>();
+
+  const scheduleSync = (teammate: string) => {
+    pendingTeammates.add(teammate);
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(async () => {
+      for (const t of pendingTeammates) {
+        try {
+          const count = await indexer.syncTeammate(t);
+          if (args.json) {
+            console.log(JSON.stringify({ event: "sync", teammate: t, files: count }));
+          } else {
+            console.error(`  synced ${t}: ${count} files`);
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`  error syncing ${t}: ${msg}`);
+        }
+      }
+      pendingTeammates.clear();
+    }, 2000);
+  };
+
+  // Watch each teammate's directory for changes
+  const watchers: FSWatcher[] = [];
+  const teammates = await indexer.discoverTeammates();
+
+  for (const teammate of teammates) {
+    const teammateDir = path.join(teammatesDir, teammate);
+    try {
+      const watcher = fsWatch(teammateDir, { recursive: true }, (eventType, filename) => {
+        if (!filename) return;
+        // Only care about .md files, skip .index/
+        if (!filename.endsWith(".md") || filename.includes(".index")) return;
+        scheduleSync(teammate);
+      });
+      watchers.push(watcher);
+    } catch {
+      console.error(`  warning: could not watch ${teammate}/`);
+    }
+  }
+
+  // Keep alive until killed
+  const shutdown = () => {
+    if (syncTimer) clearTimeout(syncTimer);
+    for (const w of watchers) w.close();
+    if (args.json) {
+      console.log(JSON.stringify({ status: "stopped" }));
+    }
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+
+  // Block forever
+  await new Promise(() => {});
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
 
@@ -262,6 +340,9 @@ async function main(): Promise<void> {
       break;
     case "status":
       await cmdStatus(args);
+      break;
+    case "watch":
+      await cmdWatch(args);
       break;
     default:
       console.log(HELP);

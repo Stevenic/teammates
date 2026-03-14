@@ -1,6 +1,6 @@
 # New Teammate Template
 
-Copy the SOUL.md and WISDOM.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory for daily logs and typed memory files.
+Copy the SOUL.md and WISDOM.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
 
 ---
 
@@ -98,11 +98,11 @@ _(No wisdom yet — principles emerge after the first compaction.)_
 
 ## Memory Files
 
-Memory lives in the `memory/` directory as individual files. There are two kinds:
+Memory lives in the `memory/` directory as individual files. There are several kinds:
 
 ### Daily Logs
 
-Daily logs are append-only session notes at `memory/YYYY-MM-DD.md`. Start a new file each day.
+Daily logs are append-only session notes at `memory/YYYY-MM-DD.md`. Start a new file each day. Daily logs from completed weeks are compacted into weekly summaries (see Episodic Compaction below).
 
 ```markdown
 # YYYY-MM-DD
@@ -110,6 +110,36 @@ Daily logs are append-only session notes at `memory/YYYY-MM-DD.md`. Start a new 
 ## Notes
 
 - <What was worked on, what was decided, what to pick up next.>
+```
+
+### Weekly Summaries
+
+`memory/weekly/YYYY-Wnn.md` — Compacted summaries of a full week's daily logs. Created automatically by `/compact`. Kept for 52 weeks, then compacted into monthly summaries.
+
+```markdown
+---
+type: weekly
+week: 2026-W11
+teammate: <name>
+period: 2026-03-09 to 2026-03-15
+---
+
+<narrative summary of the week's work, decisions, and outcomes>
+```
+
+### Monthly Summaries
+
+`memory/monthly/YYYY-MM.md` — Compacted summaries of weekly summaries older than 52 weeks. Kept permanently.
+
+```markdown
+---
+type: monthly
+month: 2026-03
+teammate: <name>
+period: 2026-03-01 to 2026-03-31
+---
+
+<high-level summary of the month's work and key outcomes>
 ```
 
 ### Typed Memories
@@ -179,11 +209,22 @@ If the project uses `teammates-recall`, an optional `memory/INDEX.md` can serve 
 
 ---
 
-## Compaction — Memories → Wisdom
+## Compaction
 
-Compaction distills typed memories into WISDOM.md entries. Run it manually via `/compact` or automatically every 7 days.
+Compaction has two independent pipelines, triggered by the `/compact` command:
 
-### Process
+### Episodic Compaction — Daily → Weekly → Monthly
+
+Episodic compaction manages the timeline of what happened:
+
+1. **Daily → Weekly**: Completed weeks (not the current week) are compacted into `memory/weekly/YYYY-Wnn.md`. During compaction, durable facts and lessons are extracted as typed memories. Raw daily logs are deleted after successful compaction.
+2. **Weekly → Monthly**: Weekly summaries older than 52 weeks are compacted into `memory/monthly/YYYY-MM.md`. Source weekly files are deleted.
+
+Run via `/compact` or `/compact <teammate>`.
+
+### Semantic Compaction — Memories → Wisdom
+
+Semantic compaction distills typed memories into WISDOM.md entries:
 
 1. **Review** all typed memory files in `memory/`
 2. **Identify patterns** — recurring themes, feedback that's been reinforced, lessons confirmed multiple times

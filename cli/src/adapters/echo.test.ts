@@ -8,6 +8,7 @@ const teammate: TeammateConfig = {
   soul: "# Beacon\n\nBeacon owns the recall package.",
   wisdom: "",
   dailyLogs: [],
+  weeklyLogs: [],
   ownership: { primary: [], secondary: [] },
 };
 

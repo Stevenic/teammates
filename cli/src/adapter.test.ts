@@ -9,6 +9,7 @@ function makeConfig(overrides?: Partial<TeammateConfig>): TeammateConfig {
     soul: "# Beacon\n\nBeacon owns the recall package.",
     wisdom: "",
     dailyLogs: [],
+    weeklyLogs: [],
     ownership: { primary: ["recall/src/**"], secondary: [] },
     ...overrides,
   };
@@ -58,19 +59,22 @@ describe("buildTeammatePrompt", () => {
     expect(prompt).toContain("Some important wisdom");
   });
 
-  it("includes daily logs (up to 3)", () => {
+  it("includes daily logs (up to 7)", () => {
     const logs = [
-      { date: "2026-03-13", content: "Did stuff today" },
-      { date: "2026-03-12", content: "Did stuff yesterday" },
-      { date: "2026-03-11", content: "Day before" },
-      { date: "2026-03-10", content: "Should be excluded" },
+      { date: "2026-03-13", content: "Day 1" },
+      { date: "2026-03-12", content: "Day 2" },
+      { date: "2026-03-11", content: "Day 3" },
+      { date: "2026-03-10", content: "Day 4" },
+      { date: "2026-03-09", content: "Day 5" },
+      { date: "2026-03-08", content: "Day 6" },
+      { date: "2026-03-07", content: "Day 7" },
+      { date: "2026-03-06", content: "Should be excluded" },
     ];
     const prompt = buildTeammatePrompt(makeConfig({ dailyLogs: logs }), "task");
     expect(prompt).toContain("## Recent Daily Logs");
     expect(prompt).toContain("2026-03-13");
-    expect(prompt).toContain("2026-03-12");
-    expect(prompt).toContain("2026-03-11");
-    expect(prompt).not.toContain("2026-03-10");
+    expect(prompt).toContain("2026-03-07");
+    expect(prompt).not.toContain("2026-03-06");
     expect(prompt).not.toContain("Should be excluded");
   });
 

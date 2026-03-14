@@ -39,19 +39,21 @@ export interface AgentPreset {
   interactive?: boolean;
   /** Whether the command needs shell: true to run */
   shell?: boolean;
+  /** Whether to pipe the prompt via stdin instead of as a CLI argument */
+  stdinPrompt?: boolean;
 }
 
 export const PRESETS: Record<string, AgentPreset> = {
   claude: {
     name: "claude",
     command: "claude",
-    buildArgs({ prompt }, teammate, options) {
+    buildArgs(_ctx, _teammate, options) {
       const args = ["-p", "--verbose", "--dangerously-skip-permissions"];
       if (options.model) args.push("--model", options.model);
-      args.push("--", prompt);
       return args;
     },
     env: { FORCE_COLOR: "1", CLAUDECODE: "" },
+    stdinPrompt: true,
   },
 
   codex: {
@@ -218,18 +220,24 @@ export class CliProxyAdapter implements AgentAdapter {
       const command = this.options.commandPath ?? this.preset.command;
       const args = this.preset.buildArgs(
         { promptFile, prompt },
-        { name: "_router", role: "", soul: "", wisdom: "", dailyLogs: [], ownership: { primary: [], secondary: [] } },
+        { name: "_router", role: "", soul: "", wisdom: "", dailyLogs: [], weeklyLogs: [], ownership: { primary: [], secondary: [] } },
         { ...this.options, model: this.options.model ?? "haiku" }
       );
       const env = { ...process.env, ...this.preset.env };
 
       const output = await new Promise<string>((resolve, reject) => {
+        const routeStdin = this.preset.stdinPrompt ?? false;
         const child = spawn(command, args, {
           cwd: process.cwd(),
           env,
-          stdio: ["ignore", "pipe", "pipe"],
+          stdio: [routeStdin ? "pipe" : "ignore", "pipe", "pipe"],
           shell: this.preset.shell ?? false,
         });
+
+        if (routeStdin && child.stdin) {
+          child.stdin.write(prompt);
+          child.stdin.end();
+        }
 
         const captured: Buffer[] = [];
         child.stdout?.on("data", (chunk: Buffer) => captured.push(chunk));
@@ -300,13 +308,20 @@ export class CliProxyAdapter implements AgentAdapter {
       const env = { ...process.env, ...this.preset.env };
       const timeout = this.options.timeout ?? 600_000;
       const interactive = this.preset.interactive ?? false;
+      const useStdin = this.preset.stdinPrompt ?? false;
 
       const child: ChildProcess = spawn(command, args, {
         cwd: teammate.cwd ?? process.cwd(),
         env,
-        stdio: [interactive ? "pipe" : "ignore", "pipe", "pipe"],
+        stdio: [(interactive || useStdin) ? "pipe" : "ignore", "pipe", "pipe"],
         shell: this.preset.shell ?? false,
       });
+
+      // Pipe prompt via stdin if the preset requires it
+      if (useStdin && child.stdin) {
+        child.stdin.write(fullPrompt);
+        child.stdin.end();
+      }
 
       // ── Timeout with SIGTERM → SIGKILL escalation ──────────────
       let killed = false;
@@ -326,7 +341,7 @@ export class CliProxyAdapter implements AgentAdapter {
 
       // Connect user's stdin → child only if agent may ask questions
       let onUserInput: ((chunk: Buffer) => void) | null = null;
-      if (interactive && child.stdin) {
+      if (interactive && !useStdin && child.stdin) {
         onUserInput = (chunk: Buffer) => {
           child.stdin?.write(chunk);
         };

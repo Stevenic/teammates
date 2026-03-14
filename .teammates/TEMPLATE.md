@@ -1,6 +1,6 @@
 # New Teammate Template
 
-Copy the SOUL.md and WISDOM.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory for daily logs and typed memory files.
+Copy the SOUL.md and WISDOM.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
 
 ---
 
@@ -101,6 +101,40 @@ Daily logs live at `.teammates/<name>/memory/YYYY-MM-DD.md`. They are append-onl
 ## Notes
 
 - <What was worked on, what was decided, what to pick up next.>
+```
+
+---
+
+## Weekly Summary Template
+
+Weekly summaries are created by `/compact` at `memory/weekly/YYYY-Wnn.md`:
+
+```markdown
+---
+type: weekly
+week: YYYY-Wnn
+teammate: <name>
+period: YYYY-MM-DD to YYYY-MM-DD
+---
+
+<narrative summary of the week's work, decisions, and outcomes>
+```
+
+---
+
+## Monthly Summary Template
+
+Monthly summaries are created by `/compact` at `memory/monthly/YYYY-MM.md`:
+
+```markdown
+---
+type: monthly
+month: YYYY-MM
+teammate: <name>
+period: YYYY-MM-DD to YYYY-MM-DD
+---
+
+<high-level summary of the month's work and key outcomes>
 ```
 
 ---

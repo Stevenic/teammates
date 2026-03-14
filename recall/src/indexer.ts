@@ -74,12 +74,15 @@ export class Indexer {
       // No WISDOM.md
     }
 
-    // memory/*.md (daily logs)
+    // memory/*.md — typed memories only (skip raw daily logs, they're in prompt context)
     const memoryDir = path.join(teammateDir, "memory");
     try {
       const memoryEntries = await fs.readdir(memoryDir);
       for (const entry of memoryEntries) {
         if (!entry.endsWith(".md")) continue;
+        const stem = path.basename(entry, ".md");
+        // Skip daily logs (YYYY-MM-DD) — they're already in prompt context
+        if (/^\d{4}-\d{2}-\d{2}$/.test(stem)) continue;
         files.push({
           uri: `${teammate}/memory/${entry}`,
           absolutePath: path.join(memoryDir, entry),
@@ -87,6 +90,36 @@ export class Indexer {
       }
     } catch {
       // No memory/ directory
+    }
+
+    // memory/weekly/*.md — weekly summaries (primary episodic search surface)
+    const weeklyDir = path.join(memoryDir, "weekly");
+    try {
+      const weeklyEntries = await fs.readdir(weeklyDir);
+      for (const entry of weeklyEntries) {
+        if (!entry.endsWith(".md")) continue;
+        files.push({
+          uri: `${teammate}/memory/weekly/${entry}`,
+          absolutePath: path.join(weeklyDir, entry),
+        });
+      }
+    } catch {
+      // No weekly/ directory
+    }
+
+    // memory/monthly/*.md — monthly summaries (long-term episodic context)
+    const monthlyDir = path.join(memoryDir, "monthly");
+    try {
+      const monthlyEntries = await fs.readdir(monthlyDir);
+      for (const entry of monthlyEntries) {
+        if (!entry.endsWith(".md")) continue;
+        files.push({
+          uri: `${teammate}/memory/monthly/${entry}`,
+          absolutePath: path.join(monthlyDir, entry),
+        });
+      }
+    } catch {
+      // No monthly/ directory
     }
 
     return { teammate, files };

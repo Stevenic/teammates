@@ -192,6 +192,7 @@ describe("Registry.register", () => {
       soul: "# Test",
       wisdom: "",
       dailyLogs: [],
+      weeklyLogs: [],
       ownership: { primary: [], secondary: [] },
     });
     expect(registry.list()).toEqual(["test"]);

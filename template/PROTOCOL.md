@@ -72,13 +72,17 @@ The CLI reads `services.json` to detect which services are available and injects
 
 Each session, every teammate wakes up fresh. Files are the only persistence layer — there is no RAM between sessions.
 
-Memory has three tiers:
+Memory operates on two independent axes:
 
 ```
-Daily Logs  →  Memories  →  WISDOM
-(raw)          (typed)      (distilled)
-days           weeks        permanent
+Episodic (timeline):   Daily Logs → Weekly Summaries → Monthly Summaries
+                       (raw, days)   (compacted, 52wk)  (compacted, permanent)
+
+Semantic (knowledge):  Typed Memories → WISDOM
+                       (durable)        (distilled, permanent)
 ```
+
+Daily logs feed both axes: episodic compaction produces weekly/monthly summaries, while durable facts and lessons extracted during compaction become typed memories that eventually distill into wisdom.
 
 ### Session startup — read order
 
@@ -92,7 +96,14 @@ At the start of each session, a teammate reads (in this order):
 
 ### Tier 1 — Daily Logs
 
-`memory/YYYY-MM-DD.md` — Append-only session notes. What was worked on, decided, what to pick up next. Start a new file each day. These are raw scratch — no frontmatter needed.
+`memory/YYYY-MM-DD.md` — Append-only session notes. What was worked on, decided, what to pick up next. Start a new file each day. These are raw scratch — no frontmatter needed. Daily logs from completed weeks are compacted into weekly summaries by `/compact`.
+
+### Tier 1b — Episodic Summaries
+
+`memory/weekly/YYYY-Wnn.md` — Weekly summaries compacted from daily logs (completed weeks only). Kept for 52 weeks.
+`memory/monthly/YYYY-MM.md` — Monthly summaries compacted from weekly summaries older than 52 weeks. Kept permanently.
+
+Weekly and monthly files include frontmatter (`type`, `week`/`month`, `teammate`, `period`) for searchability. See [TEMPLATE.md](TEMPLATE.md) for the full format.
 
 ### Tier 2 — Typed Memories
 
@@ -111,10 +122,17 @@ See [TEMPLATE.md](TEMPLATE.md) for full format, body structure per type, and exa
 
 `WISDOM.md` — Distilled, high-signal principles derived from compacting multiple memories. Compact, stable, rarely changes. Read second (after SOUL.md).
 
-### Compaction — Memories → Wisdom
+### Compaction
 
-Compaction distills typed memories into WISDOM.md entries. Run manually via `/compact` or automatically every 7 days.
+The `/compact` command runs two independent pipelines:
 
+**Episodic compaction** (daily → weekly → monthly):
+1. Completed weeks' daily logs are compacted into `memory/weekly/YYYY-Wnn.md`
+2. Durable facts and lessons are extracted as typed memories during compaction
+3. Raw daily logs are deleted after successful compaction
+4. Weekly summaries older than 52 weeks are compacted into `memory/monthly/YYYY-MM.md`
+
+**Semantic compaction** (typed memories → wisdom):
 1. Review all typed memory files in `memory/`
 2. Identify patterns — recurring themes, reinforced feedback, confirmed lessons
 3. Distill into WISDOM.md entries — short, principled, event-agnostic

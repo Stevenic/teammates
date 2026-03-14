@@ -7,7 +7,7 @@
 
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
-import type { TeammateConfig, DailyLog, OwnershipRules } from "./types.js";
+import type { TeammateConfig, DailyLog, WeeklyLog, OwnershipRules } from "./types.js";
 
 export class Registry {
   private teammatesDir: string;
@@ -48,6 +48,7 @@ export class Registry {
     const soul = await readFile(soulPath, "utf-8");
     const wisdom = await readFileSafe(join(dir, "WISDOM.md"));
     const dailyLogs = await loadDailyLogs(join(dir, "memory"));
+    const weeklyLogs = await loadWeeklyLogs(join(dir, "memory"));
     const ownership = parseOwnership(soul);
     const role = parseRole(soul);
 
@@ -57,6 +58,7 @@ export class Registry {
       soul,
       wisdom,
       dailyLogs,
+      weeklyLogs,
       ownership,
     };
 
@@ -111,6 +113,30 @@ async function loadDailyLogs(memoryDir: string): Promise<DailyLog[]> {
 
     // Most recent first
     logs.sort((a, b) => b.date.localeCompare(a.date));
+    return logs;
+  } catch {
+    return [];
+  }
+}
+
+/** Load weekly summaries from memory/weekly/ directory, most recent first */
+async function loadWeeklyLogs(memoryDir: string): Promise<WeeklyLog[]> {
+  const weeklyDir = join(memoryDir, "weekly");
+  try {
+    const entries = await readdir(weeklyDir);
+    const logs: WeeklyLog[] = [];
+
+    for (const entry of entries) {
+      if (!entry.endsWith(".md")) continue;
+      const stem = basename(entry, ".md");
+      // Match YYYY-Wnn format
+      if (!/^\d{4}-W\d{2}$/.test(stem)) continue;
+      const content = await readFile(join(weeklyDir, entry), "utf-8");
+      logs.push({ week: stem, content });
+    }
+
+    // Most recent first
+    logs.sort((a, b) => b.week.localeCompare(a.week));
     return logs;
   } catch {
     return [];

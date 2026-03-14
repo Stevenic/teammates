@@ -90,7 +90,7 @@ For each teammate, create a folder at `.teammates/<name>/` containing:
 
 **WISDOM.md** — Use the WISDOM.md template from `template/TEMPLATE.md`. Leave it in its initial empty state — wisdom entries emerge after the first compaction.
 
-**memory/** — Create an empty `memory/` directory in each teammate's folder. This is where daily logs (`YYYY-MM-DD.md`) and typed memory files (`<type>_<topic>.md`) will accumulate over time. No need to create any files yet.
+**memory/** — Create a `memory/` directory in each teammate's folder with `weekly/` and `monthly/` subdirectories. This is where daily logs (`YYYY-MM-DD.md`), episodic summaries (`weekly/YYYY-Wnn.md`, `monthly/YYYY-MM.md`), and typed memory files (`<type>_<topic>.md`) will accumulate over time. No need to create any files yet — just the directory structure.
 
 ---
 
@@ -123,3 +123,4 @@ Before finishing, check:
 - **Boundaries are strict.** Teammates must never modify files outside their ownership, even for small or obvious fixes. If a task touches another teammate's domain, they should hand off that portion with a clear description. This prevents stepping on toes and keeps ownership clean.
 - **Memory search is optional.** For projects that accumulate many memory files, suggest installing `@teammates/recall` for semantic search. It's not required — teammates work fine by reading files directly.
 - **Typed memories replace MEMORIES.md.** The old monolithic MEMORIES.md is replaced by individual files in `memory/` with typed frontmatter. See TEMPLATE.md for the full format and examples.
+- **Episodic compaction keeps memory lean.** The `/compact` command compacts completed weeks' daily logs into `memory/weekly/` summaries (kept 52 weeks) and old weekly summaries into `memory/monthly/` summaries (kept permanently). It also extracts durable facts as typed memories and distills typed memories into WISDOM.md. Run it periodically to keep the memory directory manageable.

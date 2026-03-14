@@ -88,8 +88,17 @@ export function buildTeammatePrompt(
 
   if (teammate.dailyLogs.length > 0) {
     parts.push("## Recent Daily Logs\n");
-    for (const log of teammate.dailyLogs.slice(0, 3)) {
+    for (const log of teammate.dailyLogs.slice(0, 7)) {
       parts.push(`### ${log.date}\n${log.content}\n`);
+    }
+    parts.push("\n---\n");
+  }
+
+  // ── Weekly summaries (recent episodic context) ─────────────────────
+  if (teammate.weeklyLogs.length > 0) {
+    parts.push("## Recent Weekly Summaries\n");
+    for (const log of teammate.weeklyLogs.slice(0, 2)) {
+      parts.push(`### ${log.week}\n${log.content}\n`);
     }
     parts.push("\n---\n");
   }

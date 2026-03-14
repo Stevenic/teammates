@@ -13,7 +13,7 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 import { Writable } from "node:stream";
 import { resolve, join } from "node:path";
 import { stat, mkdir, readdir } from "node:fs/promises";
-import { execSync, exec as execCb } from "node:child_process";
+import { execSync, exec as execCb, spawn as cpSpawn, type ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 
@@ -27,6 +27,7 @@ import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
 import { Dropdown } from "./dropdown.js";
 import { getOnboardingPrompt, copyTemplateFiles } from "./onboard.js";
+import { compactEpisodic } from "./compact.js";
 
 // ─── Argument parsing ────────────────────────────────────────────────
 
@@ -186,6 +187,7 @@ class TeammatesREPL {
   }
   private adapterName: string;
   private teammatesDir!: string;
+  private recallWatchProcess: ChildProcess | null = null;
   private taskQueue: { teammate: string; task: string }[] = [];
   private queueActive: { teammate: string; task: string } | null = null;
   private queueDraining = false;
@@ -290,6 +292,7 @@ class TeammatesREPL {
       soul: "",
       wisdom: "",
       dailyLogs: [] as { date: string; content: string }[],
+      weeklyLogs: [] as { week: string; content: string }[],
       ownership: { primary: [] as string[], secondary: [] as string[] },
     };
 
@@ -405,6 +408,8 @@ class TeammatesREPL {
     assign:  new Set([0]),
     handoff: new Set([0, 1]),
     log:     new Set([0]),
+    compact: new Set([0]),
+    debug:   new Set([0]),
   };
 
   /** Build param-completion items for the current line, if any. */
@@ -619,6 +624,7 @@ class TeammatesREPL {
       soul: "",
       wisdom: "",
       dailyLogs: [],
+      weeklyLogs: [],
       ownership: { primary: [], secondary: [] },
     });
     // Add status entry (init() already ran, so we add it manually)
@@ -648,6 +654,9 @@ class TeammatesREPL {
       } catch { /* no services.json or invalid */ }
       (this.adapter as any).services = services;
     }
+
+    // Start recall watch mode if recall is installed
+    this.startRecallWatch();
 
     // Register commands
     this.registerCommands();
@@ -787,15 +796,24 @@ class TeammatesREPL {
 
       if (lines.length === 0) return;
 
-      if (lines.length > 1) {
-        // Multi-line paste — the first line was echoed, the rest were muted.
-        // Erase the first echoed line (move up 1, clear).
-        process.stdout.write("\x1b[A\x1b[2K");
+      const isLongSingleLine = lines.length === 1 && lines[0].length > 200;
+      if (lines.length > 1 || isLongSingleLine) {
+        // Pasted text — the first line was echoed (possibly wrapping), erase it.
+        // For long single-line pastes that wrap, we need to erase multiple visual rows.
+        const termWidth = process.stdout.columns || 100;
+        const promptLen = "teammates> ".length;
+        const visualRows = Math.ceil((lines[0].length + promptLen) / termWidth);
+        for (let i = 0; i < visualRows; i++) {
+          process.stdout.write("\x1b[2K"); // clear current line
+          if (i < visualRows - 1) process.stdout.write("\x1b[A"); // move up
+        }
+        process.stdout.write("\r"); // move to start
 
         pasteCount++;
         const combined = lines.join("\n");
         const sizeKB = Buffer.byteLength(combined, "utf-8") / 1024;
-        const tag = `[Pasted text #${pasteCount} +${lines.length} lines, ${sizeKB.toFixed(1)}KB] `;
+        const label = isLongSingleLine ? `${combined.length} chars` : `${lines.length} lines`;
+        const tag = `[Pasted text #${pasteCount} +${label}, ${sizeKB.toFixed(1)}KB] `;
 
         // Store the pasted text — expanded when the user presses Enter.
         this.pastedTexts.set(pasteCount, combined);
@@ -1027,12 +1045,20 @@ class TeammatesREPL {
         run: (args) => this.cmdInstall(args),
       },
       {
+        name: "compact",
+        aliases: [],
+        usage: "/compact [teammate]",
+        description: "Compact daily logs into weekly/monthly summaries",
+        run: (args) => this.cmdCompact(args),
+      },
+      {
         name: "exit",
         aliases: ["q", "quit"],
         usage: "/exit",
         description: "Exit the session",
         run: async () => {
           console.log(chalk.gray("Shutting down..."));
+          this.stopRecallWatch();
           await this.orchestrator.shutdown();
           process.exit(0);
         },
@@ -1679,6 +1705,84 @@ class TeammatesREPL {
     // Clear terminal and reprint banner
     process.stdout.write("\x1b[2J\x1b[H");
     this.printBanner(this.orchestrator.listTeammates());
+  }
+
+  private startRecallWatch(): void {
+    // Only start if recall is installed (check services.json)
+    try {
+      const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+      if (!svcJson || !("recall" in svcJson)) return;
+    } catch {
+      return; // No services.json — recall not installed
+    }
+
+    try {
+      this.recallWatchProcess = cpSpawn("teammates-recall", ["watch", "--dir", this.teammatesDir, "--json"], {
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: false,
+      });
+      this.recallWatchProcess.on("error", () => {
+        // Recall binary not found — silently ignore
+        this.recallWatchProcess = null;
+      });
+      this.recallWatchProcess.on("exit", () => {
+        this.recallWatchProcess = null;
+      });
+    } catch {
+      this.recallWatchProcess = null;
+    }
+  }
+
+  private stopRecallWatch(): void {
+    if (this.recallWatchProcess) {
+      this.recallWatchProcess.kill("SIGTERM");
+      this.recallWatchProcess = null;
+    }
+  }
+
+  private async cmdCompact(argsStr: string): Promise<void> {
+    const names = argsStr.trim()
+      ? [argsStr.trim()]
+      : this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
+
+    for (const name of names) {
+      const teammateDir = join(this.teammatesDir, name);
+      try {
+        const s = await stat(teammateDir);
+        if (!s.isDirectory()) continue;
+      } catch {
+        console.log(chalk.yellow(`  ${name}: no directory found, skipping`));
+        continue;
+      }
+
+      const spinner = ora({ text: `Compacting ${name}...`, color: "cyan" }).start();
+      try {
+        const result = await compactEpisodic(teammateDir, name);
+
+        const parts: string[] = [];
+        if (result.weekliesCreated.length > 0) {
+          parts.push(`${result.weekliesCreated.length} weekly summaries created`);
+        }
+        if (result.monthliesCreated.length > 0) {
+          parts.push(`${result.monthliesCreated.length} monthly summaries created`);
+        }
+        if (result.dailiesRemoved.length > 0) {
+          parts.push(`${result.dailiesRemoved.length} daily logs compacted`);
+        }
+        if (result.weekliesRemoved.length > 0) {
+          parts.push(`${result.weekliesRemoved.length} old weekly summaries archived`);
+        }
+
+        if (parts.length === 0) {
+          spinner.info(`${name}: nothing to compact`);
+        } else {
+          spinner.succeed(`${name}: ${parts.join(", ")}`);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        spinner.fail(`${name}: ${msg}`);
+      }
+    }
   }
 
   private async cmdHelp(): Promise<void> {

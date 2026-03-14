@@ -22,3 +22,4 @@ When adding a new teammate, add a row to this table.
 ## Shared Docs
 
 - **[Architecture](scribe/docs/ARCHITECTURE.md)** — Full project architecture: packages, data flow, key patterns, tech stack. Maintained by Scribe. _(added 2026-03-13)_
+- **[Episodic Compaction Design](scribe/docs/EPISODIC-COMPACTION.md)** — Design for daily→weekly→monthly memory compaction and its interaction with typed memories + wisdom. Implemented. _(added 2026-03-14)_
