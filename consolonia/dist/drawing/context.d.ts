@@ -51,6 +51,14 @@ export declare class DrawingContext {
     drawChar(x: number, y: number, char: string, style?: TextStyle): void;
     /** Draw a text string at (x, y). Handles wide characters and tabs. */
     drawText(x: number, y: number, text: string, style?: TextStyle): void;
+    /**
+     * Draw an array of styled segments at (x, y).
+     * Each segment carries its own TextStyle; segments are drawn sequentially.
+     */
+    drawStyledText(x: number, y: number, segments: {
+        text: string;
+        style: TextStyle;
+    }[]): void;
     /** Draw a box-drawing rectangle (border) with smart corner merging. */
     drawBox(rect: Rect, style?: BoxStyle): void;
     /**

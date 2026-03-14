@@ -62,15 +62,31 @@ export function colorShade(c, factor) {
     };
 }
 // ── Common color constants ──────────────────────────────────────────
+//
+// Standard colors match chalk's ANSI-16 palette names.
+// RGB values are chosen for truecolor terminals (sent as 24-bit RGB).
 export const TRANSPARENT = { r: 0, g: 0, b: 0, a: 0 };
+// ── Standard ANSI colors (chalk: black, red, green, … white) ────────
 export const BLACK = { r: 0, g: 0, b: 0, a: 255 };
-export const WHITE = { r: 255, g: 255, b: 255, a: 255 };
 export const RED = { r: 255, g: 0, b: 0, a: 255 };
 export const GREEN = { r: 0, g: 255, b: 0, a: 255 };
-export const BLUE = { r: 0, g: 0, b: 255, a: 255 };
 export const YELLOW = { r: 255, g: 255, b: 0, a: 255 };
-export const CYAN = { r: 0, g: 255, b: 255, a: 255 };
+export const BLUE = { r: 0, g: 0, b: 255, a: 255 };
 export const MAGENTA = { r: 255, g: 0, b: 255, a: 255 };
-export const GRAY = { r: 128, g: 128, b: 128, a: 255 };
+export const CYAN = { r: 0, g: 255, b: 255, a: 255 };
+export const WHITE = { r: 255, g: 255, b: 255, a: 255 };
+// ── Bright ANSI colors (chalk: blackBright … whiteBright) ───────────
+export const BLACK_BRIGHT = { r: 128, g: 128, b: 128, a: 255 };
+export const RED_BRIGHT = { r: 255, g: 85, b: 85, a: 255 };
+export const GREEN_BRIGHT = { r: 85, g: 255, b: 85, a: 255 };
+export const YELLOW_BRIGHT = { r: 255, g: 255, b: 85, a: 255 };
+export const BLUE_BRIGHT = { r: 85, g: 85, b: 255, a: 255 };
+export const MAGENTA_BRIGHT = { r: 255, g: 85, b: 255, a: 255 };
+export const CYAN_BRIGHT = { r: 85, g: 255, b: 255, a: 255 };
+export const WHITE_BRIGHT = { r: 255, g: 255, b: 255, a: 255 };
+// ── Convenience aliases ─────────────────────────────────────────────
+/** chalk.gray / chalk.grey = blackBright (ANSI 90) */
+export const GRAY = BLACK_BRIGHT;
+export const GREY = BLACK_BRIGHT;
 export const DARK_GRAY = { r: 64, g: 64, b: 64, a: 255 };
 export const LIGHT_GRAY = { r: 192, g: 192, b: 192, a: 255 };

@@ -37,7 +37,6 @@ export class RenderTarget {
                 this._cache[y][x] = pixel;
             }
         }
-        this._output.showCursor();
         this._output.flush();
     }
     /**

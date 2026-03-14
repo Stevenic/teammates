@@ -50,7 +50,6 @@ export class RenderTarget {
       }
     }
 
-    this._output.showCursor();
     this._output.flush();
   }
 

@@ -217,7 +217,7 @@ export class App {
         this.root.arrange(arrangeRect);
         // Render control tree into buffer
         this.root.render(this._drawingContext);
-        this.root.dirty = false;
+        this._clearDirty(this.root);
         // Mark entire screen dirty and flush to terminal
         this._dirtyRegions.addRect({
             x: 0,
@@ -253,9 +253,16 @@ export class App {
         });
         // Render control tree into buffer
         this.root.render(this._drawingContext);
-        this.root.dirty = false;
+        this._clearDirty(this.root);
         // Diff and flush to terminal
         this._renderTarget.render(this._dirtyRegions);
+    }
+    /** Recursively clear dirty flags on the entire control tree. */
+    _clearDirty(ctrl) {
+        ctrl.dirty = false;
+        for (const child of ctrl.children) {
+            this._clearDirty(child);
+        }
     }
     /** Run the initial render after setup. */
     _initialRender() {

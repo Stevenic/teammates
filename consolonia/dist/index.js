@@ -6,7 +6,13 @@
  * and widgets for building interactive terminal applications.
  */
 // ── Pixel types ─────────────────────────────────────────────────────
-export { color, colorBlend, colorBrighten, colorShade, TRANSPARENT, BLACK, WHITE, RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, GRAY, DARK_GRAY, LIGHT_GRAY, } from "./pixel/color.js";
+export { color, colorBlend, colorBrighten, colorShade, TRANSPARENT, 
+// Standard ANSI colors
+BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, 
+// Bright ANSI colors
+BLACK_BRIGHT, RED_BRIGHT, GREEN_BRIGHT, YELLOW_BRIGHT, BLUE_BRIGHT, MAGENTA_BRIGHT, CYAN_BRIGHT, WHITE_BRIGHT, 
+// Aliases
+GRAY, GREY, DARK_GRAY, LIGHT_GRAY, } from "./pixel/color.js";
 export { UP, RIGHT, DOWN, LEFT, BOX_NONE, BOX_CHARS, boxChar, mergeBoxPatterns, } from "./pixel/box-pattern.js";
 export { charWidth, sym, EMPTY_SYMBOL, } from "./pixel/symbol.js";
 export { foreground, blendForeground, EMPTY_FOREGROUND, } from "./pixel/foreground.js";
@@ -43,5 +49,9 @@ export { Border } from "./widgets/border.js";
 export { Panel } from "./widgets/panel.js";
 export { TextInput } from "./widgets/text-input.js";
 export { ScrollView } from "./widgets/scroll-view.js";
+export { StyledText } from "./widgets/styled-text.js";
+export { ChatView, } from "./widgets/chat-view.js";
+// ── Styled text (chalk-like API) ─────────────────────────────────────
+export { pen, concat, spanText, spanLength, isStyledSpan, } from "./styled.js";
 // ── App shell ────────────────────────────────────────────────────────
 export { App } from "./app.js";

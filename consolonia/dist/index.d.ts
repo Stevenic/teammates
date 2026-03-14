@@ -5,7 +5,7 @@
  * Provides pixel-buffer rendering, raw input handling, layout engine,
  * and widgets for building interactive terminal applications.
  */
-export { type Color, color, colorBlend, colorBrighten, colorShade, TRANSPARENT, BLACK, WHITE, RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, GRAY, DARK_GRAY, LIGHT_GRAY, } from "./pixel/color.js";
+export { type Color, color, colorBlend, colorBrighten, colorShade, TRANSPARENT, BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, BLACK_BRIGHT, RED_BRIGHT, GREEN_BRIGHT, YELLOW_BRIGHT, BLUE_BRIGHT, MAGENTA_BRIGHT, CYAN_BRIGHT, WHITE_BRIGHT, GRAY, GREY, DARK_GRAY, LIGHT_GRAY, } from "./pixel/color.js";
 export { type BoxPattern, UP, RIGHT, DOWN, LEFT, BOX_NONE, BOX_CHARS, boxChar, mergeBoxPatterns, } from "./pixel/box-pattern.js";
 export { type Symbol, charWidth, sym, EMPTY_SYMBOL, } from "./pixel/symbol.js";
 export { type PixelForeground, foreground, blendForeground, EMPTY_FOREGROUND, } from "./pixel/foreground.js";
@@ -37,6 +37,9 @@ export { Stack, type StackOptions } from "./layout/stack.js";
 export { Text, type TextOptions } from "./widgets/text.js";
 export { Border, type BorderOptions } from "./widgets/border.js";
 export { Panel, type PanelOptions } from "./widgets/panel.js";
-export { TextInput, type TextInputOptions } from "./widgets/text-input.js";
+export { TextInput, type TextInputOptions, type InputColorizer } from "./widgets/text-input.js";
 export { ScrollView, type ScrollViewOptions } from "./widgets/scroll-view.js";
+export { StyledText, type StyledTextOptions, type StyledLine } from "./widgets/styled-text.js";
+export { ChatView, type ChatViewOptions, type DropdownItem, } from "./widgets/chat-view.js";
+export { pen, concat, spanText, spanLength, isStyledSpan, type StyledSpan, type StyledSegment, } from "./styled.js";
 export { App, type AppOptions } from "./app.js";

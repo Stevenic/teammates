@@ -15,6 +15,7 @@ export class TextInput extends Control {
     _style;
     _cursorStyle;
     _promptStyle;
+    _colorize;
     /** Command history entries (most recent last). */
     _history;
     /** Current position in history (-1 = not browsing, 0 = oldest). */
@@ -35,6 +36,7 @@ export class TextInput extends Control {
         this._cursorStyle = options.cursorStyle ?? {};
         this._promptStyle = options.promptStyle ?? {};
         this._history = options.history ? [...options.history] : [];
+        this._colorize = options.colorize ?? null;
     }
     // ── Public properties ─────────────────────────────────────────
     get value() {
@@ -265,11 +267,23 @@ export class TextInput extends Control {
             this.invalidate();
             return true;
         }
-        // ── Up → history back ───────────────────────────────────
+        // ── Up → move cursor up in wrapped text, or history ─────
         if (key.key === "up") {
+            const lines = this._wrapLines(this._lastFirstRowW, this._lastTotalWidth);
+            if (lines.length > 1) {
+                const { row, col } = this._cursorToRowCol(lines);
+                if (row > 0) {
+                    // Move cursor to same column on previous row
+                    const prevLine = lines[row - 1];
+                    const prevLineOffset = this._lineOffset(lines, row - 1);
+                    this._cursor = prevLineOffset + Math.min(col, prevLine.length - 1);
+                    this.invalidate();
+                    return true;
+                }
+                // On first row — fall through to history
+            }
             if (this._history.length > 0) {
                 if (this._historyIndex === -1) {
-                    // Start browsing: save current input
                     this._savedInput = this._value;
                     this._historyIndex = this._history.length - 1;
                 }
@@ -283,15 +297,27 @@ export class TextInput extends Control {
             }
             return true;
         }
-        // ── Down → history forward ──────────────────────────────
+        // ── Down → move cursor down in wrapped text, or history ─
         if (key.key === "down") {
+            const lines = this._wrapLines(this._lastFirstRowW, this._lastTotalWidth);
+            if (lines.length > 1) {
+                const { row, col } = this._cursorToRowCol(lines);
+                if (row < lines.length - 1) {
+                    // Move cursor to same column on next row
+                    const nextLine = lines[row + 1];
+                    const nextLineOffset = this._lineOffset(lines, row + 1);
+                    this._cursor = nextLineOffset + Math.min(col, nextLine.length);
+                    this.invalidate();
+                    return true;
+                }
+                // On last row — fall through to history
+            }
             if (this._historyIndex >= 0) {
                 if (this._historyIndex < this._history.length - 1) {
                     this._historyIndex++;
                     this._value = this._history[this._historyIndex];
                 }
                 else {
-                    // Past the end: restore saved input
                     this._historyIndex = -1;
                     this._value = this._savedInput;
                     this._savedInput = "";
@@ -343,12 +369,92 @@ export class TextInput extends Control {
             i++;
         return i;
     }
+    // ── Word-wrap layout ────────────────────────────────────────
+    /**
+     * Build wrapped lines from the current value.
+     * Row 0 starts after the prompt (firstRowW chars wide).
+     * Subsequent rows use the full width.
+     * Breaks prefer spaces (word wrap) but will hard-break if a word
+     * is longer than the row width.
+     */
+    _wrapLines(firstRowW, fullW) {
+        if (this._value.length === 0)
+            return [""];
+        const lines = [];
+        let remaining = this._value;
+        let rowW = firstRowW;
+        while (remaining.length > 0) {
+            if (remaining.length <= rowW) {
+                lines.push(remaining);
+                remaining = "";
+            }
+            else {
+                // Find a space to break on within the row width
+                let breakAt = remaining.lastIndexOf(" ", rowW - 1);
+                if (breakAt <= 0) {
+                    // No space found — hard break
+                    breakAt = rowW;
+                    lines.push(remaining.slice(0, breakAt));
+                    remaining = remaining.slice(breakAt);
+                }
+                else {
+                    // Break after the space (space stays on this line)
+                    lines.push(remaining.slice(0, breakAt + 1));
+                    remaining = remaining.slice(breakAt + 1);
+                }
+            }
+            rowW = fullW; // subsequent rows use full width
+        }
+        return lines;
+    }
+    /**
+     * Find which wrapped line and column the cursor is on.
+     * Returns { row, col } in wrapped coordinates.
+     */
+    _cursorToRowCol(lines) {
+        let offset = 0;
+        for (let row = 0; row < lines.length; row++) {
+            const lineLen = lines[row].length;
+            if (this._cursor <= offset + lineLen) {
+                // Handle cursor-at-end on last line vs start-of-next-line
+                if (this._cursor === offset + lineLen && row < lines.length - 1) {
+                    return { row: row + 1, col: 0 };
+                }
+                return { row, col: this._cursor - offset };
+            }
+            offset += lineLen;
+        }
+        // Cursor past all text — put on last line
+        const lastLine = lines[lines.length - 1];
+        return { row: lines.length - 1, col: lastLine.length };
+    }
+    /** Get the character offset where a given wrapped line starts. */
+    _lineOffset(lines, lineIdx) {
+        let off = 0;
+        for (let i = 0; i < lineIdx; i++)
+            off += lines[i].length;
+        return off;
+    }
+    /** Vertical scroll offset (first visible row). */
+    _vScrollOffset = 0;
+    /** Cached layout widths from last measure/render. */
+    _lastTotalWidth = 80;
+    _lastFirstRowW = 78;
     // ── Layout ────────────────────────────────────────────────────
     measure(constraint) {
-        // TextInput always occupies 1 row; width is prompt + as much as available
+        const maxH = constraint.maxHeight;
+        const totalWidth = constraint.maxWidth;
+        const firstRowW = Math.max(1, totalWidth - this._prompt.length);
+        const lines = this._wrapLines(firstRowW, totalWidth);
+        // +1 for cursor row if cursor is at the very end and would start a new line
+        const cursorOnNewLine = this._value.length > 0
+            && this._cursor === this._value.length
+            && lines[lines.length - 1].length >= (lines.length === 1 ? firstRowW : totalWidth);
+        const totalRows = lines.length + (cursorOnNewLine ? 1 : 0);
+        const rows = Math.min(maxH, Math.max(1, totalRows));
         return {
-            width: constraint.maxWidth,
-            height: 1,
+            width: totalWidth,
+            height: rows,
         };
     }
     render(ctx) {
@@ -358,76 +464,85 @@ export class TextInput extends Control {
         const bx = bounds.x;
         const by = bounds.y;
         const totalWidth = bounds.width;
-        let x = bx;
-        // Draw prompt
-        if (this._prompt.length > 0) {
-            ctx.drawText(x, by, this._prompt, this._promptStyle);
-            x += this._prompt.length;
-        }
-        const availWidth = totalWidth - (x - bx);
-        if (availWidth <= 0)
-            return;
+        const visibleRows = bounds.height;
+        const promptLen = this._prompt.length;
+        const firstRowW = Math.max(1, totalWidth - promptLen);
+        this._lastTotalWidth = totalWidth;
+        this._lastFirstRowW = firstRowW;
         const isFocused = this.focused;
         // ── Empty value: show placeholder or cursor ─────────────
         if (this._value.length === 0) {
+            const promptX = bx + promptLen;
+            if (this._prompt.length > 0) {
+                ctx.drawText(bx, by, this._prompt, this._promptStyle);
+            }
             if (isFocused) {
-                // Draw cursor at first position
-                this._drawCursor(ctx, x, by, " ");
-                // Draw placeholder after cursor
+                this._drawCursor(ctx, promptX, by, " ");
                 if (this._placeholder.length > 0) {
-                    const phText = this._placeholder.slice(0, availWidth - 1);
-                    ctx.drawText(x + 1, by, phText, this._placeholderStyle);
+                    const phText = this._placeholder.slice(0, firstRowW - 1);
+                    ctx.drawText(promptX + 1, by, phText, this._placeholderStyle);
                 }
             }
             else if (this._placeholder.length > 0) {
-                const phText = this._placeholder.slice(0, availWidth);
-                ctx.drawText(x, by, phText, this._placeholderStyle);
+                const phText = this._placeholder.slice(0, firstRowW);
+                ctx.drawText(promptX, by, phText, this._placeholderStyle);
             }
+            this._vScrollOffset = 0;
             return;
         }
-        // ── Non-empty value: handle scrolling ───────────────────
-        this._updateScrollOffset(availWidth);
-        const visibleText = this._value.slice(this._scrollOffset, this._scrollOffset + availWidth);
-        // Draw the visible text
-        for (let i = 0; i < visibleText.length; i++) {
-            const charIdx = this._scrollOffset + i;
-            if (isFocused && charIdx === this._cursor) {
-                // This is the cursor position — draw inverted
-                this._drawCursor(ctx, x + i, by, visibleText[i]);
-            }
-            else {
-                ctx.drawText(x + i, by, visibleText[i], this._style);
-            }
+        // ── Word-wrap and scroll ────────────────────────────────
+        const lines = this._wrapLines(firstRowW, totalWidth);
+        const { row: cursorRow, col: cursorCol } = this._cursorToRowCol(lines);
+        // Ensure cursor row is visible by adjusting vertical scroll
+        if (cursorRow < this._vScrollOffset) {
+            this._vScrollOffset = cursorRow;
         }
-        // If cursor is at the end of visible text (append position)
-        if (isFocused && this._cursor === this._value.length) {
-            const cursorScreenPos = this._cursor - this._scrollOffset;
-            if (cursorScreenPos >= 0 && cursorScreenPos < availWidth) {
-                this._drawCursor(ctx, x + cursorScreenPos, by, " ");
-            }
-        }
-    }
-    // ── Scroll offset management ──────────────────────────────────
-    /**
-     * Ensure the cursor is visible within the available width by
-     * adjusting _scrollOffset.
-     */
-    _updateScrollOffset(availWidth) {
-        if (availWidth <= 0) {
-            this._scrollOffset = 0;
-            return;
-        }
-        // Cursor before visible window → scroll left
-        if (this._cursor < this._scrollOffset) {
-            this._scrollOffset = this._cursor;
-        }
-        // Cursor beyond visible window → scroll right
-        // Keep 1 cell of room if possible for the cursor-at-end case
-        if (this._cursor >= this._scrollOffset + availWidth) {
-            this._scrollOffset = this._cursor - availWidth + 1;
+        if (cursorRow >= this._vScrollOffset + visibleRows) {
+            this._vScrollOffset = cursorRow - visibleRows + 1;
         }
         // Clamp
-        this._scrollOffset = Math.max(0, this._scrollOffset);
+        const totalLines = lines.length;
+        const maxVScroll = Math.max(0, totalLines - visibleRows);
+        this._vScrollOffset = Math.max(0, Math.min(this._vScrollOffset, maxVScroll));
+        // Compute per-character styles
+        const charStyles = this._colorize ? this._colorize(this._value) : null;
+        // Build a char-offset map: charOffset[row] = index into this._value
+        // where that wrapped line starts.
+        const lineOffsets = [];
+        let off = 0;
+        for (const line of lines) {
+            lineOffsets.push(off);
+            off += line.length;
+        }
+        // Render visible rows
+        for (let vr = 0; vr < visibleRows; vr++) {
+            const lineIdx = this._vScrollOffset + vr;
+            if (lineIdx >= lines.length)
+                break;
+            const lineText = lines[lineIdx];
+            const lineOffset = lineOffsets[lineIdx];
+            const rowX = lineIdx === 0 ? bx + promptLen : bx;
+            const screenY = by + vr;
+            // Draw prompt on the first visible row if it's line 0
+            if (lineIdx === 0 && this._prompt.length > 0) {
+                ctx.drawText(bx, screenY, this._prompt, this._promptStyle);
+            }
+            // Draw characters
+            for (let col = 0; col < lineText.length; col++) {
+                const charIdx = lineOffset + col;
+                if (isFocused && charIdx === this._cursor) {
+                    this._drawCursor(ctx, rowX + col, screenY, lineText[col]);
+                }
+                else {
+                    const style = charStyles?.[charIdx] ?? this._style;
+                    ctx.drawChar(rowX + col, screenY, lineText[col], style);
+                }
+            }
+            // Cursor at end of this line (append position)
+            if (isFocused && lineIdx === cursorRow && cursorCol === lineText.length) {
+                this._drawCursor(ctx, rowX + cursorCol, screenY, " ");
+            }
+        }
     }
     // ── Cursor rendering ──────────────────────────────────────────
     /**

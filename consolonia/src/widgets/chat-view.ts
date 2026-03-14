@@ -35,7 +35,9 @@ import type { Size, Constraint, Rect } from "../layout/types.js";
 import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
 import { Text } from "./text.js";
-import { TextInput } from "./text-input.js";
+import { StyledText, type StyledLine } from "./styled-text.js";
+import { TextInput, type InputColorizer } from "./text-input.js";
+import type { StyledSpan } from "../styled.js";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -53,6 +55,8 @@ export interface ChatViewOptions {
   banner?: string;
   /** Style for the banner text. */
   bannerStyle?: TextStyle;
+  /** Custom widget to use as the banner instead of the built-in Text. */
+  bannerWidget?: Control;
   /** Prompt string for the input box (default "❯ "). */
   prompt?: string;
   /** Style for the prompt. */
@@ -61,6 +65,8 @@ export interface ChatViewOptions {
   inputStyle?: TextStyle;
   /** Style for the cursor. */
   cursorStyle?: TextStyle;
+  /** Per-character colorizer for input text. */
+  inputColorize?: InputColorizer;
   /** Placeholder when input is empty. */
   placeholder?: string;
   /** Style for placeholder text. */
@@ -75,8 +81,16 @@ export interface ChatViewOptions {
   separatorChar?: string;
   /** Style for highlighted dropdown item. */
   dropdownHighlightStyle?: TextStyle;
-  /** Style for normal dropdown item. */
+  /** Style for normal dropdown item description. */
   dropdownStyle?: TextStyle;
+  /** Style for non-highlighted dropdown item label (/command, @name). */
+  dropdownLabelStyle?: TextStyle;
+  /** Maximum number of lines the input box can grow to (default 1). */
+  maxInputHeight?: number;
+  /** Footer content shown below the input (StyledLine for mixed colors). */
+  footer?: StyledLine;
+  /** Style for footer text (used as default when footer is a plain string). */
+  footerStyle?: TextStyle;
   /** Command history entries. */
   history?: string[];
 }
@@ -85,12 +99,14 @@ export interface ChatViewOptions {
 
 export class ChatView extends Control {
   // ── Child controls ─────────────────────────────────────────────
-  private _banner: Text;
+  private _banner: Control;
   private _topSeparator: _Separator;
-  private _feedLines: Text[] = [];
+  private _feedLines: StyledText[] = [];
   private _bottomSeparator: _Separator;
   private _progressText: Text;
   private _input: TextInput;
+  private _inputSeparator: _Separator;
+  private _footer: StyledText;
   private _dropdownItems: DropdownItem[] = [];
   private _dropdownIndex: number = -1;
 
@@ -101,15 +117,31 @@ export class ChatView extends Control {
   private _separatorChar: string;
   private _dropdownHighlightStyle: TextStyle;
   private _dropdownStyle: TextStyle;
+  private _dropdownLabelStyle: TextStyle;
+  private _footerStyle: TextStyle;
+  private _maxInputH: number;
 
   // ── Layout cache ───────────────────────────────────────────────
   private _feedScrollOffset: number = 0;
   private _lastWidth: number = 0;
   private _lastHeight: number = 0;
 
+  // ── Scrollbar state ───────────────────────────────────────────
+  /** Cached from last render for hit-testing. */
+  private _scrollbarX: number = -1;
+  private _feedY: number = 0;
+  private _feedH: number = 0;
+  private _thumbPos: number = 0;
+  private _thumbSize: number = 0;
+  private _totalContentH: number = 0;
+  private _maxScroll: number = 0;
+  private _scrollbarVisible: boolean = false;
+  /** True while the user is dragging the scrollbar thumb. */
+  private _dragging: boolean = false;
+  /** The Y offset within the thumb where the drag started. */
+  private _dragOffsetY: number = 0;
+
   // ── Double buffer ──────────────────────────────────────────────
-  /** Snapshot of feed line texts for diff-based redraw. */
-  private _prevFeedSnapshot: string[] = [];
 
   constructor(options: ChatViewOptions = {}) {
     super();
@@ -120,13 +152,20 @@ export class ChatView extends Control {
     this._separatorChar = options.separatorChar ?? "─";
     this._dropdownHighlightStyle = options.dropdownHighlightStyle ?? { bold: true };
     this._dropdownStyle = options.dropdownStyle ?? {};
+    this._dropdownLabelStyle = options.dropdownLabelStyle ?? this._dropdownStyle;
+    this._footerStyle = options.footerStyle ?? {};
+    this._maxInputH = options.maxInputHeight ?? 1;
 
-    // Banner
-    this._banner = new Text({
-      text: options.banner ?? "",
-      style: options.bannerStyle ?? {},
-      wrap: true,
-    });
+    // Banner — use custom widget if provided, otherwise fall back to Text
+    if (options.bannerWidget) {
+      this._banner = options.bannerWidget;
+    } else {
+      this._banner = new Text({
+        text: options.banner ?? "",
+        style: options.bannerStyle ?? {},
+        wrap: true,
+      });
+    }
     this.addChild(this._banner);
 
     // Top separator (between banner and feed)
@@ -155,10 +194,24 @@ export class ChatView extends Control {
       placeholder: options.placeholder ?? "",
       placeholderStyle: options.placeholderStyle ?? { italic: true },
       history: options.history,
+      colorize: options.inputColorize,
     });
     this._input.focusable = true;
     this._input.onFocus();
     this.addChild(this._input);
+
+    // Separator between input and footer
+    this._inputSeparator = new _Separator(this._separatorChar, this._separatorStyle);
+    this.addChild(this._inputSeparator);
+
+    // Footer (below input separator / dropdown, always 1 row)
+    const footerLine: StyledLine = options.footer ?? "";
+    this._footer = new StyledText({
+      lines: [footerLine],
+      defaultStyle: this._footerStyle,
+      wrap: false,
+    });
+    this.addChild(this._footer);
 
     // Wire input events to ChatView events
     this._input.on("submit", (text: string) => this.emit("submit", text));
@@ -181,31 +234,62 @@ export class ChatView extends Control {
 
   // ── Public API: Banner ─────────────────────────────────────────
 
+  /** Get the banner text (only works when using the built-in Text banner). */
   get banner(): string {
-    return this._banner.text;
+    return this._banner instanceof Text ? this._banner.text : "";
   }
 
+  /** Set the banner text (only works when using the built-in Text banner). */
   set banner(text: string) {
-    this._banner.text = text;
-    this._banner.visible = text.length > 0;
+    if (this._banner instanceof Text) {
+      this._banner.text = text;
+      this._banner.visible = text.length > 0;
+      this.invalidate();
+    }
+  }
+
+  /** Get the banner style (only works when using the built-in Text banner). */
+  get bannerStyle(): TextStyle {
+    return this._banner instanceof Text ? this._banner.style : {};
+  }
+
+  /** Set the banner style (only works when using the built-in Text banner). */
+  set bannerStyle(style: TextStyle) {
+    if (this._banner instanceof Text) {
+      this._banner.style = style;
+    }
+  }
+
+  /** Replace the banner with a custom widget. */
+  set bannerWidget(widget: Control) {
+    this.removeChild(this._banner);
+    this._banner = widget;
+    // Insert as first child so it stays at the top
+    this.children.unshift(widget);
+    widget.parent = this;
     this.invalidate();
   }
 
-  get bannerStyle(): TextStyle {
-    return this._banner.style;
+  /** Get the current banner widget. */
+  get bannerWidget(): Control {
+    return this._banner;
   }
 
-  set bannerStyle(style: TextStyle) {
-    this._banner.style = style;
+  // ── Public API: Footer ─────────────────────────────────────────
+
+  /** Set footer content (plain string or StyledSpan for mixed colors). */
+  setFooter(content: StyledLine): void {
+    this._footer.lines = [content];
+    this.invalidate();
   }
 
   // ── Public API: Feed ───────────────────────────────────────────
 
-  /** Append a line of text to the feed. Auto-scrolls to bottom. */
+  /** Append a line of plain text to the feed. Auto-scrolls to bottom. */
   appendToFeed(text: string, style?: TextStyle): void {
-    const line = new Text({
-      text,
-      style: style ?? this._feedStyle,
+    const line = new StyledText({
+      lines: [text],
+      defaultStyle: style ?? this._feedStyle,
       wrap: true,
     });
     this._feedLines.push(line);
@@ -213,12 +297,24 @@ export class ChatView extends Control {
     this.invalidate();
   }
 
-  /** Append multiple lines to the feed. */
+  /** Append a styled line (StyledSpan) to the feed. */
+  appendStyledToFeed(styledLine: StyledSpan): void {
+    const line = new StyledText({
+      lines: [styledLine],
+      defaultStyle: this._feedStyle,
+      wrap: true,
+    });
+    this._feedLines.push(line);
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
+  /** Append multiple plain lines to the feed. */
   appendLines(lines: string[], style?: TextStyle): void {
     for (const text of lines) {
-      const line = new Text({
-        text,
-        style: style ?? this._feedStyle,
+      const line = new StyledText({
+        lines: [text],
+        defaultStyle: style ?? this._feedStyle,
         wrap: true,
       });
       this._feedLines.push(line);
@@ -231,7 +327,6 @@ export class ChatView extends Control {
   clear(): void {
     this._feedLines = [];
     this._feedScrollOffset = 0;
-    this._prevFeedSnapshot = [];
     this.invalidate();
   }
 
@@ -366,8 +461,18 @@ export class ChatView extends Control {
         if (ke.key === "up") return this.dropdownUp();
         if (ke.key === "down") return this.dropdownDown();
         if (ke.key === "enter" && this._dropdownIndex >= 0) {
-          this.acceptDropdownItem();
-          return true;
+          // Only consume Enter if the highlighted item has a completion value
+          // AND the input doesn't already match the completion (otherwise submit).
+          const item = this._dropdownItems[this._dropdownIndex];
+          if (item && item.completion) {
+            const currentVal = this._input.value.trim();
+            if (currentVal !== item.completion.trim()) {
+              this.acceptDropdownItem();
+              return true;
+            }
+            // Input already matches — hide dropdown and let Enter fall through to submit
+            this.hideDropdown();
+          }
         }
         if (ke.key === "escape") {
           this.hideDropdown();
@@ -386,7 +491,7 @@ export class ChatView extends Control {
       }
     }
 
-    // Mouse wheel events for feed scrolling
+    // Mouse events: wheel scrolling + scrollbar drag
     if (event.type === "mouse") {
       const me = event.event;
       if (me.type === "wheelup") {
@@ -396,6 +501,45 @@ export class ChatView extends Control {
       if (me.type === "wheeldown") {
         this.scrollFeed(3);
         return true;
+      }
+
+      // Scrollbar drag
+      if (this._scrollbarVisible) {
+        const onScrollbar = me.x === this._scrollbarX
+          && me.y >= this._feedY
+          && me.y < this._feedY + this._feedH;
+
+        if (me.type === "press" && me.button === "left" && onScrollbar) {
+          const relY = me.y - this._feedY;
+          if (relY >= this._thumbPos && relY < this._thumbPos + this._thumbSize) {
+            // Clicked on thumb — start dragging
+            this._dragging = true;
+            this._dragOffsetY = relY - this._thumbPos;
+          } else {
+            // Clicked on track — jump to that position
+            const ratio = relY / this._feedH;
+            this._feedScrollOffset = Math.round(ratio * this._maxScroll);
+            this._feedScrollOffset = Math.max(0, Math.min(this._feedScrollOffset, this._maxScroll));
+            this.invalidate();
+          }
+          return true;
+        }
+
+        if (me.type === "move" && this._dragging) {
+          const relY = me.y - this._feedY;
+          const newThumbPos = relY - this._dragOffsetY;
+          const maxThumbPos = this._feedH - this._thumbSize;
+          const clampedPos = Math.max(0, Math.min(newThumbPos, maxThumbPos));
+          const ratio = maxThumbPos > 0 ? clampedPos / maxThumbPos : 0;
+          this._feedScrollOffset = Math.round(ratio * this._maxScroll);
+          this.invalidate();
+          return true;
+        }
+
+        if (me.type === "release" && this._dragging) {
+          this._dragging = false;
+          return true;
+        }
       }
     }
 
@@ -435,16 +579,6 @@ export class ChatView extends Control {
 
     // ── Measure fixed-height sections ────────────────────────
 
-    // Banner height
-    let bannerH = 0;
-    if (this._banner.visible && this._banner.text.length > 0) {
-      const bannerSize = this._banner.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: H });
-      bannerH = bannerSize.height;
-    }
-
-    // Top separator: 1 row (only if banner is visible)
-    const topSepH = bannerH > 0 ? 1 : 0;
-
     // Progress text height
     let progressH = 0;
     if (this._progressText.visible && this._progressText.text.length > 0) {
@@ -455,65 +589,70 @@ export class ChatView extends Control {
     // Bottom separator: 1 row
     const botSepH = 1;
 
-    // Input: 1 row
-    const inputH = 1;
+    // Input: measure to get wrapped height (up to maxInputH rows)
+    const inputSize = this._input.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: this._maxInputH });
+    const inputH = inputSize.height;
 
-    // Dropdown height
-    const dropdownH = this._dropdownItems.length;
+    // Input separator: 1 row (between input and footer/dropdown)
+    const inputSepH = 1;
 
-    // Feed gets remaining space
-    const fixedH = bannerH + topSepH + botSepH + progressH + inputH + dropdownH;
+    // Footer: always 1 row (shows footer text or first row of dropdown)
+    const footerH = 1;
+
+    // Dropdown height — when active, replaces the footer row and can grow.
+    const chromeH = botSepH + progressH + inputH + inputSepH + footerH;
+    const hasDropdown = this._dropdownItems.length > 0;
+    const maxDropdownH = Math.max(0, H - chromeH);
+    const dropdownExtraH = hasDropdown
+      ? Math.min(this._dropdownItems.length - 1, maxDropdownH)
+      : 0;
+
+    // Feed gets remaining space (banner + separator scroll within it)
+    const fixedH = chromeH + dropdownExtraH;
     const feedH = Math.max(0, H - fixedH);
 
     // ── Arrange and render each section ──────────────────────
 
     let y = b.y;
 
-    // 1. Banner
-    if (bannerH > 0) {
-      this._banner.arrange({ x: b.x, y, width: W, height: bannerH });
-      this._banner.render(ctx);
-      y += bannerH;
-    }
-
-    // 2. Top separator
-    if (topSepH > 0) {
-      this._topSeparator.arrange({ x: b.x, y, width: W, height: 1 });
-      this._topSeparator.render(ctx);
-      y += 1;
-    }
-
-    // 3. Feed area — render visible lines with clipping
+    // 1. Feed area (banner + separator + feed lines all scroll together)
     if (feedH > 0) {
       this._renderFeed(ctx, b.x, y, W, feedH);
       y += feedH;
     }
 
-    // 4. Bottom separator
+    // 2. Bottom separator
     this._bottomSeparator.arrange({ x: b.x, y, width: W, height: 1 });
     this._bottomSeparator.render(ctx);
     y += 1;
 
-    // 5. Progress text
+    // 3. Progress text
     if (progressH > 0) {
       this._progressText.arrange({ x: b.x, y, width: W, height: progressH });
       this._progressText.render(ctx);
       y += progressH;
     }
 
-    // 6. Input
-    this._input.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: 1 });
+    // 4. Input
     this._input.arrange({ x: b.x, y, width: W, height: inputH });
     this._input.render(ctx);
     y += inputH;
 
-    // 7. Dropdown
-    if (dropdownH > 0) {
-      this._renderDropdown(ctx, b.x, y, W, dropdownH);
+    // 5. Input separator
+    this._inputSeparator.arrange({ x: b.x, y, width: W, height: 1 });
+    this._inputSeparator.render(ctx);
+    y += inputSepH;
+
+    // 6. Dropdown or footer
+    if (hasDropdown) {
+      const totalDropdownH = dropdownExtraH + 1;
+      this._renderDropdown(ctx, b.x, y, W, totalDropdownH);
+    } else {
+      this._footer.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: 1 });
+      this._footer.arrange({ x: b.x, y, width: W, height: footerH });
+      this._footer.render(ctx);
     }
 
-    // Save snapshot for next diff
-    this._prevFeedSnapshot = this._feedLines.map((l) => l.text);
   }
 
   // ── Feed rendering ─────────────────────────────────────────────
@@ -525,41 +664,106 @@ export class ChatView extends Control {
     width: number,
     height: number,
   ): void {
-    // Clip feed area
-    ctx.pushClip({ x, y, width, height });
+    // Build the list of scrollable items: banner + separator + feed lines
+    // Each item is { control, height } measured against content width.
+    const contentWidth = width - 1; // reserve 1 col for scrollbar
 
-    // Measure all feed lines to determine wrapped heights
-    const lineHeights: number[] = [];
-    let totalContentH = 0;
+    interface ScrollItem {
+      render: (cx: number, cy: number, cw: number, ch: number) => void;
+      height: number;
+    }
+    const items: ScrollItem[] = [];
 
+    // Banner (if visible)
+    if (this._banner.visible) {
+      const bannerSize = this._banner.measure({ minWidth: 0, maxWidth: contentWidth, minHeight: 0, maxHeight: Infinity });
+      const bh = Math.max(1, bannerSize.height);
+      items.push({
+        height: bh,
+        render: (cx, cy, cw, ch) => {
+          this._banner.arrange({ x: cx, y: cy, width: cw, height: ch });
+          this._banner.render(ctx);
+        },
+      });
+      // Top separator after banner
+      items.push({
+        height: 1,
+        render: (cx, cy, cw, _ch) => {
+          this._topSeparator.arrange({ x: cx, y: cy, width: cw, height: 1 });
+          this._topSeparator.render(ctx);
+        },
+      });
+    }
+
+    // Feed lines
     for (const line of this._feedLines) {
-      const lineSize = line.measure({ minWidth: 0, maxWidth: width, minHeight: 0, maxHeight: Infinity });
+      const lineSize = line.measure({ minWidth: 0, maxWidth: contentWidth, minHeight: 0, maxHeight: Infinity });
       const h = Math.max(1, lineSize.height);
-      lineHeights.push(h);
-      totalContentH += h;
+      items.push({
+        height: h,
+        render: (cx, cy, cw, ch) => {
+          line.arrange({ x: cx, y: cy, width: cw, height: ch });
+          line.render(ctx);
+        },
+      });
+    }
+
+    // Calculate total content height
+    let totalContentH = 0;
+    for (const item of items) {
+      totalContentH += item.height;
     }
 
     // Clamp scroll offset
     const maxScroll = Math.max(0, totalContentH - height);
     this._feedScrollOffset = Math.max(0, Math.min(this._feedScrollOffset, maxScroll));
 
-    // Find the first visible line
+    // Clip feed area
+    ctx.pushClip({ x, y, width, height });
+
+    // Find the first visible item
     let skippedRows = 0;
-    let startLine = 0;
-    for (let i = 0; i < this._feedLines.length; i++) {
-      if (skippedRows + lineHeights[i] > this._feedScrollOffset) break;
-      skippedRows += lineHeights[i];
-      startLine = i + 1;
+    let startIdx = 0;
+    for (let i = 0; i < items.length; i++) {
+      if (skippedRows + items[i].height > this._feedScrollOffset) break;
+      skippedRows += items[i].height;
+      startIdx = i + 1;
     }
 
-    // Render visible lines
+    // Render visible items
     let cy = y - (this._feedScrollOffset - skippedRows);
-    for (let i = startLine; i < this._feedLines.length && cy < y + height; i++) {
-      const line = this._feedLines[i];
-      const lh = lineHeights[i];
-      line.arrange({ x, y: cy, width, height: lh });
-      line.render(ctx);
-      cy += lh;
+    for (let i = startIdx; i < items.length && cy < y + height; i++) {
+      const item = items[i];
+      item.render(x, cy, contentWidth, item.height);
+      cy += item.height;
+    }
+
+    // Render scrollbar and cache geometry for hit-testing
+    if (height > 0 && totalContentH > height) {
+      const scrollX = x + width - 1;
+      const thumbSize = Math.max(1, Math.round((height / totalContentH) * height));
+      const thumbPos = maxScroll > 0
+        ? Math.round((this._feedScrollOffset / maxScroll) * (height - thumbSize))
+        : 0;
+      const trackStyle = this._separatorStyle;
+      const thumbStyle = this._feedStyle;
+
+      // Cache for mouse interaction
+      this._scrollbarX = scrollX;
+      this._feedY = y;
+      this._feedH = height;
+      this._thumbPos = thumbPos;
+      this._thumbSize = thumbSize;
+      this._totalContentH = totalContentH;
+      this._maxScroll = maxScroll;
+      this._scrollbarVisible = true;
+
+      for (let row = 0; row < height; row++) {
+        const inThumb = row >= thumbPos && row < thumbPos + thumbSize;
+        ctx.drawChar(scrollX, y + row, inThumb ? "┃" : "│", inThumb ? thumbStyle : trackStyle);
+      }
+    } else {
+      this._scrollbarVisible = false;
     }
 
     ctx.popClip();
@@ -577,14 +781,23 @@ export class ChatView extends Control {
     for (let i = 0; i < this._dropdownItems.length && i < height; i++) {
       const item = this._dropdownItems[i];
       const isHighlighted = i === this._dropdownIndex;
-      const style = isHighlighted ? this._dropdownHighlightStyle : this._dropdownStyle;
 
-      const prefix = isHighlighted ? "▸ " : "  ";
-      const labelPad = item.label.padEnd(16);
-      const text = prefix + labelPad + item.description;
-      const truncated = text.length > width ? text.slice(0, width) : text;
-
-      ctx.drawText(x, y + i, truncated, style);
+      if (isHighlighted) {
+        // Selected row: entire row in highlight style
+        const prefix = "▸ ";
+        const labelPad = item.label.padEnd(16);
+        const text = prefix + labelPad + item.description;
+        const truncated = text.length > width ? text.slice(0, width) : text;
+        ctx.drawText(x, y + i, truncated, this._dropdownHighlightStyle);
+      } else {
+        // Non-selected: label in accent (dropdownLabelStyle), description in muted (dropdownStyle)
+        const prefix = "  ";
+        const labelPad = item.label.padEnd(16);
+        ctx.drawStyledText(x, y + i, [
+          { text: prefix + labelPad, style: this._dropdownLabelStyle },
+          { text: item.description, style: this._dropdownStyle },
+        ]);
+      }
     }
   }
 

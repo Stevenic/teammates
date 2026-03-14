@@ -76,16 +76,38 @@ export function colorShade(c: Color, factor: number): Color {
 }
 
 // ── Common color constants ──────────────────────────────────────────
+//
+// Standard colors match chalk's ANSI-16 palette names.
+// RGB values are chosen for truecolor terminals (sent as 24-bit RGB).
 
 export const TRANSPARENT: Color = { r: 0, g: 0, b: 0, a: 0 };
+
+// ── Standard ANSI colors (chalk: black, red, green, … white) ────────
+
 export const BLACK: Color = { r: 0, g: 0, b: 0, a: 255 };
-export const WHITE: Color = { r: 255, g: 255, b: 255, a: 255 };
 export const RED: Color = { r: 255, g: 0, b: 0, a: 255 };
 export const GREEN: Color = { r: 0, g: 255, b: 0, a: 255 };
-export const BLUE: Color = { r: 0, g: 0, b: 255, a: 255 };
 export const YELLOW: Color = { r: 255, g: 255, b: 0, a: 255 };
-export const CYAN: Color = { r: 0, g: 255, b: 255, a: 255 };
+export const BLUE: Color = { r: 0, g: 0, b: 255, a: 255 };
 export const MAGENTA: Color = { r: 255, g: 0, b: 255, a: 255 };
-export const GRAY: Color = { r: 128, g: 128, b: 128, a: 255 };
+export const CYAN: Color = { r: 0, g: 255, b: 255, a: 255 };
+export const WHITE: Color = { r: 255, g: 255, b: 255, a: 255 };
+
+// ── Bright ANSI colors (chalk: blackBright … whiteBright) ───────────
+
+export const BLACK_BRIGHT: Color = { r: 128, g: 128, b: 128, a: 255 };
+export const RED_BRIGHT: Color = { r: 255, g: 85, b: 85, a: 255 };
+export const GREEN_BRIGHT: Color = { r: 85, g: 255, b: 85, a: 255 };
+export const YELLOW_BRIGHT: Color = { r: 255, g: 255, b: 85, a: 255 };
+export const BLUE_BRIGHT: Color = { r: 85, g: 85, b: 255, a: 255 };
+export const MAGENTA_BRIGHT: Color = { r: 255, g: 85, b: 255, a: 255 };
+export const CYAN_BRIGHT: Color = { r: 85, g: 255, b: 255, a: 255 };
+export const WHITE_BRIGHT: Color = { r: 255, g: 255, b: 255, a: 255 };
+
+// ── Convenience aliases ─────────────────────────────────────────────
+
+/** chalk.gray / chalk.grey = blackBright (ANSI 90) */
+export const GRAY: Color = BLACK_BRIGHT;
+export const GREY: Color = BLACK_BRIGHT;
 export const DARK_GRAY: Color = { r: 64, g: 64, b: 64, a: 255 };
 export const LIGHT_GRAY: Color = { r: 192, g: 192, b: 192, a: 255 };

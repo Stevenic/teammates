@@ -179,13 +179,13 @@ describe("ChatView", () => {
       expect(chat.inputValue).toBe("/help");
     });
 
-    it("renders the input line at the bottom", () => {
+    it("renders the input line above separator and footer", () => {
       const chat = new ChatView({ prompt: "> " });
       chat.inputValue = "test";
       const { buffer } = layoutAndRender(chat, 40, 10);
 
-      // Input should be on the last row (row 9)
-      const inputRow = rowText(buffer, 9, 0, 6);
+      // Input at row 7, separator at row 8, footer at row 9
+      const inputRow = rowText(buffer, 7, 0, 6);
       expect(inputRow).toBe("> test");
     });
   });
@@ -312,16 +312,42 @@ describe("ChatView", () => {
       ]);
       const { buffer } = layoutAndRender(chat, 40, 12);
 
-      // Find dropdown text
-      let found = false;
+      // Find dropdown text — check the last row (should be right after input)
+      let foundRow = -1;
       for (let y = 0; y < 12; y++) {
         const row = rowText(buffer, y, 0, 30);
         if (row.includes("/help")) {
-          found = true;
+          foundRow = y;
           break;
         }
       }
-      expect(found).toBe(true);
+      expect(foundRow).toBeGreaterThanOrEqual(0);
+    });
+
+    it("renders dropdown items at correct position with banner", () => {
+      const chat = new ChatView({ banner: "Banner\nLine 2" });
+      chat.appendToFeed("msg1");
+      chat.showDropdown([
+        { label: "/help", description: "Show help", completion: "/help " },
+        { label: "/status", description: "Status", completion: "/status " },
+      ]);
+      const H = 15;
+      const { buffer } = layoutAndRender(chat, 50, H);
+
+      // Dump all rows for debugging
+      const rows: string[] = [];
+      for (let y = 0; y < H; y++) {
+        rows.push(rowText(buffer, y, 0, 50).replace(/ +$/, ""));
+      }
+
+      // Input should be at H - 3 (2 dropdown rows below)
+      // Dropdown should be at H - 2 and H - 1
+      const helpRow = rows.findIndex((r) => r.includes("/help"));
+      const statusRow = rows.findIndex((r) => r.includes("/status"));
+      expect(helpRow).toBeGreaterThanOrEqual(0);
+      expect(statusRow).toBeGreaterThanOrEqual(0);
+      // Dropdown should be after input (last 2 rows)
+      expect(helpRow).toBeGreaterThan(rows.findIndex((r) => r.includes("❯") || r.includes("> ")));
     });
   });
 
@@ -390,6 +416,108 @@ describe("ChatView", () => {
     });
   });
 
+  describe("dropdown after external showDropdown + re-render", () => {
+    it("dropdown persists across multiple render passes", () => {
+      const chat = new ChatView({ banner: "B", prompt: "> " });
+      const W = 50, H = 15;
+
+      // First render — no dropdown
+      let { buffer, ctx } = layoutAndRender(chat, W, H);
+
+      // Simulate: user types, CLI shows dropdown, then forces refresh
+      chat.showDropdown([
+        { label: "/help", description: "Show help", completion: "/help " },
+        { label: "/quit", description: "Quit", completion: "/quit " },
+      ]);
+
+      // Second render (simulates app.refresh())
+      ({ buffer, ctx } = layoutAndRender(chat, W, H));
+
+      // Dropdown should be in the last 2 rows
+      const helpRow = rowText(buffer, H - 2, 0, 30);
+      const quitRow = rowText(buffer, H - 1, 0, 30);
+      expect(helpRow).toContain("/help");
+      expect(quitRow).toContain("/quit");
+    });
+
+    it("dropdown appears when set during change event handler", () => {
+      const chat = new ChatView({ banner: "B", prompt: "> " });
+      const W = 50, H = 15;
+
+      // Wire up a change handler that shows dropdown (like the CLI does)
+      chat.on("change", (text: string) => {
+        if (text.startsWith("/") && text.length >= 2) {
+          chat.showDropdown([
+            { label: "/help", description: "Show help", completion: "/help " },
+          ]);
+        } else {
+          chat.hideDropdown();
+        }
+      });
+
+      // Do initial render
+      let { buffer, ctx } = layoutAndRender(chat, W, H);
+
+      // Simulate typing "/" then "h" — exactly as App would
+      chat.handleInput(charKey("/"));
+      // After "/", no dropdown (length < 2)
+      ({ buffer } = layoutAndRender(chat, W, H));
+      let hasDropdown = false;
+      for (let y = 0; y < H; y++) {
+        if (rowText(buffer, y, 0, 30).includes("/help")) { hasDropdown = true; break; }
+      }
+      expect(hasDropdown).toBe(false);
+
+      // Type "h" — should trigger dropdown
+      chat.handleInput(charKey("h"));
+      // Re-render (simulates App's scheduled render after input)
+      ({ buffer } = layoutAndRender(chat, W, H));
+
+      hasDropdown = false;
+      let dropdownRow = -1;
+      for (let y = 0; y < H; y++) {
+        const row = rowText(buffer, y, 0, 40);
+        if (row.includes("/help")) {
+          hasDropdown = true;
+          dropdownRow = y;
+          break;
+        }
+      }
+      expect(hasDropdown).toBe(true);
+      // Dropdown should be after the input line (near bottom)
+      expect(dropdownRow).toBeGreaterThanOrEqual(H - 3);
+    });
+
+    it("dropdown survives re-render after invalidation", () => {
+      const chat = new ChatView({ prompt: "> " });
+      const W = 40, H = 10;
+
+      // Show dropdown
+      chat.showDropdown([
+        { label: "/test", description: "Test cmd", completion: "/test " },
+      ]);
+
+      // Render once
+      layoutAndRender(chat, W, H);
+
+      // Simulate TextInput invalidation (what happens after insert)
+      chat.input.setValue("x");
+
+      // Re-render (like App._renderFrame after setImmediate)
+      const { buffer } = layoutAndRender(chat, W, H);
+
+      // Dropdown should still be there
+      let found = false;
+      for (let y = 0; y < H; y++) {
+        if (rowText(buffer, y, 0, 30).includes("/test")) {
+          found = true;
+          break;
+        }
+      }
+      expect(found).toBe(true);
+    });
+  });
+
   describe("full render cycle", () => {
     it("renders banner + separator + feed + separator + input", () => {
       const chat = new ChatView({
@@ -417,9 +545,9 @@ describe("ChatView", () => {
       }
       expect(feedFound).toBe(true);
 
-      // Last row should be the input with "> "
-      const lastRow = rowText(buffer, 7, 0, 2);
-      expect(lastRow).toBe("> ");
+      // Input at row 5, separator at row 6, footer at row 7
+      const inputRow = rowText(buffer, 5, 0, 2);
+      expect(inputRow).toBe("> ");
     });
   });
 });

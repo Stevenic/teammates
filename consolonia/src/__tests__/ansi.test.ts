@@ -157,12 +157,12 @@ describe("esc", () => {
       expect(esc.bracketedPasteOff).toBe(`${ESC}?2004l`);
     });
 
-    it("mouseTrackingOn enables both 1000 and 1006 modes", () => {
-      expect(esc.mouseTrackingOn).toBe(`${ESC}?1000h${ESC}?1006h`);
+    it("mouseTrackingOn enables button-event tracking and SGR mode", () => {
+      expect(esc.mouseTrackingOn).toBe(`${ESC}?1002h${ESC}?1006h`);
     });
 
-    it("mouseTrackingOff disables both 1006 and 1000 modes", () => {
-      expect(esc.mouseTrackingOff).toBe(`${ESC}?1006l${ESC}?1000l`);
+    it("mouseTrackingOff disables SGR mode and button-event tracking", () => {
+      expect(esc.mouseTrackingOff).toBe(`${ESC}?1006l${ESC}?1002l`);
     });
   });
 

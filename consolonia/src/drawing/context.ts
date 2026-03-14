@@ -191,6 +191,36 @@ export class DrawingContext {
     }
   }
 
+  // ── Styled text (segment arrays) ────────────────────────────
+
+  /**
+   * Draw an array of styled segments at (x, y).
+   * Each segment carries its own TextStyle; segments are drawn sequentially.
+   */
+  drawStyledText(
+    x: number,
+    y: number,
+    segments: { text: string; style: TextStyle }[],
+  ): void {
+    let cx = x;
+    for (const seg of segments) {
+      for (const char of seg.text) {
+        if (char === "\t") {
+          for (let i = 0; i < TAB_WIDTH; i++) {
+            this.drawChar(cx, y, " ", seg.style);
+            cx++;
+          }
+          continue;
+        }
+        const cp = char.codePointAt(0)!;
+        if (cp < 0x20 && cp !== 0x09) continue;
+        const w = charWidth(cp);
+        this.drawChar(cx, y, char, seg.style);
+        cx += w;
+      }
+    }
+  }
+
   // ── Box drawing ──────────────────────────────────────────────
 
   /** Draw a box-drawing rectangle (border) with smart corner merging. */

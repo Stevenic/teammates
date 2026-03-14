@@ -9,6 +9,8 @@ import { Control } from "../layout/control.js";
 import type { Size, Constraint } from "../layout/types.js";
 import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
+/** Returns the style to use at each character position in the input value. */
+export type InputColorizer = (value: string) => (TextStyle | null)[];
 export interface TextInputOptions {
     placeholder?: string;
     placeholderStyle?: TextStyle;
@@ -18,6 +20,8 @@ export interface TextInputOptions {
     promptStyle?: TextStyle;
     value?: string;
     history?: string[];
+    /** Optional per-character colorizer. Return null to use default style. */
+    colorize?: InputColorizer;
 }
 export declare class TextInput extends Control {
     private _value;
@@ -28,6 +32,7 @@ export declare class TextInput extends Control {
     private _style;
     private _cursorStyle;
     private _promptStyle;
+    private _colorize;
     /** Command history entries (most recent last). */
     private _history;
     /** Current position in history (-1 = not browsing, 0 = oldest). */
@@ -73,13 +78,28 @@ export declare class TextInput extends Control {
      * Skips any non-whitespace first, then skips whitespace.
      */
     private _wordBoundaryRight;
+    /**
+     * Build wrapped lines from the current value.
+     * Row 0 starts after the prompt (firstRowW chars wide).
+     * Subsequent rows use the full width.
+     * Breaks prefer spaces (word wrap) but will hard-break if a word
+     * is longer than the row width.
+     */
+    private _wrapLines;
+    /**
+     * Find which wrapped line and column the cursor is on.
+     * Returns { row, col } in wrapped coordinates.
+     */
+    private _cursorToRowCol;
+    /** Get the character offset where a given wrapped line starts. */
+    private _lineOffset;
+    /** Vertical scroll offset (first visible row). */
+    private _vScrollOffset;
+    /** Cached layout widths from last measure/render. */
+    private _lastTotalWidth;
+    private _lastFirstRowW;
     measure(constraint: Constraint): Size;
     render(ctx: DrawingContext): void;
-    /**
-     * Ensure the cursor is visible within the available width by
-     * adjusting _scrollOffset.
-     */
-    private _updateScrollOffset;
     /**
      * Draw the cursor character with inverted foreground/background
      * colours (swap fg and bg from the text style).

@@ -369,14 +369,15 @@ describe("RenderTarget", () => {
       expect(stream.output).toContain("M");
     });
 
-    it("emits hideCursor before and showCursor after pixel data", () => {
+    it("emits hideCursor before pixel data (cursor stays hidden)", () => {
       const target = new RenderTarget(buffer, ansiOutput);
       target.fullRender();
 
       const hideCursorIdx = stream.output.indexOf("\x1b[?25l");
-      const showCursorIdx = stream.output.indexOf("\x1b[?25h");
       expect(hideCursorIdx).toBeGreaterThanOrEqual(0);
-      expect(showCursorIdx).toBeGreaterThan(hideCursorIdx);
+      // System cursor should stay hidden — consolonia renders its own cursor
+      const showCursorIdx = stream.output.indexOf("\x1b[?25h");
+      expect(showCursorIdx).toBe(-1);
     });
   });
 

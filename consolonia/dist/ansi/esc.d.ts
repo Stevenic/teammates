@@ -53,9 +53,9 @@ export declare const eraseLine = "\u001B[2K";
 export declare const bracketedPasteOn = "\u001B[?2004h";
 /** Disable bracketed paste mode. */
 export declare const bracketedPasteOff = "\u001B[?2004l";
-/** Enable SGR mouse tracking (button events + motion while pressed). */
-export declare const mouseTrackingOn = "\u001B[?1000h\u001B[?1006h";
+/** Enable SGR mouse tracking (button-event tracking + SGR extended coordinates). */
+export declare const mouseTrackingOn = "\u001B[?1002h\u001B[?1006h";
 /** Disable SGR mouse tracking. */
-export declare const mouseTrackingOff = "\u001B[?1006l\u001B[?1000l";
+export declare const mouseTrackingOff = "\u001B[?1006l\u001B[?1002l";
 /** Set the terminal window title. */
 export declare function setTitle(title: string): string;

@@ -15,15 +15,27 @@ export {
   colorBrighten,
   colorShade,
   TRANSPARENT,
+  // Standard ANSI colors
   BLACK,
-  WHITE,
   RED,
   GREEN,
-  BLUE,
   YELLOW,
-  CYAN,
+  BLUE,
   MAGENTA,
+  CYAN,
+  WHITE,
+  // Bright ANSI colors
+  BLACK_BRIGHT,
+  RED_BRIGHT,
+  GREEN_BRIGHT,
+  YELLOW_BRIGHT,
+  BLUE_BRIGHT,
+  MAGENTA_BRIGHT,
+  CYAN_BRIGHT,
+  WHITE_BRIGHT,
+  // Aliases
   GRAY,
+  GREY,
   DARK_GRAY,
   LIGHT_GRAY,
 } from "./pixel/color.js";
@@ -139,13 +151,26 @@ export { Stack, type StackOptions } from "./layout/stack.js";
 export { Text, type TextOptions } from "./widgets/text.js";
 export { Border, type BorderOptions } from "./widgets/border.js";
 export { Panel, type PanelOptions } from "./widgets/panel.js";
-export { TextInput, type TextInputOptions } from "./widgets/text-input.js";
+export { TextInput, type TextInputOptions, type InputColorizer } from "./widgets/text-input.js";
 export { ScrollView, type ScrollViewOptions } from "./widgets/scroll-view.js";
+export { StyledText, type StyledTextOptions, type StyledLine } from "./widgets/styled-text.js";
 export {
   ChatView,
   type ChatViewOptions,
   type DropdownItem,
 } from "./widgets/chat-view.js";
+
+// ── Styled text (chalk-like API) ─────────────────────────────────────
+
+export {
+  pen,
+  concat,
+  spanText,
+  spanLength,
+  isStyledSpan,
+  type StyledSpan,
+  type StyledSegment,
+} from "./styled.js";
 
 // ── App shell ────────────────────────────────────────────────────────
 

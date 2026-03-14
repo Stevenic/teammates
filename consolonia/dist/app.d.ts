@@ -60,6 +60,8 @@ export declare class App {
     private _fullRender;
     /** Perform an incremental render for dirty regions. */
     private _renderFrame;
+    /** Recursively clear dirty flags on the entire control tree. */
+    private _clearDirty;
     /** Run the initial render after setup. */
     private _initialRender;
     private _teardown;
