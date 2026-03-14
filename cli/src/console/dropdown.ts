@@ -8,7 +8,8 @@
  */
 
 import type { Interface as ReadlineInterface } from "node:readline";
-import { cursorUp, cursorToCol, truncateAnsi, stripAnsi } from "./ansi.js";
+import { esc, truncateAnsi, stripAnsi } from "@teammates/consolonia";
+import { cursorToCol } from "./ansi.js";
 
 export class Dropdown {
   private lines: string[] = [];
@@ -59,7 +60,7 @@ export class Dropdown {
 
         // Move cursor back to the prompt line
         const n = this.lines.length;
-        this.out.write(cursorUp(n));
+        this.out.write(esc.moveUp(n));
 
         // Restore cursor column position
         const promptText: string = (this.rl as any)._prompt ?? "";

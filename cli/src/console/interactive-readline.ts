@@ -23,7 +23,7 @@ import { MutableOutput } from "./mutable-output.js";
 import { PasteHandler, type PasteResult } from "./paste-handler.js";
 import { Dropdown } from "./dropdown.js";
 import { Wordwheel, type WordwheelItem } from "./wordwheel.js";
-import { eraseScreen, cursorHome } from "./ansi.js";
+import { esc } from "@teammates/consolonia";
 import type { FileAttachment } from "./file-drop.js";
 
 export interface InteractiveReadlineOptions {
@@ -125,7 +125,7 @@ export class InteractiveReadline {
 
   /** Clear the terminal and re-show the prompt. */
   clearScreen(): void {
-    process.stdout.write(eraseScreen + cursorHome);
+    process.stdout.write(esc.clearScreen + esc.moveTo(0, 0));
   }
 
   /** Reset all state (paste buffers, wordwheel, etc.). */

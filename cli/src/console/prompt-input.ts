@@ -48,6 +48,12 @@ export interface PromptInputOptions {
    * or undefined to use the current value as-is.
    */
   beforeSubmit?: (currentValue: string) => string | undefined;
+  /**
+   * Colorize the input value for display. Must preserve visible length
+   * (only add ANSI codes, don't change the text). Used for syntax
+   * highlighting @mentions and /commands.
+   */
+  colorize?: (value: string) => string;
 }
 
 // ── PromptInput ────────────────────────────────────────────────────
@@ -72,8 +78,11 @@ export class PromptInput extends EventEmitter {
   private _wasRawMode = false;
   private _onUpDown: ((direction: "up" | "down") => boolean) | null;
   private _beforeSubmit: ((currentValue: string) => string | undefined) | null;
+  private _colorize: ((value: string) => string) | null;
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
-  private _lastCols = 0; // terminal width when prompt was last drawn
+  private _promptRows = 1;  // screen rows occupied by prompt + value
+  private _cursorRow = 0;   // cursor's row within prompt (0-based)
+  private _drawnCols = 0;   // terminal width when we last drew the prompt area
 
   constructor(options: PromptInputOptions = {}) {
     super();
@@ -84,6 +93,7 @@ export class PromptInput extends EventEmitter {
     this._history = options.history ?? [];
     this._onUpDown = options.onUpDown ?? null;
     this._beforeSubmit = options.beforeSubmit ?? null;
+    this._colorize = options.colorize ?? null;
 
     const { processor, events } = createInputProcessor();
     this._processor = processor;
@@ -180,11 +190,13 @@ export class PromptInput extends EventEmitter {
     if (!this._active) return;
     this._active = false;
 
-    // Erase everything below the prompt line (bottom border + dropdown)
-    this._eraseBelow();
+    // Move to the last prompt row
+    const down = this._promptRows - 1 - this._cursorRow;
+    if (down > 0) process.stdout.write(esc.moveDown(down));
 
-    // Move to the line after the prompt so output appears below
-    process.stdout.write("\n");
+    // Erase bottom border + dropdown (starts on next line)
+    process.stdout.write("\n\r" + esc.eraseDown);
+    this._linesBelow = 0;
   }
 
   /** Fully close the input, destroy processor, restore terminal. */
@@ -481,41 +493,62 @@ export class PromptInput extends EventEmitter {
   }
 
   private _drawTopBorder(): void {
-    this._lastCols = this._cols();
+    this._drawnCols = this._cols();
     process.stdout.write(this._buildBorder() + "\n");
   }
 
   private _drawPromptLine(): void {
     const cols = this._cols();
-    const availWidth = cols - this._promptLen;
+    const displayValue = this._colorize ? this._colorize(this._value) : this._value;
+    const plainLen = this._promptLen + this._value.length;
 
-    // Calculate visible portion of the value
-    let scrollOffset = 0;
-    if (this._cursor >= availWidth) {
-      scrollOffset = this._cursor - availWidth + 1;
+    // Write prompt + colorized value — terminal wraps automatically
+    process.stdout.write(this._prompt + displayValue);
+
+    // Calculate geometry
+    this._promptRows = plainLen <= cols ? 1 : Math.ceil(plainLen / cols);
+
+    // Cursor target position
+    const cursorCharPos = this._promptLen + this._cursor;
+    this._cursorRow = Math.floor(cursorCharPos / cols);
+    if (cursorCharPos > 0 && cursorCharPos % cols === 0) {
+      // Exactly at row boundary — keep on the previous row's last column
+      this._cursorRow = cursorCharPos / cols - 1;
     }
-    const visibleText = this._value.slice(scrollOffset, scrollOffset + availWidth);
+    const cursorCol = cursorCharPos % cols || (cursorCharPos > 0 ? cols : 0);
 
-    // Build the line
-    let buf = "\r" + esc.eraseLine;
-    buf += this._prompt;
-    buf += visibleText;
+    // Where is terminal cursor after writing plainLen chars?
+    let endRow: number;
+    if (plainLen === 0) {
+      endRow = 0;
+    } else if (plainLen % cols === 0) {
+      // Deferred wrap: cursor sits at col 0 of next row visually
+      endRow = plainLen / cols;
+    } else {
+      endRow = Math.floor(plainLen / cols);
+    }
 
-    // Position cursor
-    const cursorCol = this._promptLen + (this._cursor - scrollOffset);
-    buf += `\x1b[${cursorCol + 1}G`;
+    // Move from end position to cursor position
+    let moveBuf = "";
+    const rowDiff = endRow - this._cursorRow;
+    if (rowDiff > 0) moveBuf += esc.moveUp(rowDiff);
+    else if (rowDiff < 0) moveBuf += esc.moveDown(-rowDiff);
+    moveBuf += `\x1b[${cursorCol + 1}G`;
 
-    process.stdout.write(buf);
+    process.stdout.write(moveBuf);
   }
 
   private _drawBelow(): void {
     const cols = this._cols();
+
+    // Move from cursor row to last prompt row
+    const moveToEnd = this._promptRows - 1 - this._cursorRow;
     let buf = "";
-    let lines = 0;
+    if (moveToEnd > 0) buf += esc.moveDown(moveToEnd);
 
     // Bottom border
     buf += "\n" + this._buildBorder();
-    lines++;
+    let lines = 1;
 
     // Dropdown lines
     for (const line of this._dropdownLines) {
@@ -525,39 +558,32 @@ export class PromptInput extends EventEmitter {
 
     process.stdout.write(buf);
 
-    // Move cursor back to the prompt line
-    if (lines > 0) {
-      process.stdout.write(esc.moveUp(lines));
+    // Move back to cursor position
+    const moveBack = lines + moveToEnd;
+    if (moveBack > 0) {
+      process.stdout.write(esc.moveUp(moveBack));
     }
 
-    // Restore cursor column position
-    const availWidth = cols - this._promptLen;
-    let scrollOffset = 0;
-    if (this._cursor >= availWidth) {
-      scrollOffset = this._cursor - availWidth + 1;
-    }
-    const cursorCol = this._promptLen + (this._cursor - scrollOffset);
+    // Restore cursor column
+    const cursorCharPos = this._promptLen + this._cursor;
+    const cursorCol = cursorCharPos % cols || (cursorCharPos > 0 ? cols : 0);
     process.stdout.write(`\x1b[${cursorCol + 1}G`);
 
     this._linesBelow = lines;
-  }
-
-  private _eraseBelow(): void {
-    if (this._linesBelow > 0) {
-      // Save cursor, move to end of prompt line, erase down, restore
-      process.stdout.write(esc.saveCursor + esc.eraseDown + esc.restoreCursor);
-      this._linesBelow = 0;
-    }
   }
 
   /** Full refresh of the prompt area. */
   private _refresh(): void {
     if (!this._active) return;
 
-    // Erase everything below (old bottom border + dropdown)
-    this._eraseBelow();
+    // Move to first prompt row and erase everything from there
+    if (this._cursorRow > 0) {
+      process.stdout.write(esc.moveUp(this._cursorRow));
+    }
+    process.stdout.write("\r" + esc.eraseDown);
+    this._linesBelow = 0;
 
-    // Redraw prompt line
+    // Redraw prompt line (may span multiple rows now)
     this._drawPromptLine();
 
     // Redraw bottom border + dropdown
@@ -574,29 +600,35 @@ export class PromptInput extends EventEmitter {
       this._resizeTimer = null;
       if (!this._active) return;
 
-      // After a resize, old lines may have wrapped (or unwrapped).
-      // Calculate how many screen rows the old content now occupies.
+      // After resize, old content may have re-wrapped. Calculate how many
+      // screen rows each old element now occupies at the new terminal width.
       const newCols = this._cols();
-      const oldCols = this._lastCols || newCols;
+      const oldCols = this._drawnCols || newCols;
 
-      // Each old line that was `oldCols` chars wide now wraps to
-      // ceil(oldCols / newCols) screen rows.
-      const wrapFactor = (len: number) => Math.max(1, Math.ceil(len / newCols));
-      const topBorderRows = wrapFactor(oldCols);
-      const promptRows = 1; // prompt line rarely wraps significantly
-      const belowRows = (1 + this._linesBelow) * wrapFactor(oldCols); // bottom border + dropdown
+      // How many screen rows does a line of `len` chars occupy at `cols` width?
+      const rowsFor = (len: number, cols: number) =>
+        len <= 0 ? 0 : Math.ceil(len / cols);
 
-      // Cursor is on the prompt line. Move up past prompt rows + top border rows.
-      // Then move down past the below rows first to erase them, then back up.
-      // Actually: cursor is on prompt line. Below = belowRows. Above = topBorderRows.
-      // Move up topBorderRows to get to start of top border, erase down.
-      const moveUpCount = topBorderRows;
-      // But first, the below content exists. eraseDown from the top border will
-      // clear everything including below. So just move up to the top border start.
-      process.stdout.write("\r" + esc.moveUp(moveUpCount) + esc.eraseDown);
+      // Old top border was oldCols chars, now wraps to:
+      const topBorderRows = rowsFor(oldCols, newCols);
+      // Old prompt was _promptLen + _value.length chars:
+      const promptChars = this._promptLen + this._value.length;
+      const oldPromptRows = Math.max(1, rowsFor(promptChars, newCols));
+      // Old bottom border was also oldCols chars:
+      const botBorderRows = rowsFor(oldCols, newCols);
+
+      // Cursor is currently on _cursorRow within the old prompt area.
+      // Total rows above cursor: topBorderRows + _cursorRow
+      // Total rows below cursor: (oldPromptRows - 1 - _cursorRow) + botBorderRows + dropdown
+      const rowsAbove = topBorderRows + this._cursorRow;
+      const rowsBelowPrompt = oldPromptRows - 1 - this._cursorRow;
+      const dropdownRows = Math.max(0, this._linesBelow - 1); // _linesBelow includes bottom border
+
+      // Move up to top of the entire prompt area, erase down, redraw
+      process.stdout.write(esc.moveUp(rowsAbove) + "\r" + esc.eraseDown);
       this._linesBelow = 0;
 
-      // Redraw in place at new width
+      // Redraw at new width
       this._drawTopBorder();
       this._drawPromptLine();
       this._drawBelow();

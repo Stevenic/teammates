@@ -10,7 +10,7 @@
  */
 
 import type { Interface as ReadlineInterface } from "node:readline";
-import { eraseLine, cursorUp, cr } from "./ansi.js";
+import { esc } from "@teammates/consolonia";
 import { FileDropHandler, type FileAttachment } from "./file-drop.js";
 import type { MutableOutput } from "./mutable-output.js";
 
@@ -139,7 +139,7 @@ export class PasteHandler {
 
     if (lines.length > 1) {
       // Multi-line paste — erase the first echoed line, show placeholder
-      process.stdout.write(cursorUp(1) + eraseLine);
+      process.stdout.write(esc.moveUp(1) + esc.eraseLine);
 
       this.count++;
       const combined = lines.join("\n");
@@ -171,7 +171,7 @@ export class PasteHandler {
       const attachment = this.fileDrop.getAll().at(-1)!;
 
       // Clear the echoed path and replace with tag in the prompt line
-      process.stdout.write(cr + eraseLine);
+      process.stdout.write("\r" + esc.eraseLine);
 
       const newLine = this.prePastePrefix + taggedText;
       this.prePastePrefix = "";
@@ -192,14 +192,14 @@ export class PasteHandler {
     // If it was a long muted paste, show a truncated preview
     if (effectiveLine.length > this.longPasteThreshold && !filesDetected) {
       const preview = effectiveLine.slice(0, 80) + "...";
-      process.stdout.write(cr + eraseLine);
+      process.stdout.write("\r" + esc.eraseLine);
       const prompt = this.formatPrompt();
       process.stdout.write(prompt + preview + "\n");
     }
 
     // If files were detected but the line has other text too, update the display
     if (filesDetected) {
-      process.stdout.write(cr + eraseLine);
+      process.stdout.write("\r" + esc.eraseLine);
       const prompt = this.formatPrompt();
       process.stdout.write(prompt + processedText + "\n");
       for (const a of this.fileDrop.getAll()) {

@@ -12,7 +12,7 @@
  */
 
 import chalk from "chalk";
-import { stripAnsi } from "./ansi.js";
+import { stripAnsi } from "@teammates/consolonia";
 
 // ── Box-drawing characters ──────────────────────────────────────
 

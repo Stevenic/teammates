@@ -9,22 +9,7 @@
  */
 
 import type { Interface as ReadlineInterface } from "node:readline";
-
-/** Truncate a string with ANSI codes to `max` visible characters. */
-function truncateAnsi(str: string, max: number): string {
-  let visible = 0;
-  let i = 0;
-  while (i < str.length && visible < max) {
-    if (str[i] === "\x1b") {
-      // Skip ANSI sequence
-      const end = str.indexOf("m", i);
-      if (end !== -1) { i = end + 1; continue; }
-    }
-    visible++;
-    i++;
-  }
-  return str.slice(0, i);
-}
+import { esc, truncateAnsi, stripAnsi } from "@teammates/consolonia";
 
 export class Dropdown {
   private lines: string[] = [];
@@ -76,9 +61,9 @@ export class Dropdown {
         // 3. Move cursor back up to the prompt line and restore column.
         //    Don't touch prevRows — cursor IS on the prompt line after this.
         const n = this.lines.length;
-        this.out.write(`\x1b[${n}A`);
+        this.out.write(esc.moveUp(n));
         const promptText: string = (this.rl as any)._prompt ?? "";
-        const promptLen = promptText.replace(/\x1b\[[0-9;]*m/g, "").length;
+        const promptLen = stripAnsi(promptText).length;
         const cursor: number = (this.rl as any).cursor ?? 0;
         this.out.write(`\x1b[${promptLen + cursor + 1}G`);
       }

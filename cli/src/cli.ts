@@ -24,6 +24,7 @@ import type { AgentAdapter } from "./adapter.js";
 import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js";
 import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
+import { esc, stripAnsi } from "@teammates/consolonia";
 import { PromptInput } from "./console/prompt-input.js";
 import { renderMarkdownTables } from "./console/markdown-table.js";
 import { playStartup, buildTitle } from "./console/startup.js";
@@ -678,8 +679,12 @@ class TeammatesREPL {
     // Create PromptInput — consolonia-based replacement for readline.
     // Uses raw stdin + InputProcessor for proper escape/paste/mouse parsing.
     this.input = new PromptInput({
-      prompt: chalk.cyan("teammates") + chalk.gray("> "),
+      prompt: chalk.gray("> "),
       borderStyle: (s) => chalk.gray(s),
+      colorize: (value) =>
+        value
+          .replace(/@\w+/g, (m) => chalk.blue(m))
+          .replace(/\/\w+/g, (m) => chalk.blue(m)),
       onUpDown: (dir) => {
         if (this.wordwheelItems.length === 0) return false;
         if (dir === "up") {
@@ -712,7 +717,9 @@ class TeammatesREPL {
     });
 
     this.input.on("tab", () => {
-      if (this.wordwheelItems.length > 0 && this.wordwheelIndex >= 0) {
+      if (this.wordwheelItems.length > 0) {
+        // If no item is highlighted, select the first one
+        if (this.wordwheelIndex < 0) this.wordwheelIndex = 0;
         this.acceptWordwheelSelection();
       }
     });
@@ -1173,7 +1180,6 @@ class TeammatesREPL {
     }
 
     // Calculate box width from visible content
-    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
     const maxContent = Math.max(...lines.map((l) => stripAnsi(l).length));
     const innerWidth = Math.max(maxContent + 2, 40); // 1 padding each side, min 40
 
@@ -1661,7 +1667,7 @@ class TeammatesREPL {
     await this.orchestrator.reset();
 
     // Clear terminal and reprint banner
-    process.stdout.write("\x1b[2J\x1b[H");
+    process.stdout.write(esc.clearScreen + esc.moveTo(0, 0));
     this.printBanner(this.orchestrator.listTeammates());
   }
 

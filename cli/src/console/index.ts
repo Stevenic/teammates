@@ -7,7 +7,7 @@
  *   - PasteHandler: detects and manages pasted text
  *   - Dropdown: renders content below the readline prompt
  *   - Wordwheel: autocomplete engine with keyboard navigation
- *   - ANSI helpers: cursor movement, line erasure, color stripping
+ *   - ANSI helpers: re-exported from @teammates/consolonia + CLI-specific extras
  */
 
 export { InteractiveReadline, type InteractiveReadlineOptions } from "./interactive-readline.js";
@@ -19,17 +19,7 @@ export { PromptBox, type PromptBoxOptions } from "./prompt-box.js";
 export { PromptInput, type PromptInputOptions } from "./prompt-input.js";
 export { Wordwheel, type WordwheelItem, type WordwheelOptions } from "./wordwheel.js";
 export { renderMarkdownTables } from "./markdown-table.js";
-export {
-  cursorUp,
-  cursorDown,
-  cursorToCol,
-  eraseLine,
-  eraseToEnd,
-  eraseDown,
-  eraseScreen,
-  cursorHome,
-  cr,
-  stripAnsi,
-  visibleLength,
-  truncateAnsi,
-} from "./ansi.js";
+
+// ANSI helpers — consolonia re-exports + CLI-specific extras
+export { stripAnsi, visibleLength, truncateAnsi } from "@teammates/consolonia";
+export { cursorUp, cursorDown, cursorToCol, eraseLine, eraseToEnd, eraseDown, eraseScreen, cursorHome, cr } from "./ansi.js";

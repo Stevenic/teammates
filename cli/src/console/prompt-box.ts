@@ -11,7 +11,7 @@
  *   (optional status / dropdown lines)
  *
  * Approach (inspired by Consolonia's dirty-region rendering):
- *   - _refreshLine hook uses eraseDown to nuke everything below the
+ *   - _refreshLine hook uses esc.eraseDown to nuke everything below the
  *     prompt, then redraws the bottom border + dropdown fresh each time.
  *   - On resize, the entire prompt area (top border + prompt + bottom)
  *     is cleared and redrawn. We don't try to navigate to old content
@@ -19,7 +19,8 @@
  */
 
 import type { Interface as ReadlineInterface } from "node:readline";
-import { cursorUp, cursorToCol, eraseDown, eraseLine, stripAnsi, truncateAnsi } from "./ansi.js";
+import { esc, stripAnsi, truncateAnsi } from "@teammates/consolonia";
+import { cursorToCol } from "./ansi.js";
 
 export interface PromptBoxOptions {
   /** Readline interface. */
@@ -98,7 +99,7 @@ export class PromptBox {
       // Nuke everything below the prompt line, then draw fresh.
       // This avoids stale content from previous renders at different widths.
       const cols = this.out.columns || 80;
-      let buf = eraseDown;
+      let buf = esc.eraseDown;
       let linesBelow = 0;
 
       // Bottom border
@@ -121,7 +122,7 @@ export class PromptBox {
       this.out.write(buf);
 
       // Move cursor back up to the prompt line
-      this.out.write(cursorUp(linesBelow));
+      this.out.write(esc.moveUp(linesBelow));
 
       // Restore cursor column
       const promptText: string = (this.rl as any)._prompt ?? "";
@@ -144,7 +145,7 @@ export class PromptBox {
       // Strategy: scroll past any reflowed junk by writing blank lines,
       // then draw a fresh prompt area. The old top border in scrollback
       // may look wrong — that's acceptable, same as any terminal app.
-      this.out.write("\n\n" + eraseLine);
+      this.out.write("\n\n" + esc.eraseLine);
       this.out.write(this.buildBorder() + "\n");
       this.rl.prompt();
     });
