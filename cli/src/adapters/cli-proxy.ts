@@ -423,7 +423,7 @@ function parseStructuredOutput(output: string): Omit<TaskResult, "teammate" | "r
       if (parsed.result) {
         return {
           success: true,
-          summary: parsed.result.summary ?? "",
+          summary: parsed.result.subject ?? parsed.result.summary ?? "",
           changedFiles: parsed.result.changedFiles ?? parsed.result.changed_files ?? [],
         };
       }

@@ -507,6 +507,7 @@ class TeammatesREPL {
   private escTimer: ReturnType<typeof setTimeout> | null = null;
   private ctrlcPending = false;      // true after first Ctrl+C, waiting for second
   private ctrlcTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastCleanedOutput = "";    // last teammate output for clipboard copy
   private defaultFooter: StyledSpan | null = null; // cached default footer content
 
   // ── Animated status tracker ─────────────────────────────────────
@@ -616,9 +617,23 @@ class TeammatesREPL {
    */
   private printUserMessage(text: string): void {
     if (this.chatView) {
-      this.chatView.appendToFeed("");
-      for (const line of text.split("\n")) {
-        this.chatView.appendStyledToFeed(concat(tp.muted("  > "), tp.text(line)));
+      const bg = { r: 25, g: 25, b: 25, a: 255 } as Color;
+      const t = theme();
+      const termW = process.stdout.columns || 80;
+      // First line: "User: <text>" with accent label
+      const firstLine = text.split("\n")[0];
+      const label = "User: ";
+      const pad = Math.max(0, termW - label.length - firstLine.length);
+      this.chatView.appendStyledToFeed(concat(
+        pen.fg(t.accent).bg(bg)(label),
+        pen.fg(t.text).bg(bg)(firstLine + " ".repeat(pad)),
+      ));
+      // Continuation lines with background
+      for (const line of text.split("\n").slice(1)) {
+        const lPad = Math.max(0, termW - line.length);
+        this.chatView.appendStyledToFeed(concat(
+          pen.fg(t.text).bg(bg)(line + " ".repeat(lPad)),
+        ));
       }
       this.chatView.appendToFeed("");
       this.app.refresh();
@@ -1449,6 +1464,11 @@ class TeammatesREPL {
         }
       }, 2000);
     });
+    this.chatView.on("action", (id: string) => {
+      if (id === "copy") {
+        this.doCopy();
+      }
+    });
 
     this.app = new App({
       root: this.chatView,
@@ -1686,6 +1706,13 @@ class TeammatesREPL {
         run: (args) => this.cmdCompact(args),
       },
       {
+        name: "copy",
+        aliases: ["cp"],
+        usage: "/copy",
+        description: "Copy the last response to clipboard",
+        run: () => this.cmdCopy(),
+      },
+      {
         name: "theme",
         aliases: [],
         usage: "/theme",
@@ -1760,7 +1787,14 @@ class TeammatesREPL {
         const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
         const sizeKB = cleaned ? Buffer.byteLength(cleaned, "utf-8") / 1024 : 0;
 
-        this.feedLine();
+        // Header: "teammate: subject"
+        const subject = event.result.summary || "Task completed";
+        this.feedLine(concat(
+          tp.accent(`${event.result.teammate}: `),
+          tp.text(subject),
+        ));
+        this.lastCleanedOutput = cleaned;
+
         if (sizeKB > 5) {
           this.feedLine(tp.muted("  " + "─".repeat(40)));
           this.feedLine(tp.warning(`  ⚠ Response is ${sizeKB.toFixed(1)}KB — use /debug ${event.result.teammate} to view full output`));
@@ -1769,8 +1803,16 @@ class TeammatesREPL {
           this.feedMarkdown(cleaned);
         }
 
-        this.feedLine();
-        this.feedLine(concat(tp.success("  ✔ " + event.result.teammate), tp.muted(": "), pen(event.result.summary)));
+        // Clickable [copy] action after the response
+        if (this.chatView && cleaned) {
+          const t = theme();
+          const normalCopy: StyledSpan = [{ text: "  [copy]", style: { fg: t.textMuted } }] as unknown as StyledSpan;
+          (normalCopy as any).__brand = "StyledSpan";
+          const hoverCopy: StyledSpan = [{ text: "  [copy]", style: { fg: t.accent } }] as unknown as StyledSpan;
+          (hoverCopy as any).__brand = "StyledSpan";
+          this.chatView.appendAction("copy", normalCopy, hoverCopy);
+        }
+        this.feedLine(); // single blank line after response
 
         this.showPrompt();
         break;
@@ -2483,6 +2525,43 @@ class TeammatesREPL {
       try {
         await execAsync(`teammates-recall sync --dir "${this.teammatesDir}"`);
       } catch { /* sync failed — non-fatal */ }
+    }
+  }
+
+  private async cmdCopy(): Promise<void> {
+    this.doCopy();
+  }
+
+  private doCopy(): void {
+    if (!this.lastCleanedOutput) {
+      this.feedLine(tp.muted("  No response to copy."));
+      this.refreshView();
+      return;
+    }
+    try {
+      const isWin = process.platform === "win32";
+      const cmd = isWin ? "clip" : (process.platform === "darwin" ? "pbcopy" : "xclip -selection clipboard");
+      const child = execCb(cmd, () => {});
+      child.stdin?.write(this.lastCleanedOutput);
+      child.stdin?.end();
+      // Show brief "Copied" message in the progress area
+      if (this.chatView) {
+        this.chatView.setProgress(concat(tp.success("✔ "), tp.muted("Copied to clipboard")));
+        this.refreshView();
+        setTimeout(() => {
+          this.chatView.setProgress(null);
+          this.refreshView();
+        }, 1500);
+      }
+    } catch {
+      if (this.chatView) {
+        this.chatView.setProgress(concat(tp.error("✖ "), tp.muted("Failed to copy")));
+        this.refreshView();
+        setTimeout(() => {
+          this.chatView.setProgress(null);
+          this.refreshView();
+        }, 1500);
+      }
     }
   }
 

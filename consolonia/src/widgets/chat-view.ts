@@ -104,6 +104,12 @@ export class ChatView extends Control {
   private _banner: Control;
   private _topSeparator: _Separator;
   private _feedLines: StyledText[] = [];
+  /** Maps feed line index → action id for clickable lines. */
+  private _feedActions: Map<number, { id: string; normalStyle: StyledLine; hoverStyle: StyledLine }> = new Map();
+  /** Feed line index currently hovered (-1 if none). */
+  private _hoveredAction: number = -1;
+  /** Maps screen Y → feed line index (rebuilt each render). */
+  private _screenToFeedLine: Map<number, number> = new Map();
   private _bottomSeparator: _Separator;
   private _progressText: StyledText;
   private _input: TextInput;
@@ -313,6 +319,20 @@ export class ChatView extends Control {
     this.invalidate();
   }
 
+  /** Append a clickable action line to the feed. Emits "action" on click. */
+  appendAction(id: string, normalContent: StyledLine, hoverContent: StyledLine): void {
+    const line = new StyledText({
+      lines: [normalContent],
+      defaultStyle: this._feedStyle,
+      wrap: false,
+    });
+    const idx = this._feedLines.length;
+    this._feedLines.push(line);
+    this._feedActions.set(idx, { id, normalStyle: normalContent, hoverStyle: hoverContent });
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
   /** Append multiple plain lines to the feed. */
   appendLines(lines: string[], style?: TextStyle): void {
     for (const text of lines) {
@@ -330,6 +350,8 @@ export class ChatView extends Control {
   /** Clear everything between the banner and the input box. */
   clear(): void {
     this._feedLines = [];
+    this._feedActions.clear();
+    this._hoveredAction = -1;
     this._feedScrollOffset = 0;
     this.invalidate();
   }
@@ -550,6 +572,37 @@ export class ChatView extends Control {
           return true;
         }
       }
+
+      // Action hover/click in feed area
+      if (this._feedActions.size > 0) {
+        const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
+        const action = feedLineIdx >= 0 ? this._feedActions.get(feedLineIdx) : undefined;
+
+        if (me.type === "move") {
+          const newHover = action ? feedLineIdx : -1;
+          if (newHover !== this._hoveredAction) {
+            // Restore previous hover
+            if (this._hoveredAction >= 0) {
+              const prev = this._feedActions.get(this._hoveredAction);
+              if (prev) {
+                this._feedLines[this._hoveredAction].lines = [prev.normalStyle];
+              }
+            }
+            // Apply new hover
+            if (action && newHover >= 0) {
+              this._feedLines[newHover].lines = [action.hoverStyle];
+            }
+            this._hoveredAction = newHover;
+            this.invalidate();
+          }
+          // Don't consume — let other handlers run too
+        }
+
+        if (me.type === "press" && me.button === "left" && action) {
+          this.emit("action", action.id);
+          return true;
+        }
+      }
     }
 
     // Delegate to input
@@ -680,6 +733,7 @@ export class ChatView extends Control {
     interface ScrollItem {
       render: (cx: number, cy: number, cw: number, ch: number) => void;
       height: number;
+      feedLineIdx: number; // -1 for non-feed items (banner, separator)
     }
     const items: ScrollItem[] = [];
 
@@ -689,6 +743,7 @@ export class ChatView extends Control {
       const bh = Math.max(1, bannerSize.height);
       items.push({
         height: bh,
+        feedLineIdx: -1,
         render: (cx, cy, cw, ch) => {
           this._banner.arrange({ x: cx, y: cy, width: cw, height: ch });
           this._banner.render(ctx);
@@ -697,6 +752,7 @@ export class ChatView extends Control {
       // Top separator after banner
       items.push({
         height: 1,
+        feedLineIdx: -1,
         render: (cx, cy, cw, _ch) => {
           this._topSeparator.arrange({ x: cx, y: cy, width: cw, height: 1 });
           this._topSeparator.render(ctx);
@@ -705,11 +761,13 @@ export class ChatView extends Control {
     }
 
     // Feed lines
-    for (const line of this._feedLines) {
+    for (let fi = 0; fi < this._feedLines.length; fi++) {
+      const line = this._feedLines[fi];
       const lineSize = line.measure({ minWidth: 0, maxWidth: contentWidth, minHeight: 0, maxHeight: Infinity });
       const h = Math.max(1, lineSize.height);
       items.push({
         height: h,
+        feedLineIdx: fi,
         render: (cx, cy, cw, ch) => {
           line.arrange({ x: cx, y: cy, width: cw, height: ch });
           line.render(ctx);
@@ -739,11 +797,21 @@ export class ChatView extends Control {
       startIdx = i + 1;
     }
 
-    // Render visible items
+    // Render visible items and build screen→feedLine map
+    this._screenToFeedLine.clear();
     let cy = y - (this._feedScrollOffset - skippedRows);
     for (let i = startIdx; i < items.length && cy < y + height; i++) {
       const item = items[i];
       item.render(x, cy, contentWidth, item.height);
+      // Map screen rows to feed line index for action hit-testing
+      if (item.feedLineIdx >= 0) {
+        for (let row = 0; row < item.height; row++) {
+          const screenY = cy + row;
+          if (screenY >= y && screenY < y + height) {
+            this._screenToFeedLine.set(screenY, item.feedLineIdx);
+          }
+        }
+      }
       cy += item.height;
     }
 

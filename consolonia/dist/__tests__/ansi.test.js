@@ -124,10 +124,10 @@ describe("esc", () => {
             expect(esc.bracketedPasteOff).toBe(`${ESC}?2004l`);
         });
         it("mouseTrackingOn enables button-event tracking and SGR mode", () => {
-            expect(esc.mouseTrackingOn).toBe(`${ESC}?1002h${ESC}?1006h`);
+            expect(esc.mouseTrackingOn).toBe(`${ESC}?1003h${ESC}?1006h`);
         });
         it("mouseTrackingOff disables SGR mode and button-event tracking", () => {
-            expect(esc.mouseTrackingOff).toBe(`${ESC}?1006l${ESC}?1002l`);
+            expect(esc.mouseTrackingOff).toBe(`${ESC}?1006l${ESC}?1003l`);
         });
     });
     describe("setTitle", () => {

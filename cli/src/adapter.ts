@@ -182,7 +182,7 @@ These files are your persistent memory. Without them, your next session starts f
 If you can complete the task yourself, do the work and then end with:
 
 \`\`\`json
-{ "result": { "summary": "<one-line summary of what you did>", "changedFiles": ["<file>", ...] } }
+{ "result": { "subject": "<short subject line for this response>", "changedFiles": ["<file>", ...] } }
 \`\`\`
 
 ### Option 2: Handoff

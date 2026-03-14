@@ -94,6 +94,12 @@ export declare class ChatView extends Control {
     private _banner;
     private _topSeparator;
     private _feedLines;
+    /** Maps feed line index → action id for clickable lines. */
+    private _feedActions;
+    /** Feed line index currently hovered (-1 if none). */
+    private _hoveredAction;
+    /** Maps screen Y → feed line index (rebuilt each render). */
+    private _screenToFeedLine;
     private _bottomSeparator;
     private _progressText;
     private _input;
@@ -145,6 +151,8 @@ export declare class ChatView extends Control {
     appendToFeed(text: string, style?: TextStyle): void;
     /** Append a styled line (StyledSpan) to the feed. */
     appendStyledToFeed(styledLine: StyledSpan): void;
+    /** Append a clickable action line to the feed. Emits "action" on click. */
+    appendAction(id: string, normalContent: StyledLine, hoverContent: StyledLine): void;
     /** Append multiple plain lines to the feed. */
     appendLines(lines: string[], style?: TextStyle): void;
     /** Clear everything between the banner and the input box. */

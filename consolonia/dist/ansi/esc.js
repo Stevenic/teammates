@@ -74,10 +74,10 @@ export const eraseLine = `${ESC}2K`;
 export const bracketedPasteOn = `${ESC}?2004h`;
 /** Disable bracketed paste mode. */
 export const bracketedPasteOff = `${ESC}?2004l`;
-/** Enable SGR mouse tracking (button-event tracking + SGR extended coordinates). */
-export const mouseTrackingOn = `${ESC}?1002h${ESC}?1006h`;
+/** Enable SGR mouse tracking (any-event tracking + SGR extended coordinates). */
+export const mouseTrackingOn = `${ESC}?1003h${ESC}?1006h`;
 /** Disable SGR mouse tracking. */
-export const mouseTrackingOff = `${ESC}?1006l${ESC}?1002l`;
+export const mouseTrackingOff = `${ESC}?1006l${ESC}?1003l`;
 // ── Window ──────────────────────────────────────────────────────────
 /** Set the terminal window title. */
 export function setTitle(title) {
