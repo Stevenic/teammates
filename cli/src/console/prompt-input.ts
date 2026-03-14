@@ -73,6 +73,7 @@ export class PromptInput extends EventEmitter {
   private _onUpDown: ((direction: "up" | "down") => boolean) | null;
   private _beforeSubmit: ((currentValue: string) => string | undefined) | null;
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private _lastCols = 0; // terminal width when prompt was last drawn
 
   constructor(options: PromptInputOptions = {}) {
     super();
@@ -480,6 +481,7 @@ export class PromptInput extends EventEmitter {
   }
 
   private _drawTopBorder(): void {
+    this._lastCols = this._cols();
     process.stdout.write(this._buildBorder() + "\n");
   }
 
@@ -572,9 +574,26 @@ export class PromptInput extends EventEmitter {
       this._resizeTimer = null;
       if (!this._active) return;
 
-      // Move to column 0 of the prompt line, up 1 to the top border,
-      // then erase everything from there to end of display.
-      process.stdout.write("\r" + esc.moveUp(1) + esc.eraseDown);
+      // After a resize, old lines may have wrapped (or unwrapped).
+      // Calculate how many screen rows the old content now occupies.
+      const newCols = this._cols();
+      const oldCols = this._lastCols || newCols;
+
+      // Each old line that was `oldCols` chars wide now wraps to
+      // ceil(oldCols / newCols) screen rows.
+      const wrapFactor = (len: number) => Math.max(1, Math.ceil(len / newCols));
+      const topBorderRows = wrapFactor(oldCols);
+      const promptRows = 1; // prompt line rarely wraps significantly
+      const belowRows = (1 + this._linesBelow) * wrapFactor(oldCols); // bottom border + dropdown
+
+      // Cursor is on the prompt line. Move up past prompt rows + top border rows.
+      // Then move down past the below rows first to erase them, then back up.
+      // Actually: cursor is on prompt line. Below = belowRows. Above = topBorderRows.
+      // Move up topBorderRows to get to start of top border, erase down.
+      const moveUpCount = topBorderRows;
+      // But first, the below content exists. eraseDown from the top border will
+      // clear everything including below. So just move up to the top border start.
+      process.stdout.write("\r" + esc.moveUp(moveUpCount) + esc.eraseDown);
       this._linesBelow = 0;
 
       // Redraw in place at new width

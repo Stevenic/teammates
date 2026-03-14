@@ -18,6 +18,7 @@ export { Dropdown } from "./dropdown.js";
 export { PromptBox, type PromptBoxOptions } from "./prompt-box.js";
 export { PromptInput, type PromptInputOptions } from "./prompt-input.js";
 export { Wordwheel, type WordwheelItem, type WordwheelOptions } from "./wordwheel.js";
+export { renderMarkdownTables } from "./markdown-table.js";
 export {
   cursorUp,
   cursorDown,

@@ -25,6 +25,7 @@ import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js"
 import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
 import { PromptInput } from "./console/prompt-input.js";
+import { renderMarkdownTables } from "./console/markdown-table.js";
 import { playStartup, buildTitle } from "./console/startup.js";
 import { getOnboardingPrompt, copyTemplateFiles } from "./onboard.js";
 import { compactEpisodic } from "./compact.js";
@@ -386,7 +387,7 @@ class TeammatesREPL {
     if (!raw) return;
     const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
     if (cleaned) {
-      console.log(cleaned);
+      console.log(renderMarkdownTables(cleaned));
     }
     console.log();
   }
@@ -1106,7 +1107,7 @@ class TeammatesREPL {
           );
           console.log(chalk.gray("  ─".repeat(40)));
         } else if (cleaned) {
-          console.log(cleaned);
+          console.log(renderMarkdownTables(cleaned));
         }
 
         console.log();
@@ -1149,32 +1150,44 @@ class TeammatesREPL {
   }
 
   private printHandoffDetails(envelope: HandoffEnvelope): void {
-    console.log(chalk.gray("  ┌─────────────────────────────────────"));
-    console.log(
-      chalk.gray("  │ ") +
-        chalk.white("Task: ") +
-        envelope.task
-    );
+    // Collect content lines: [label, value] pairs and indented sub-items
+    const lines: string[] = [];
+    lines.push(chalk.white("Task: ") + envelope.task);
     if (envelope.changedFiles?.length) {
-      console.log(
-        chalk.gray("  │ ") +
-          chalk.white("Files: ") +
-          envelope.changedFiles.join(", ")
-      );
+      lines.push(chalk.white("Files: ") + envelope.changedFiles.join(", "));
+    }
+    if (envelope.context) {
+      lines.push(chalk.white("Context: ") + envelope.context);
     }
     if (envelope.acceptanceCriteria?.length) {
-      console.log(chalk.gray("  │ ") + chalk.white("Criteria:"));
+      lines.push(chalk.white("Criteria:"));
       for (const c of envelope.acceptanceCriteria) {
-        console.log(chalk.gray("  │   ") + chalk.gray("• ") + c);
+        lines.push("  " + chalk.gray("•") + " " + c);
       }
     }
     if (envelope.openQuestions?.length) {
-      console.log(chalk.gray("  │ ") + chalk.white("Questions:"));
+      lines.push(chalk.white("Questions:"));
       for (const q of envelope.openQuestions) {
-        console.log(chalk.gray("  │   ") + chalk.gray("? ") + q);
+        lines.push("  " + chalk.gray("?") + " " + q);
       }
     }
-    console.log(chalk.gray("  └─────────────────────────────────────"));
+
+    // Calculate box width from visible content
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+    const maxContent = Math.max(...lines.map((l) => stripAnsi(l).length));
+    const innerWidth = Math.max(maxContent + 2, 40); // 1 padding each side, min 40
+
+    const h = "─".repeat(innerWidth);
+    const pad = (line: string) => {
+      const vis = stripAnsi(line).length;
+      return " " + line + " ".repeat(Math.max(0, innerWidth - vis - 2)) + " ";
+    };
+
+    console.log(chalk.gray("  ┌" + h + "┐"));
+    for (const line of lines) {
+      console.log(chalk.gray("  │") + pad(line) + chalk.gray("│"));
+    }
+    console.log(chalk.gray("  └" + h + "┘"));
     console.log();
     console.log(
       chalk.cyan("  1") + chalk.gray(") Approve")
