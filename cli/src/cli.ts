@@ -167,7 +167,6 @@ class TeammatesREPL {
   private orchestrator!: Orchestrator;
   private adapter!: AgentAdapter;
   private input!: PromptInput;
-  private spinner: Ora | null = null;
   private commands: Map<string, SlashCommand> = new Map();
   private lastResult: TaskResult | null = null;
   private lastResults: Map<string, TaskResult> = new Map();
@@ -207,6 +206,15 @@ class TeammatesREPL {
   private wordwheelItems: WordwheelItem[] = [];
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
 
+  // ── Animated status tracker ─────────────────────────────────────
+  private activeTasks: Map<string, { teammate: string; task: string }> = new Map();
+  private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private statusFrame = 0;
+  private statusRotateIndex = 0;
+  private statusRotateTimer: ReturnType<typeof setInterval> | null = null;
+
+  private static readonly SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
   constructor(adapterName: string) {
     this.adapterName = adapterName;
   }
@@ -214,6 +222,135 @@ class TeammatesREPL {
   /** Show the prompt with the fenced border. */
   private showPrompt(): void {
     this.input.activate();
+  }
+
+  /** Start or update the animated status tracker above the prompt. */
+  private startStatusAnimation(): void {
+    if (this.statusTimer) return; // already running
+
+    this.statusFrame = 0;
+    this.statusRotateIndex = 0;
+    this.renderStatusFrame();
+
+    // Animate spinner at ~80ms
+    this.statusTimer = setInterval(() => {
+      this.statusFrame++;
+      this.renderStatusFrame();
+    }, 80);
+
+    // Rotate through teammates every 3 seconds
+    this.statusRotateTimer = setInterval(() => {
+      if (this.activeTasks.size > 1) {
+        this.statusRotateIndex = (this.statusRotateIndex + 1) % this.activeTasks.size;
+      }
+    }, 3000);
+  }
+
+  /** Stop the status animation and clear the status line. */
+  private stopStatusAnimation(): void {
+    if (this.statusTimer) {
+      clearInterval(this.statusTimer);
+      this.statusTimer = null;
+    }
+    if (this.statusRotateTimer) {
+      clearInterval(this.statusRotateTimer);
+      this.statusRotateTimer = null;
+    }
+    this.input.setStatus(null);
+  }
+
+  /** Render one frame of the status animation. */
+  private renderStatusFrame(): void {
+    if (this.activeTasks.size === 0) return;
+
+    const entries = Array.from(this.activeTasks.values());
+    const idx = this.statusRotateIndex % entries.length;
+    const { teammate, task } = entries[idx];
+
+    const spinChar = TeammatesREPL.SPINNER[this.statusFrame % TeammatesREPL.SPINNER.length];
+    // Mostly bright blue, periodically flicker to dark blue
+    const spinColor = this.statusFrame % 8 === 0 ? chalk.blue : chalk.blueBright;
+    const taskPreview = task.length > 50 ? task.slice(0, 47) + "..." : task;
+    const queueInfo = this.activeTasks.size > 1
+      ? chalk.gray(` (${idx + 1}/${this.activeTasks.size})`)
+      : "";
+
+    const line =
+      `  ${spinColor(spinChar)} ` +
+      chalk.bold(teammate) +
+      chalk.gray(`… ${taskPreview}`) +
+      queueInfo;
+
+    this.input.setStatus(line);
+  }
+
+  /**
+   * Print the user's message as an inverted block in the feed.
+   * White text on dark background, right-aligned indicator.
+   */
+  private printUserMessage(text: string): void {
+    const termWidth = process.stdout.columns || 100;
+    const maxWidth = Math.min(termWidth - 4, 80);
+    const lines = text.split("\n");
+
+    console.log();
+    for (const line of lines) {
+      // Truncate long lines
+      const display = line.length > maxWidth ? line.slice(0, maxWidth - 1) + "…" : line;
+      const padded = display + " ".repeat(Math.max(0, maxWidth - stripAnsi(display).length));
+      console.log("  " + chalk.bgGray.white(" " + padded + " "));
+    }
+    console.log();
+  }
+
+  /**
+   * Route text input to the right teammate and queue it for execution.
+   * Returns immediately — the task runs in the background via drainQueue.
+   */
+  private queueTask(input: string): void {
+    // Check for @mention
+    const mentionMatch = input.match(/^@(\S+)\s+([\s\S]+)$/);
+    if (mentionMatch) {
+      const [, teammate, task] = mentionMatch;
+      const names = this.orchestrator.listTeammates();
+      if (names.includes(teammate)) {
+        this.taskQueue.push({ type: "agent", teammate, task });
+        this.kickDrain();
+        return;
+      }
+    }
+
+    // Check for inline @mention
+    const inlineMention = input.match(/@(\S+)/);
+    if (inlineMention) {
+      const teammate = inlineMention[1];
+      const names = this.orchestrator.listTeammates();
+      if (names.includes(teammate)) {
+        const task = input.replace(/@\S+\s*/, "").trim();
+        if (task) {
+          this.taskQueue.push({ type: "agent", teammate, task });
+          this.kickDrain();
+          return;
+        }
+      }
+    }
+
+    // Auto-route: resolve teammate synchronously if possible, else use default
+    let match = this.orchestrator.route(input);
+    if (!match) {
+      // Fall back to adapter name — avoid blocking for agent routing
+      match = this.adapterName;
+    }
+    console.log(chalk.gray(`  → ${match}`));
+    this.taskQueue.push({ type: "agent", teammate: match, task: input });
+    this.kickDrain();
+  }
+
+  /** Start draining the queue if not already running. */
+  private kickDrain(): void {
+    if (!this.drainLock) {
+      this.drainLock = this.drainQueue().finally(() => { this.drainLock = null; });
+    }
   }
 
   // ─── Onboarding ───────────────────────────────────────────────────
@@ -738,12 +875,7 @@ class TeammatesREPL {
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
 
-      // Deactivate prompt so agent output doesn't garble it
-      this.input.deactivate();
-
       // Expand paste placeholders with actual content
-      const hasPaste = /\[Pasted text #\d+/.test(rawLine);
-
       let input = rawLine.replace(/\[Pasted text #(\d+) \+\d+ lines, [\d.]+KB\]\s*/g, (_match, num) => {
         const n = parseInt(num, 10);
         const text = this.pastedTexts.get(n);
@@ -754,40 +886,42 @@ class TeammatesREPL {
         return "";
       }).trim();
 
-      // Show the expanded pasted content
-      if (hasPaste && input) {
-        const sizeKB = Buffer.byteLength(input, "utf-8") / 1024;
-        const lineCount = input.split("\n").length;
-        console.log();
-        console.log(chalk.gray(`  ┌ Expanded paste (${lineCount} lines, ${sizeKB.toFixed(1)}KB)`));
-        const previewLines = input.split("\n").slice(0, 5);
-        for (const l of previewLines) {
-          console.log(chalk.gray(`  │ `) + l.slice(0, 120));
-        }
-        if (lineCount > 5) {
-          console.log(chalk.gray(`  │ ... ${lineCount - 5} more lines`));
-        }
-        console.log(chalk.gray(`  └`));
-      }
+      if (!input) return;
 
-      if (!input || this.dispatching) {
+      // Handle pending handoff menu (1/2/3)
+      if (this.orchestrator.getPendingHandoff()) {
+        this.input.deactivate();
+        const handled = await this.handleHandoffChoice(input);
+        if (handled) {
+          this.showPrompt();
+          return;
+        }
         this.showPrompt();
         return;
       }
 
-      if (!input.startsWith("/")) {
-        this.conversationHistory.push({ role: "user", text: input });
+      // Slash commands run inline (blocking)
+      if (input.startsWith("/")) {
+        this.input.deactivate();
+        this.dispatching = true;
+        try {
+          await this.dispatch(input);
+        } catch (err: any) {
+          console.log(chalk.red(`Error: ${err.message}`));
+        } finally {
+          this.dispatching = false;
+        }
+        this.showPrompt();
+        return;
       }
 
-      this.dispatching = true;
-      try {
-        await this.dispatch(input);
-      } catch (err: any) {
-        console.log(chalk.red(`Error: ${err.message}`));
-      } finally {
-        this.dispatching = false;
-      }
-
+      // Everything else gets queued — erase prompt area and replace with
+      // the user's message as an inverted block, then show new prompt.
+      // The spinner will appear above the new prompt via the event handler.
+      this.conversationHistory.push({ role: "user", text: input });
+      this.input.deactivateAndErase();
+      this.printUserMessage(input);
+      this.queueTask(input);
       this.showPrompt();
     });
 
@@ -900,7 +1034,7 @@ class TeammatesREPL {
     const col1 = [
       ["@mention", "assign to teammate"],
       ["text", "auto-route task"],
-      ["/queue", "queue tasks"],
+      ["/queue", "view task queue"],
     ];
     const col2 = [
       ["/status", "session overview"],
@@ -963,9 +1097,9 @@ class TeammatesREPL {
       {
         name: "queue",
         aliases: ["qu"],
-        usage: "/queue [@teammate] [task]",
-        description: "Add to queue, or show queue if no args",
-        run: (args) => this.cmdQueue(args),
+        usage: "/queue",
+        description: "Show task queue status",
+        run: () => this.cmdQueue(),
       },
       {
         name: "cancel",
@@ -1025,82 +1159,46 @@ class TeammatesREPL {
   }
 
   private async dispatch(input: string): Promise<void> {
-    // Handle pending handoff menu (1/2/3)
-    if (this.orchestrator.getPendingHandoff()) {
-      const handled = await this.handleHandoffChoice(input);
-      if (handled) return;
-    }
+    // Dispatch only handles slash commands — text input is queued via queueTask()
+    const spaceIdx = input.indexOf(" ");
+    const cmdName = spaceIdx > 0 ? input.slice(1, spaceIdx) : input.slice(1);
+    const cmdArgs = spaceIdx > 0 ? input.slice(spaceIdx + 1).trim() : "";
 
-    if (input.startsWith("/")) {
-      const spaceIdx = input.indexOf(" ");
-      const cmdName = spaceIdx > 0 ? input.slice(1, spaceIdx) : input.slice(1);
-      const cmdArgs = spaceIdx > 0 ? input.slice(spaceIdx + 1).trim() : "";
-
-      const cmd = this.commands.get(cmdName);
-      if (cmd) {
-        await cmd.run(cmdArgs);
-      } else {
-        console.log(chalk.yellow(`Unknown command: /${cmdName}`));
-        console.log(chalk.gray("Type /help for available commands"));
-      }
+    const cmd = this.commands.get(cmdName);
+    if (cmd) {
+      await cmd.run(cmdArgs);
     } else {
-      // Check for @mention — extract teammate and treat rest as task
-      const mentionMatch = input.match(/^@(\S+)\s+([\s\S]+)$/);
-      if (mentionMatch) {
-        const [, teammate, task] = mentionMatch;
-        const names = this.orchestrator.listTeammates();
-        if (names.includes(teammate)) {
-          await this.cmdAssign(`${teammate} ${task}`);
-          return;
-        }
-      }
-
-      // Also handle @mentions inline: strip @names and route to them
-      const inlineMention = input.match(/@(\S+)/);
-      if (inlineMention) {
-        const teammate = inlineMention[1];
-        const names = this.orchestrator.listTeammates();
-        if (names.includes(teammate)) {
-          const task = input.replace(/@\S+\s*/, "").trim();
-          if (task) {
-            await this.cmdAssign(`${teammate} ${task}`);
-            return;
-          }
-        }
-      }
-
-      // Bare text — auto-route
-      await this.cmdRoute(input);
+      console.log(chalk.yellow(`Unknown command: /${cmdName}`));
+      console.log(chalk.gray("Type /help for available commands"));
     }
   }
 
   // ─── Event handler ───────────────────────────────────────────────
 
   private handleEvent(event: OrchestratorEvent): void {
-    // When queue is draining in background, never use spinner — it blocks the prompt
-    const useSpinner = !this.queueDraining;
-
     switch (event.type) {
-      case "task_assigned":
-        if (useSpinner) {
-          this.spinner = ora({
-            text: chalk.blue(`${event.assignment.teammate}`) +
-              chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`),
-            spinner: "dots",
-          }).start();
-        } else if (!this.queueDraining) {
-          console.log(
-            chalk.blue(`  ${event.assignment.teammate}`) +
-              chalk.gray(` is working on: ${event.assignment.task.slice(0, 60)}...`)
-          );
-        }
+      case "task_assigned": {
+        // Track this task and start the animated status bar
+        const key = event.assignment.teammate;
+        this.activeTasks.set(key, {
+          teammate: event.assignment.teammate,
+          task: event.assignment.task,
+        });
+        this.startStatusAnimation();
         break;
+      }
 
       case "task_completed": {
-        if (this.spinner) {
-          this.spinner.stop();
-          this.spinner = null;
+        // Remove from active tasks
+        this.activeTasks.delete(event.result.teammate);
+
+        // Stop animation if no more active tasks
+        if (this.activeTasks.size === 0) {
+          this.stopStatusAnimation();
         }
+
+        // Deactivate prompt, print result, re-show prompt
+        this.input.deactivateAndErase();
 
         const raw = event.result.rawOutput ?? "";
         const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
@@ -1123,20 +1221,21 @@ class TeammatesREPL {
             chalk.gray(": ") +
             event.result.summary
         );
-      }
+
+        this.showPrompt();
         break;
+      }
 
       case "handoff_initiated":
-        if (this.spinner) {
-          this.spinner.info(
-            chalk.yellow("Handoff: ") +
-              chalk.bold(event.envelope.from) +
-              chalk.yellow(" → ") +
-              chalk.bold(event.envelope.to)
-          );
-          this.spinner = null;
-        }
+        this.input.deactivateAndErase();
+        console.log(
+          chalk.yellow("  Handoff: ") +
+            chalk.bold(event.envelope.from) +
+            chalk.yellow(" → ") +
+            chalk.bold(event.envelope.to)
+        );
         this.printHandoffDetails(event.envelope);
+        this.showPrompt();
         break;
 
       case "handoff_completed":
@@ -1144,14 +1243,11 @@ class TeammatesREPL {
         break;
 
       case "error":
-        if (this.spinner) {
-          this.spinner.fail(
-            chalk.red(event.teammate) + chalk.gray(": ") + event.error
-          );
-          this.spinner = null;
-        } else {
-          console.log(chalk.red(`  ${event.teammate}: ${event.error}`));
-        }
+        this.activeTasks.delete(event.teammate);
+        if (this.activeTasks.size === 0) this.stopStatusAnimation();
+        this.input.deactivateAndErase();
+        console.log(chalk.red(`  ✖ ${event.teammate}: ${event.error}`));
+        this.showPrompt();
         break;
     }
   }
@@ -1434,82 +1530,36 @@ class TeammatesREPL {
     );
   }
 
-  private async cmdQueue(argsStr: string): Promise<void> {
-    if (!argsStr) {
-      // Show queue
-      if (this.taskQueue.length === 0 && !this.queueDraining) {
-        console.log(chalk.gray("  Queue is empty."));
-        return;
-      }
-      console.log();
+  private async cmdQueue(): Promise<void> {
+    if (this.taskQueue.length === 0 && !this.queueActive) {
+      console.log(chalk.gray("  Queue is empty."));
+      return;
+    }
+    console.log();
+    console.log(chalk.bold("  Task Queue"));
+    console.log(chalk.gray("  " + "─".repeat(50)));
+    if (this.queueActive) {
       console.log(
-        chalk.bold("  Task Queue") +
-          (this.queueDraining ? chalk.blue("  (draining)") : "")
+        chalk.blue("  ▸ ") +
+          chalk.cyan(`@${this.queueActive.teammate}`) +
+          chalk.gray(" — ") +
+          chalk.white(this.queueActive.task.length > 60 ? this.queueActive.task.slice(0, 57) + "..." : this.queueActive.task) +
+          chalk.blue("  (running)")
       );
-      console.log(chalk.gray("  " + "─".repeat(50)));
-      if (this.queueActive) {
-        console.log(
-          chalk.blue("  ▸ ") +
-            chalk.cyan(`@${this.queueActive.teammate}`) +
-            chalk.gray(" — ") +
-            chalk.white(this.queueActive.task.length > 60 ? this.queueActive.task.slice(0, 57) + "..." : this.queueActive.task) +
-            chalk.blue("  (running)")
-        );
-      }
-      for (let i = 0; i < this.taskQueue.length; i++) {
-        const entry = this.taskQueue[i];
-        console.log(
-          chalk.gray(`  ${i + 1}. `) +
-            chalk.cyan(`@${entry.teammate}`) +
-            chalk.gray(" — ") +
-            chalk.white(entry.task.length > 60 ? entry.task.slice(0, 57) + "..." : entry.task)
-        );
-      }
-      if (this.taskQueue.length > 0) {
-        console.log(chalk.gray("  /cancel <n> to remove a task"));
-      }
-      console.log();
-      return;
     }
-
-    // Parse: @teammate task or teammate task
-    const match = argsStr.match(/^@?(\S+)(?:\s+([\s\S]+))?$/);
-    if (!match) {
-      console.log(chalk.yellow("  Usage: /queue @teammate <task...>"));
-      return;
+    for (let i = 0; i < this.taskQueue.length; i++) {
+      const entry = this.taskQueue[i];
+      console.log(
+        chalk.gray(`  ${i + 1}. `) +
+          chalk.cyan(`@${entry.teammate}`) +
+          chalk.gray(" — ") +
+          chalk.white(entry.task.length > 60 ? entry.task.slice(0, 57) + "..." : entry.task)
+      );
     }
-
-    const [, teammate, task] = match;
-    const names = this.orchestrator.listTeammates();
-    if (!names.includes(teammate)) {
-      console.log(chalk.yellow(`  Unknown teammate: ${teammate}`));
-      return;
+    if (this.taskQueue.length > 0) {
+      console.log(chalk.gray("  /cancel <n> to remove a task"));
     }
-
-    if (!task?.trim()) {
-      console.log(chalk.yellow(`  Missing task. Usage: /queue @${teammate} <task...>`));
-      return;
-    }
-
-    this.taskQueue.push({ type: "agent", teammate, task: task.trim() });
     console.log();
-    console.log(
-      chalk.gray("  Queued: ") +
-        chalk.cyan(`@${teammate}`) +
-        chalk.gray(" — ") +
-        chalk.white(task.trim().slice(0, 60)) +
-        chalk.gray(` (${this.taskQueue.length} in queue)`)
-    );
-    console.log(
-      chalk.blue(`  ${teammate}`) +
-        chalk.gray(` is working on: ${task.trim().slice(0, 60)}...`)
-    );
-    console.log();
-
-    // Start draining if not already (mutex-protected)
-    if (!this.drainLock) {
-      this.drainLock = this.drainQueue().finally(() => { this.drainLock = null; });
-    }
   }
 
   /** Drain the queue in the background — REPL stays responsive. Mutex via drainLock. */
@@ -1551,8 +1601,7 @@ class TeammatesREPL {
         this.queueActive = null;
       }
 
-      console.log(chalk.green("  ✔ Queue complete."));
-      this.showPrompt();
+      // Queue finished — prompt is already shown by event handler
     } finally {
       this.queueDraining = false;
     }

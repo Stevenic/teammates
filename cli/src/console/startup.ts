@@ -60,6 +60,9 @@ export async function playStartup(info: StartupInfo): Promise<void> {
   const word = "teammates";
   const indent = "  ";
 
+  // Hide cursor during animation
+  write("\x1b[?25l");
+
   console.log();
 
   // Phase 1: reveal full "teammates" title letter by letter, left-aligned
@@ -152,7 +155,7 @@ export async function playStartup(info: StartupInfo): Promise<void> {
   const col1 = [
     ["@mention", "assign to teammate"],
     ["text", "auto-route task"],
-    ["/queue", "queue tasks"],
+    ["/queue", "view task queue"],
   ];
   const col2 = [
     ["/status", "session overview"],
