@@ -28,15 +28,15 @@ Scribe defines the framework structure (templates, onboarding instructions). Bea
 |---|---|
 | recall, search, embeddings, vectra, indexer, vector, semantic | **Beacon** |
 | cli, orchestrator, adapter, REPL, handoff, agent, routing, queue | **Beacon** |
-| template, onboarding, SOUL.md, MEMORIES.md, protocol, framework, roster, markdown | **Scribe** |
+| template, onboarding, SOUL.md, WISDOM.md, protocol, framework, roster, markdown | **Scribe** |
 
 ## Structure
 
 Each teammate folder contains:
 
 - **SOUL.md** — Identity, continuity instructions, principles, boundaries, capabilities, and ownership
-- **MEMORIES.md** — Curated long-term lessons (reverse chronological)
-- **memory/** — Daily logs (`YYYY-MM-DD.md`), append-only, for session-level notes
+- **WISDOM.md** — Distilled principles from compacted memories (read second, after SOUL.md)
+- **memory/** — Daily logs (`YYYY-MM-DD.md`) and typed memory files (`<type>_<topic>.md`)
 
 Root-level shared files:
 

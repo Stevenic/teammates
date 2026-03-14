@@ -8,7 +8,7 @@ function makeTeammate(name: string, role = "Test role.", primary: string[] = [])
     name,
     role,
     soul: `# ${name}\n\n${role}`,
-    memories: "",
+    wisdom: "",
     dailyLogs: [],
     ownership: { primary, secondary: [] },
   };

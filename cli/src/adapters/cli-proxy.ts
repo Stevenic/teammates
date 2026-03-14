@@ -218,7 +218,7 @@ export class CliProxyAdapter implements AgentAdapter {
       const command = this.options.commandPath ?? this.preset.command;
       const args = this.preset.buildArgs(
         { promptFile, prompt },
-        { name: "_router", role: "", soul: "", memories: "", dailyLogs: [], ownership: { primary: [], secondary: [] } },
+        { name: "_router", role: "", soul: "", wisdom: "", dailyLogs: [], ownership: { primary: [], secondary: [] } },
         { ...this.options, model: this.options.model ?? "haiku" }
       );
       const env = { ...process.env, ...this.preset.env };

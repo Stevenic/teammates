@@ -79,10 +79,10 @@ export function buildTeammatePrompt(
   parts.push(teammate.soul);
   parts.push("\n---\n");
 
-  // ── Memories ──────────────────────────────────────────────────────
-  if (teammate.memories.trim()) {
-    parts.push("## Your Memories\n");
-    parts.push(teammate.memories);
+  // ── Wisdom ───────────────────────────────────────────────────────
+  if (teammate.wisdom.trim()) {
+    parts.push("## Your Wisdom\n");
+    parts.push(teammate.wisdom);
     parts.push("\n---\n");
   }
 
@@ -156,7 +156,9 @@ This is how you maintain continuity across tasks. Always read it, always update 
    - Files changed
    - Anything the next task should know
 
-2. **MEMORIES.md** — If you learned something durable (a decision, pattern, gotcha, or bug), read \`.teammates/${teammate.name}/MEMORIES.md\`, then write it back with your entry added.
+2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`name\`, \`description\`, \`type\`). Update existing memory files if the topic already has one.
+
+3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.
 
 These files are your persistent memory. Without them, your next session starts from scratch.
 `);

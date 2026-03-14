@@ -6,7 +6,7 @@ const teammate: TeammateConfig = {
   name: "beacon",
   role: "Platform engineer.",
   soul: "# Beacon\n\nBeacon owns the recall package.",
-  memories: "",
+  wisdom: "",
   dailyLogs: [],
   ownership: { primary: [], secondary: [] },
 };

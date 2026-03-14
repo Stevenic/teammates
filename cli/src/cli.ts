@@ -288,7 +288,7 @@ class TeammatesREPL {
       name: this.adapterName,
       role: "Onboarding agent",
       soul: "",
-      memories: "",
+      wisdom: "",
       dailyLogs: [] as { date: string; content: string }[],
       ownership: { primary: [] as string[], secondary: [] as string[] },
     };
@@ -617,7 +617,7 @@ class TeammatesREPL {
       name: this.adapterName,
       role: `General-purpose coding agent (${this.adapterName})`,
       soul: "",
-      memories: "",
+      wisdom: "",
       dailyLogs: [],
       ownership: { primary: [], secondary: [] },
     });

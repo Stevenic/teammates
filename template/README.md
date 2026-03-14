@@ -33,8 +33,8 @@
 Each teammate folder contains:
 
 - **SOUL.md** — Identity, continuity instructions, principles, boundaries, capabilities, and ownership
-- **MEMORIES.md** — Curated long-term lessons (reverse chronological)
-- **memory/** — Daily logs (`YYYY-MM-DD.md`), append-only, for session-level notes
+- **WISDOM.md** — Distilled principles from compacted memories (read second, after SOUL.md)
+- **memory/** — Daily logs (`YYYY-MM-DD.md`) and typed memory files (`<type>_<topic>.md`)
 - Additional files as needed (e.g., design docs, bug trackers)
 
 Root-level shared files:

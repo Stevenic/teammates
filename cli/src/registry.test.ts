@@ -17,14 +17,14 @@ afterEach(async () => {
 async function createTeammate(
   name: string,
   soul: string,
-  options?: { memories?: string; dailyLogs?: { date: string; content: string }[] }
+  options?: { wisdom?: string; dailyLogs?: { date: string; content: string }[] }
 ) {
   const dir = join(tempDir, name);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "SOUL.md"), soul);
 
-  if (options?.memories) {
-    await writeFile(join(dir, "MEMORIES.md"), options.memories);
+  if (options?.wisdom) {
+    await writeFile(join(dir, "WISDOM.md"), options.wisdom);
   }
 
   if (options?.dailyLogs) {
@@ -72,13 +72,13 @@ describe("Registry.loadTeammate", () => {
     expect(config?.soul).toBe(soul);
   });
 
-  it("loads memories", async () => {
+  it("loads wisdom", async () => {
     await createTeammate("beacon", "# Beacon", {
-      memories: "Important decision made",
+      wisdom: "Important decision made",
     });
     const registry = new Registry(tempDir);
     const config = await registry.loadTeammate("beacon");
-    expect(config?.memories).toBe("Important decision made");
+    expect(config?.wisdom).toBe("Important decision made");
   });
 
   it("loads daily logs sorted most recent first", async () => {
@@ -104,11 +104,11 @@ describe("Registry.loadTeammate", () => {
     expect(config).toBeNull();
   });
 
-  it("returns empty memories when MEMORIES.md is missing", async () => {
+  it("returns empty wisdom when WISDOM.md is missing", async () => {
     await createTeammate("beacon", "# Beacon");
     const registry = new Registry(tempDir);
     const config = await registry.loadTeammate("beacon");
-    expect(config?.memories).toBe("");
+    expect(config?.wisdom).toBe("");
   });
 
   it("returns empty daily logs when memory/ is missing", async () => {
@@ -190,7 +190,7 @@ describe("Registry.register", () => {
       name: "test",
       role: "Test role.",
       soul: "# Test",
-      memories: "",
+      wisdom: "",
       dailyLogs: [],
       ownership: { primary: [], secondary: [] },
     });

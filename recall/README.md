@@ -1,6 +1,6 @@
 # @teammates/recall
 
-Local semantic memory search for teammates. Indexes `MEMORIES.md` and daily logs (`memory/*.md`) using [Vectra](https://github.com/Stevenic/vectra) for vector search and [transformers.js](https://huggingface.co/docs/transformers.js) for embeddings.
+Local semantic memory search for teammates. Indexes `WISDOM.md` and memory files (`memory/*.md` — daily logs and typed memories) using [Vectra](https://github.com/Stevenic/vectra) for vector search and [transformers.js](https://huggingface.co/docs/transformers.js) for embeddings.
 
 **Zero cloud dependencies.** Everything runs locally — embeddings are generated on-device, indexes are stored as local files.
 
@@ -88,7 +88,7 @@ teammates-recall status --dir ./.teammates
 ## How It Works
 
 1. **Discovers** teammate directories (any folder under `.teammates/` with a `SOUL.md`)
-2. **Collects** memory files: `MEMORIES.md` + `memory/*.md`
+2. **Collects** memory files: `WISDOM.md` + `memory/*.md` (daily logs and typed memories)
 3. **Chunks and embeds** text using transformers.js (`Xenova/all-MiniLM-L6-v2`, 384-dim vectors)
 4. **Stores** the index at `.teammates/<teammate>/.index/` (gitignored)
 5. **Searches** using Vectra's semantic similarity matching
@@ -117,7 +117,7 @@ The `--json` flag returns structured results that agents can parse:
 [
   {
     "teammate": "atlas",
-    "uri": "atlas/MEMORIES.md",
+    "uri": "atlas/WISDOM.md",
     "text": "### 2026-01-15: JWT Auth Pattern\n...",
     "score": 0.847
   }

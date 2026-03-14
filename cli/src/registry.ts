@@ -2,7 +2,7 @@
  * Teammate registry.
  *
  * Discovers teammates from .teammates/ and loads their configs
- * (SOUL.md, MEMORIES.md, daily logs, ownership rules).
+ * (SOUL.md, WISDOM.md, daily logs, ownership rules).
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -46,7 +46,7 @@ export class Registry {
     }
 
     const soul = await readFile(soulPath, "utf-8");
-    const memories = await readFileSafe(join(dir, "MEMORIES.md"));
+    const wisdom = await readFileSafe(join(dir, "WISDOM.md"));
     const dailyLogs = await loadDailyLogs(join(dir, "memory"));
     const ownership = parseOwnership(soul);
     const role = parseRole(soul);
@@ -55,7 +55,7 @@ export class Registry {
       name,
       role,
       soul,
-      memories,
+      wisdom,
       dailyLogs,
       ownership,
     };
@@ -101,11 +101,12 @@ async function loadDailyLogs(memoryDir: string): Promise<DailyLog[]> {
     const logs: DailyLog[] = [];
 
     for (const entry of entries) {
-      if (entry.endsWith(".md")) {
-        const date = basename(entry, ".md");
-        const content = await readFile(join(memoryDir, entry), "utf-8");
-        logs.push({ date, content });
-      }
+      if (!entry.endsWith(".md")) continue;
+      const stem = basename(entry, ".md");
+      // Only include daily logs (YYYY-MM-DD format), skip typed memory files
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(stem)) continue;
+      const content = await readFile(join(memoryDir, entry), "utf-8");
+      logs.push({ date: stem, content });
     }
 
     // Most recent first

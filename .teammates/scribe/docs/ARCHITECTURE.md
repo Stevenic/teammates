@@ -47,8 +47,9 @@ Local semantic search over teammate memory files. Zero cloud dependencies.
 Plain markdown. No preprocessing. Works with any AI tool that reads files.
 
 - **SOUL.md** — Teammate identity, ownership rules, principles, boundaries
-- **MEMORIES.md** — Curated long-term knowledge (reverse chronological)
+- **WISDOM.md** — Distilled principles from compacted memories (read second, after SOUL.md)
 - **memory/YYYY-MM-DD.md** — Daily logs (append-only, one per session)
+- **memory/<type>_<topic>.md** — Typed memories with frontmatter (user, feedback, project, reference)
 - **PROTOCOL.md** — Collaboration rules, handoff format, conflict resolution
 - **CROSS-TEAM.md** — Shared lessons + index of private doc pointers
 
@@ -69,7 +70,7 @@ cli.ts ─── parse command, tokenize ───▶ orchestrator.ts
                                             │
                                    hydrate prompt:
                                    • SOUL.md (identity)
-                                   • MEMORIES.md + last 3 daily logs
+                                   • WISDOM.md + last 3 daily logs
                                    • roster (all teammates)
                                    • handoff context (if chained)
                                    • output protocol
@@ -99,8 +100,9 @@ cli.ts ─── parse command, tokenize ───▶ orchestrator.ts
 Agent writes memory files
     │
     ▼
-.teammates/<name>/MEMORIES.md        (curated, updated per session)
-.teammates/<name>/memory/YYYY-MM-DD  (append-only daily log)
+.teammates/<name>/WISDOM.md               (distilled, compacted periodically)
+.teammates/<name>/memory/<type>_<topic>.md  (typed, individual files)
+.teammates/<name>/memory/YYYY-MM-DD.md     (append-only daily log)
     │
     ▼
 recall search (auto-syncs before query)

@@ -16,7 +16,7 @@ interface TeammateFiles {
 }
 
 /**
- * Indexes teammate memory files (MEMORIES.md + memory/*.md) into Vectra.
+ * Indexes teammate memory files (WISDOM.md + memory/*.md) into Vectra.
  * One index per teammate, stored at .teammates/<name>/.index/
  */
 export class Indexer {
@@ -65,13 +65,13 @@ export class Indexer {
     const teammateDir = path.join(this._config.teammatesDir, teammate);
     const files: TeammateFiles["files"] = [];
 
-    // MEMORIES.md
-    const memoriesPath = path.join(teammateDir, "MEMORIES.md");
+    // WISDOM.md
+    const wisdomPath = path.join(teammateDir, "WISDOM.md");
     try {
-      await fs.access(memoriesPath);
-      files.push({ uri: `${teammate}/MEMORIES.md`, absolutePath: memoriesPath });
+      await fs.access(wisdomPath);
+      files.push({ uri: `${teammate}/WISDOM.md`, absolutePath: wisdomPath });
     } catch {
-      // No MEMORIES.md
+      // No WISDOM.md
     }
 
     // memory/*.md (daily logs)

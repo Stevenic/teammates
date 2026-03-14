@@ -88,9 +88,9 @@ For each teammate, create a folder at `.teammates/<name>/` containing:
 
 **SOUL.md** — Use the SOUL.md template from `template/TEMPLATE.md`. Fill in every section with project-specific details. Reference `template/example/SOUL.md` for the level of detail and tone expected.
 
-**MEMORIES.md** — Use the MEMORIES.md template from `template/TEMPLATE.md`. Add a single initial entry recording the teammate's creation and any key decisions made during setup.
+**WISDOM.md** — Use the WISDOM.md template from `template/TEMPLATE.md`. Leave it in its initial empty state — wisdom entries emerge after the first compaction.
 
-**memory/** — Create an empty `memory/` directory in each teammate's folder. This is where daily logs (`YYYY-MM-DD.md`) will accumulate over time. No need to create any files yet.
+**memory/** — Create an empty `memory/` directory in each teammate's folder. This is where daily logs (`YYYY-MM-DD.md`) and typed memory files (`<type>_<topic>.md`) will accumulate over time. No need to create any files yet.
 
 ---
 
@@ -98,7 +98,7 @@ For each teammate, create a folder at `.teammates/<name>/` containing:
 
 Before finishing, check:
 
-- [ ] Every teammate in the README roster has a corresponding folder with SOUL.md and MEMORIES.md
+- [ ] Every teammate in the README roster has a corresponding folder with SOUL.md and WISDOM.md
 - [ ] README.md roster matches the actual folders
 - [ ] Ownership globs across all SOUL.md files collectively cover the codebase without major gaps or overlaps
 - [ ] Boundaries in each SOUL.md correctly reference the teammate who DOES own that area
@@ -113,7 +113,7 @@ Before finishing, check:
 ## Tips
 
 - **The `template/example/` folder** has a worked example of a filled-in teammate. Use it as a reference for tone and detail level.
-- **MEMORIES.md starts light.** Just one entry recording initial creation. Memories accumulate naturally over time as the team works.
+- **WISDOM.md starts empty.** Wisdom entries emerge after the first compaction of typed memories. Don't pre-populate it.
 - **Not every SOUL.md section needs to be exhaustive.** Fill in what's known now. Teammates grow more detailed as the project evolves.
 - **If the agent can't create directories**, ask the user to create the folder structure manually, then have the agent fill in the file contents.
 - **Small projects are fine with 2–3 teammates.** Don't over-partition a small codebase.
@@ -121,4 +121,5 @@ Before finishing, check:
 - **Daily logs start empty.** The `memory/` folders are created during onboarding but daily log files are created naturally as teammates work.
 - **Souls evolve.** Teammates should update their own SOUL.md as they learn more about their domain. If a teammate changes their SOUL.md, they should tell the user what changed and why.
 - **Boundaries are strict.** Teammates must never modify files outside their ownership, even for small or obvious fixes. If a task touches another teammate's domain, they should hand off that portion with a clear description. This prevents stepping on toes and keeps ownership clean.
-- **Memory search is optional.** For projects that accumulate many daily logs, suggest installing `@teammates/recall` for semantic search. It's not required — teammates work fine by reading files directly.
+- **Memory search is optional.** For projects that accumulate many memory files, suggest installing `@teammates/recall` for semantic search. It's not required — teammates work fine by reading files directly.
+- **Typed memories replace MEMORIES.md.** The old monolithic MEMORIES.md is replaced by individual files in `memory/` with typed frontmatter. See TEMPLATE.md for the full format and examples.

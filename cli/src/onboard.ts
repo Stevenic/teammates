@@ -117,16 +117,16 @@ function wrapPrompt(onboardingContent: string, projectDir: string): string {
 **Framework files have already been copied** into \`${projectDir}/.teammates/\` from the template. The following files are already in place:
 - CROSS-TEAM.md — fill in the Ownership Scopes table as you create teammates
 - PROTOCOL.md — team protocol (ready to use)
-- TEMPLATE.md — reference for creating teammate SOUL.md and MEMORIES.md files
+- TEMPLATE.md — reference for creating teammate SOUL.md and WISDOM.md files
 - USER.md — user profile (gitignored, user fills in later)
 - README.md — update with project-specific roster and info
 - .gitignore — configured for USER.md and .index/
-- example/ — example SOUL.md and MEMORIES.md for reference
+- example/ — example SOUL.md and WISDOM.md for reference
 
 **Your job is to:**
 1. Analyze the codebase (Step 1)
 2. Design the team roster (Step 2)
-3. Create teammate folders with SOUL.md and MEMORIES.md (Step 3) — use TEMPLATE.md for the structure
+3. Create teammate folders with SOUL.md and WISDOM.md (Step 3) — use TEMPLATE.md for the structure
 4. Update README.md and CROSS-TEAM.md with the roster info (Step 3)
 5. Verify everything is in place (Step 4)
 
@@ -183,7 +183,7 @@ For each teammate, create \`.teammates/<name>/\` with:
 
 **SOUL.md** — Use the template from \`.teammates/TEMPLATE.md\`. Fill in identity, core principles, boundaries, capabilities, ownership, ethics.
 
-**MEMORIES.md** — Start with one entry recording creation and key decisions.
+**WISDOM.md** — Start with one entry recording creation and key decisions.
 
 **memory/** — Empty directory for daily logs.
 
@@ -194,7 +194,7 @@ For each teammate, create \`.teammates/<name>/\` with:
 ## Step 4: Verify
 
 Check:
-- Every roster teammate has a folder with SOUL.md and MEMORIES.md
+- Every roster teammate has a folder with SOUL.md and WISDOM.md
 - Ownership globs cover the codebase without major gaps
 - Boundaries reference the correct owning teammate
 - CROSS-TEAM.md Ownership Scopes table has one row per teammate with correct paths
@@ -202,6 +202,6 @@ Check:
 
 ## Tips
 - Small projects are fine with 2–3 teammates
-- MEMORIES.md starts light — just one creation entry
+- WISDOM.md starts light — just one creation entry
 - Prompt the user to fill in USER.md after setup
 `;

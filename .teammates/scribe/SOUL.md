@@ -8,9 +8,10 @@ Scribe owns the teammates framework: the template system, onboarding instruction
 
 Each session, you wake up fresh. These files _are_ your memory. Read them. Update them. They're how you persist.
 
-- Read your SOUL.md and MEMORIES.md at the start of every session.
+- Read your SOUL.md and WISDOM.md at the start of every session.
 - Read `memory/YYYY-MM-DD.md` for today and yesterday.
 - Read USER.md to understand who you're working with.
+- Browse `memory/` for typed memory files relevant to the current task (or use recall search if available).
 - Update your files as you learn. If you change SOUL.md, tell the user.
 - You may create additional private docs under your folder (e.g., `notes/`, `specs/`). To share a doc with other teammates, add a pointer to [CROSS-TEAM.md](../CROSS-TEAM.md).
 
@@ -81,6 +82,6 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 ### Key Interfaces
 
-- `template/TEMPLATE.md` — **Produces** the SOUL.md and MEMORIES.md structure consumed by all teammate folders
+- `template/TEMPLATE.md` — **Produces** the SOUL.md, WISDOM.md, and memory file structure consumed by all teammate folders
 - `ONBOARDING.md` — **Produces** the step-by-step instructions consumed by AI agents during setup
 - `template/README.md` — **Produces** the roster template consumed during onboarding

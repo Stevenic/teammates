@@ -31,15 +31,15 @@ your-project/
     USER.md             # Who you are (gitignored, stays local)
     <teammate-name>/
       SOUL.md           # Identity, continuity, principles, boundaries, ownership
-      MEMORIES.md       # Curated long-term lessons
-      memory/           # Daily logs (YYYY-MM-DD.md), append-only
+      WISDOM.md         # Distilled principles from compacted memories
+      memory/           # Daily logs (YYYY-MM-DD.md) and typed memories (<type>_<topic>.md)
 ```
 
 ## Key Concepts
 
 - **Soul** — A teammate's identity: who they are, what they own, their principles, and their boundaries. Souls evolve — teammates update their own as they learn.
 - **Continuity** — Each session starts fresh. Files are the only memory. Teammates read their files at startup and write to them before ending a session.
-- **Memories** — Two layers: curated long-term knowledge in MEMORIES.md, and append-only daily logs in `memory/YYYY-MM-DD.md`.
+- **Memory** — Three tiers: raw daily logs (`memory/YYYY-MM-DD.md`), typed memories (`memory/<type>_<topic>.md`), and distilled wisdom (`WISDOM.md`). Memories compact into wisdom over time via the `/compact` command.
 - **Ownership** — File patterns each teammate is responsible for. Every part of the codebase has a clear owner.
 - **Protocol** — How teammates collaborate: handoff conventions, dependency direction, and conflict resolution.
 
@@ -121,11 +121,10 @@ teammates/
     README.md           # Roster template with placeholders
     PROTOCOL.md         # Collaboration rules template
     CROSS-TEAM.md       # Empty starter for cross-team notes
-    TEMPLATE.md         # Template for individual teammate files (SOUL, MEMORIES, daily logs)
+    TEMPLATE.md         # Template for individual teammate files (SOUL, WISDOM, typed memories, daily logs)
     USER.md             # User profile template (gitignored)
     example/
       SOUL.md           # Worked example of a filled-in SOUL.md
-      MEMORIES.md       # Worked example of a filled-in MEMORIES.md
 ```
 
 ## License

@@ -7,7 +7,7 @@ function makeConfig(overrides?: Partial<TeammateConfig>): TeammateConfig {
     name: "beacon",
     role: "Platform engineer.",
     soul: "# Beacon\n\nBeacon owns the recall package.",
-    memories: "",
+    wisdom: "",
     dailyLogs: [],
     ownership: { primary: ["recall/src/**"], secondary: [] },
     ...overrides,
@@ -44,18 +44,18 @@ describe("buildTeammatePrompt", () => {
     expect(prompt).toContain(".teammates/beacon/memory/");
   });
 
-  it("skips memories section when empty", () => {
-    const prompt = buildTeammatePrompt(makeConfig({ memories: "" }), "task");
-    expect(prompt).not.toContain("## Your Memories");
+  it("skips wisdom section when empty", () => {
+    const prompt = buildTeammatePrompt(makeConfig({ wisdom: "" }), "task");
+    expect(prompt).not.toContain("## Your Wisdom");
   });
 
-  it("includes memories when present", () => {
+  it("includes wisdom when present", () => {
     const prompt = buildTeammatePrompt(
-      makeConfig({ memories: "Some important memory" }),
+      makeConfig({ wisdom: "Some important wisdom" }),
       "task"
     );
-    expect(prompt).toContain("## Your Memories");
-    expect(prompt).toContain("Some important memory");
+    expect(prompt).toContain("## Your Wisdom");
+    expect(prompt).toContain("Some important wisdom");
   });
 
   it("includes daily logs (up to 3)", () => {
