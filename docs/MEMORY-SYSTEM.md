@@ -173,10 +173,10 @@ The `teammates-recall` service adds a local vector database with semantic search
 
 - **Vector database** — Per-teammate Vectra indexes stored at `.teammates/<name>/.index/` (gitignored, rebuildable)
 - **On-device embeddings** — Text is chunked and embedded using transformers.js. Model downloads automatically on first run (~23 MB), cached locally. No API keys required.
-- **Hybrid retrieval** — Two-pass search combining recency and semantic similarity:
+- **Hybrid retrieval** — Multi-pass search combining keyword matching, semantic similarity, and recency:
+  - **BM25 + vector search** — Vectra natively supports hybrid BM25 keyword matching and vector similarity search, combining exact term matches with semantic embeddings for higher-quality results than either approach alone
   - **Recency pass** — Always returns the 2–3 most recent weekly summaries (by file date, not query relevance), giving agents a sense of recent activity beyond the 7 daily logs already in context
-  - **Semantic pass** — Standard vector similarity search across all indexed content (weekly summaries, monthly summaries, typed memories), ranked by embedding distance to the query
-  - **Merge + dedup** — Results from both passes are combined, deduplicated by URI, and trimmed to a token budget
+  - **Merge + dedup** — Results from all passes are combined, deduplicated by URI, and trimmed to a token budget
 - **Type-based priority boost** — Typed memories (pre-extracted knowledge) score higher than episodic summaries at the same semantic similarity, since distilled facts are more actionable than narrative
 - **Auto-sync** — Every search call detects new or changed memory files and indexes them before returning results. Agents write markdown, then search — no manual sync step needed.
 
@@ -243,12 +243,12 @@ OpenClaw has an automatic memory flush that triggers when the session approaches
 | Search engine | teammates-recall — Vectra vector DB + transformers.js embeddings | Built-in vector index (default) or QMD sidecar |
 | Embedding model | Local only — `Xenova/all-MiniLM-L6-v2` (384-dim, ~23 MB) | Auto-selected: local, OpenAI, Gemini, Voyage, Mistral, Ollama |
 | Storage | Per-teammate Vectra index at `.teammates/<name>/.index/` | Per-agent SQLite at `~/.openclaw/memory/<agentId>.sqlite` |
-| Hybrid search | Recency pass (file-date sorted) + semantic pass (vector similarity), merged and deduped | BM25 + vector with configurable weights |
+| Hybrid search | BM25 + vector (Vectra native) + recency pass, merged and deduped | BM25 + vector with configurable weights |
 | Post-processing | Type-based priority boost (typed memories rank above episodic summaries) | MMR (diversity re-ranking) + temporal decay (recency boost) |
 | Auto-sync | Yes — indexes new/changed files before every search | N/A — indexes on write |
 | Session indexing | Not supported | Optional — indexes session transcripts for recall |
 
-Both systems provide vector-based semantic search with embeddings. Teammates' hybrid approach combines a recency pass (most recent weekly summaries, always included) with a semantic pass (vector similarity across all indexed content), then merges and deduplicates. OpenClaw's hybrid approach combines BM25 keyword matching with vector similarity using configurable weights. OpenClaw supports more embedding providers and adds MMR diversity re-ranking, while Teammates adds type-aware priority boosting (pre-extracted knowledge scores higher than episodic narrative) and runs fully offline with zero configuration.
+Both systems provide hybrid BM25+vector search with embeddings. Teammates leverages Vectra's native BM25+vector hybrid scoring, layered with a recency pass (most recent weekly summaries, always included), then merges and deduplicates. OpenClaw similarly combines BM25 keyword matching with vector similarity using configurable weights. Both approaches combine keyword exactness with semantic understanding. OpenClaw supports more embedding providers and adds MMR diversity re-ranking, while Teammates adds type-aware priority boosting (pre-extracted knowledge scores higher than episodic narrative) and runs fully offline with zero configuration.
 
 ### Design Philosophy
 
@@ -267,7 +267,7 @@ OpenClaw prioritizes search quality and retrieval sophistication. It invests hea
 
 ### Summary
 
-- **Teammates** is a convention-based system with optional vector search: structured file layout, typed memories, compaction pipelines, wisdom distillation, and a local vector DB (Vectra + transformers.js) via the recall service. The base memory system works with any AI tool that can read files; adding recall layers on hybrid retrieval (recency + semantic), on-device embeddings, and type-aware ranking — all fully offline.
+- **Teammates** is a convention-based system with optional vector search: structured file layout, typed memories, compaction pipelines, wisdom distillation, and a local vector DB (Vectra + transformers.js) via the recall service. The base memory system works with any AI tool that can read files; adding recall layers on hybrid BM25+vector search, recency-aware retrieval, on-device embeddings, and type-aware ranking — all fully offline.
 - **OpenClaw** is an infrastructure-based system: SQLite vector indexes, hybrid BM25+vector search, multiple embedding backends, automatic memory flush, and extensive tuning knobs. The memory system is tightly integrated with its runtime.
 
-Both systems store Markdown as the source of truth and both provide vector-based semantic search with embeddings. Teammates adds semantic structure on top (types, tiers, compaction rules) and keeps search optional with zero-config local operation. OpenClaw adds more search infrastructure (BM25, MMR, temporal decay, multiple providers) and offers finer-grained tuning at the cost of a larger configuration surface.
+Both systems store Markdown as the source of truth and both provide hybrid BM25+vector search with embeddings. Teammates adds semantic structure on top (types, tiers, compaction rules) and keeps search optional with zero-config local operation. OpenClaw adds more search infrastructure (MMR, temporal decay, multiple providers) and offers finer-grained tuning at the cost of a larger configuration surface.
