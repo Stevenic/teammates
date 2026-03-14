@@ -160,6 +160,27 @@ export {
   type DropdownItem,
 } from "./widgets/chat-view.js";
 
+// ── Markdown ─────────────────────────────────────────────────────────
+
+export {
+  renderMarkdown,
+  type MarkdownOptions,
+  type MarkdownTheme,
+} from "./widgets/markdown.js";
+
+// ── Syntax highlighting ──────────────────────────────────────────────
+
+export {
+  registerHighlighter,
+  getHighlighter,
+  highlightLine,
+  DEFAULT_SYNTAX_THEME,
+  type SyntaxHighlighter,
+  type SyntaxToken,
+  type SyntaxTokenType,
+  type SyntaxTheme,
+} from "./widgets/syntax.js";
+
 // ── Styled text (chalk-like API) ─────────────────────────────────────
 
 export {

@@ -32,6 +32,7 @@ import {
   color,
   CYAN, GREEN, YELLOW, RED, GRAY, WHITE, BLUE,
   type Color,
+  renderMarkdown,
 } from "@teammates/consolonia";
 import { theme, colorToHex, type Theme } from "./theme.js";
 import { PromptInput } from "./console/prompt-input.js";
@@ -504,6 +505,8 @@ class TeammatesREPL {
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
   private escPending = false;         // true after first ESC, waiting for second
   private escTimer: ReturnType<typeof setTimeout> | null = null;
+  private ctrlcPending = false;      // true after first Ctrl+C, waiting for second
+  private ctrlcTimer: ReturnType<typeof setTimeout> | null = null;
   private defaultFooter: StyledSpan | null = null; // cached default footer content
 
   // ── Animated status tracker ─────────────────────────────────────
@@ -658,6 +661,47 @@ class TeammatesREPL {
       console.log(text.map((s) => s.text).join(""));
     } else {
       console.log(text);
+    }
+  }
+
+  /** Render markdown text to the feed using the consolonia markdown widget. */
+  private feedMarkdown(source: string): void {
+    const t = theme();
+    const width = process.stdout.columns || 80;
+    const lines = renderMarkdown(source, {
+      width: width - 2,
+      indent: "  ",
+      theme: {
+        text: { fg: t.text },
+        bold: { fg: t.text, bold: true },
+        italic: { fg: t.text, italic: true },
+        boldItalic: { fg: t.text, bold: true, italic: true },
+        code: { fg: t.warning },
+        h1: { fg: t.accent, bold: true },
+        h2: { fg: t.accent, bold: true },
+        h3: { fg: t.accent },
+        codeBlockChrome: { fg: t.textDim },
+        codeBlock: { fg: t.success },
+        blockquote: { fg: t.textMuted, italic: true },
+        listMarker: { fg: t.accent },
+        tableBorder: { fg: t.textDim },
+        tableHeader: { fg: t.text, bold: true },
+        hr: { fg: t.textDim },
+        link: { fg: t.accent, underline: true },
+        linkUrl: { fg: t.textMuted },
+        strikethrough: { fg: t.textMuted, strikethrough: true },
+        checkbox: { fg: t.accent },
+      },
+    });
+
+    for (const line of lines) {
+      // Convert markdown Line (Seg[]) to StyledSpan, preserving all style flags
+      const styledSpan = line.map((seg) => ({
+        text: seg.text,
+        style: seg.style,
+      })) as StyledSpan;
+      (styledSpan as any).__brand = "StyledSpan";
+      this.feedLine(styledSpan);
     }
   }
 
@@ -1306,8 +1350,7 @@ class TeammatesREPL {
       maxInputHeight: 5,
       separatorStyle: { fg: t.separator },
       progressStyle: { fg: t.progress, italic: true },
-      dropdownHighlightStyle: { fg: t.dropdownHighlight, bold: true },
-      dropdownLabelStyle: { fg: t.accent },
+      dropdownHighlightStyle: { fg: t.accent },
       dropdownStyle: { fg: t.textMuted },
       footer: concat(tp.accent(" Teammates"), tp.dim(" v0.1.0")),
       footerStyle: { fg: t.textDim },
@@ -1325,10 +1368,16 @@ class TeammatesREPL {
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
       this.updateWordwheel();
-      // Reset ESC pending state on any text change
+      // Reset ESC / Ctrl+C pending state on any text change
       if (this.escPending) {
         this.escPending = false;
         if (this.escTimer) { clearTimeout(this.escTimer); this.escTimer = null; }
+        this.chatView.setFooter(this.defaultFooter!);
+        this.refreshView();
+      }
+      if (this.ctrlcPending) {
+        this.ctrlcPending = false;
+        if (this.ctrlcTimer) { clearTimeout(this.ctrlcTimer); this.ctrlcTimer = null; }
         this.chatView.setFooter(this.defaultFooter!);
         this.refreshView();
       }
@@ -1372,6 +1421,33 @@ class TeammatesREPL {
     });
     this.chatView.on("paste", (text: string) => {
       this.handlePaste(text);
+    });
+    this.chatView.on("ctrlc", () => {
+      if (this.ctrlcPending) {
+        // Second Ctrl+C — exit
+        this.ctrlcPending = false;
+        if (this.ctrlcTimer) { clearTimeout(this.ctrlcTimer); this.ctrlcTimer = null; }
+        this.chatView.setFooter(this.defaultFooter!);
+        this.stopRecallWatch();
+        if (this.app) this.app.stop();
+        this.orchestrator.shutdown().then(() => process.exit(0));
+        return;
+      }
+      // First Ctrl+C — show hint in footer, auto-expire after 2s
+      this.ctrlcPending = true;
+      const termW = process.stdout.columns || 80;
+      const hint = "Ctrl+C again to exit";
+      const pad = Math.max(0, termW - hint.length - 1);
+      this.chatView.setFooter(concat(tp.dim(" ".repeat(pad)), tp.muted(hint)));
+      this.refreshView();
+      this.ctrlcTimer = setTimeout(() => {
+        this.ctrlcTimer = null;
+        if (this.ctrlcPending) {
+          this.ctrlcPending = false;
+          this.chatView.setFooter(this.defaultFooter!);
+          this.refreshView();
+        }
+      }, 2000);
     });
 
     this.app = new App({
@@ -1690,7 +1766,7 @@ class TeammatesREPL {
           this.feedLine(tp.warning(`  ⚠ Response is ${sizeKB.toFixed(1)}KB — use /debug ${event.result.teammate} to view full output`));
           this.feedLine(tp.muted("  " + "─".repeat(40)));
         } else if (cleaned) {
-          this.feedLine(renderMarkdownTables(cleaned));
+          this.feedMarkdown(cleaned);
         }
 
         this.feedLine();
@@ -2499,6 +2575,69 @@ class TeammatesREPL {
 
     this.feedLine();
     this.feedLine(tp.muted("  Base accent: #3A96DD"));
+    this.feedLine();
+
+    // ── Markdown preview ──────────────────────────────────────
+    this.feedLine(tp.bold("  Markdown Preview"));
+    this.feedLine(tp.muted("  " + "─".repeat(50)));
+    this.feedLine();
+
+    const mdSample = [
+      "# Heading 1",
+      "",
+      "## Heading 2",
+      "",
+      "### Heading 3",
+      "",
+      "Regular text with **bold**, *italic*, and `inline code`.",
+      "A [link](https://example.com) and ~~strikethrough~~.",
+      "",
+      "- Bullet item one",
+      "- Bullet item with **bold**",
+      "  - Nested item",
+      "",
+      "1. Ordered first",
+      "2. Ordered second",
+      "",
+      "> Blockquote text",
+      "> across multiple lines",
+      "",
+      "```js",
+      "const greeting = \"hello\";",
+      "async function main() {",
+      "  await fetch(\"/api\");",
+      "  return 42;",
+      "}",
+      "```",
+      "",
+      "```python",
+      "def greet(name: str) -> None:",
+      "    print(f\"Hello, {name}\")",
+      "```",
+      "",
+      "```bash",
+      "echo \"$HOME\" | grep --color user",
+      "if [ -f .env ]; then source .env; fi",
+      "```",
+      "",
+      "```json",
+      "{",
+      "  \"name\": \"teammates\",",
+      "  \"version\": \"0.1.0\",",
+      "  \"active\": true",
+      "}",
+      "```",
+      "",
+      "| Language   | Status  |",
+      "|------------|---------|",
+      "| JavaScript | ✔ Ready |",
+      "| Python     | ✔ Ready |",
+      "| C#         | ✔ Ready |",
+      "",
+      "---",
+    ].join("\n");
+
+    this.feedMarkdown(mdSample);
     this.feedLine();
     this.refreshView();
   }

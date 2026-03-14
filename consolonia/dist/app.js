@@ -150,16 +150,7 @@ export class App {
     }
     // ── Input handling ───────────────────────────────────────────────
     _handleInput(event) {
-        // Intercept Ctrl+C
-        if (event.type === "key" &&
-            event.event.key === "c" &&
-            event.event.ctrl &&
-            !event.event.alt &&
-            !event.event.shift) {
-            this.stop();
-            return;
-        }
-        // Dispatch to root control
+        // Dispatch to root control (including Ctrl+C — let the app handle it)
         this.root.handleInput(event);
         // Schedule a render if the tree is dirty
         this._scheduleRender();

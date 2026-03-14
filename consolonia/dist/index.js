@@ -51,6 +51,10 @@ export { TextInput } from "./widgets/text-input.js";
 export { ScrollView } from "./widgets/scroll-view.js";
 export { StyledText } from "./widgets/styled-text.js";
 export { ChatView, } from "./widgets/chat-view.js";
+// ── Markdown ─────────────────────────────────────────────────────────
+export { renderMarkdown, } from "./widgets/markdown.js";
+// ── Syntax highlighting ──────────────────────────────────────────────
+export { registerHighlighter, getHighlighter, highlightLine, DEFAULT_SYNTAX_THEME, } from "./widgets/syntax.js";
 // ── Styled text (chalk-like API) ─────────────────────────────────────
 export { pen, concat, spanText, spanLength, isStyledSpan, } from "./styled.js";
 // ── App shell ────────────────────────────────────────────────────────

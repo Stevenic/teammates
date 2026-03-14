@@ -344,9 +344,13 @@ export class ChatView extends Control {
     }
     // ── Input handling ─────────────────────────────────────────────
     handleInput(event) {
-        // Intercept up/down for dropdown navigation
         if (event.type === "key") {
             const ke = event.event;
+            // Ctrl+C → emit for the app to handle
+            if (ke.key === "c" && ke.ctrl && !ke.alt && !ke.shift) {
+                this.emit("ctrlc");
+                return true;
+            }
             // Dropdown navigation
             if (this._dropdownItems.length > 0) {
                 if (ke.key === "up")
@@ -616,23 +620,12 @@ export class ChatView extends Control {
         for (let i = 0; i < this._dropdownItems.length && i < height; i++) {
             const item = this._dropdownItems[i];
             const isHighlighted = i === this._dropdownIndex;
-            if (isHighlighted) {
-                // Selected row: entire row in highlight style
-                const prefix = "▸ ";
-                const labelPad = item.label.padEnd(16);
-                const text = prefix + labelPad + item.description;
-                const truncated = text.length > width ? text.slice(0, width) : text;
-                ctx.drawText(x, y + i, truncated, this._dropdownHighlightStyle);
-            }
-            else {
-                // Non-selected: label in accent (dropdownLabelStyle), description in muted (dropdownStyle)
-                const prefix = "  ";
-                const labelPad = item.label.padEnd(16);
-                ctx.drawStyledText(x, y + i, [
-                    { text: prefix + labelPad, style: this._dropdownLabelStyle },
-                    { text: item.description, style: this._dropdownStyle },
-                ]);
-            }
+            const style = isHighlighted ? this._dropdownHighlightStyle : this._dropdownStyle;
+            const prefix = isHighlighted ? "▸ " : "  ";
+            const labelPad = item.label.padEnd(16);
+            const text = prefix + labelPad + item.description;
+            const truncated = text.length > width ? text.slice(0, width) : text;
+            ctx.drawText(x, y + i, truncated, style);
         }
     }
     // ── Auto-scroll ────────────────────────────────────────────────

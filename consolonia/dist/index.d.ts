@@ -41,5 +41,7 @@ export { TextInput, type TextInputOptions, type InputColorizer, type DeleteSizer
 export { ScrollView, type ScrollViewOptions } from "./widgets/scroll-view.js";
 export { StyledText, type StyledTextOptions, type StyledLine } from "./widgets/styled-text.js";
 export { ChatView, type ChatViewOptions, type DropdownItem, } from "./widgets/chat-view.js";
+export { renderMarkdown, type MarkdownOptions, type MarkdownTheme, } from "./widgets/markdown.js";
+export { registerHighlighter, getHighlighter, highlightLine, DEFAULT_SYNTAX_THEME, type SyntaxHighlighter, type SyntaxToken, type SyntaxTokenType, type SyntaxTheme, } from "./widgets/syntax.js";
 export { pen, concat, spanText, spanLength, isStyledSpan, type StyledSpan, type StyledSegment, } from "./styled.js";
 export { App, type AppOptions } from "./app.js";
