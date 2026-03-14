@@ -25,7 +25,7 @@ import type { AgentAdapter } from "./adapter.js";
 import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js";
 import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
-import { Dropdown } from "./dropdown.js";
+import { PromptBox } from "./console/prompt-box.js";
 import { getOnboardingPrompt, copyTemplateFiles } from "./onboard.js";
 import { compactEpisodic } from "./compact.js";
 
@@ -119,6 +119,11 @@ interface ServiceEntry {
   wireupTask?: string;
 }
 
+/** A task queue entry — either an agent task or an internal operation. */
+type QueueEntry =
+  | { type: "agent"; teammate: string; task: string }
+  | { type: "compact"; teammate: string; task: string };
+
 const SERVICE_REGISTRY: Record<string, ServiceEntry> = {
   recall: {
     package: "@teammates/recall",
@@ -188,8 +193,8 @@ class TeammatesREPL {
   private adapterName: string;
   private teammatesDir!: string;
   private recallWatchProcess: ChildProcess | null = null;
-  private taskQueue: { teammate: string; task: string }[] = [];
-  private queueActive: { teammate: string; task: string } | null = null;
+  private taskQueue: QueueEntry[] = [];
+  private queueActive: QueueEntry | null = null;
   private queueDraining = false;
   /** Mutex to prevent concurrent drainQueue invocations. Resolves when drain finishes. */
   private drainLock: Promise<void> | null = null;
@@ -197,12 +202,18 @@ class TeammatesREPL {
   private dispatching = false;
   /** Stored pasted text keyed by paste number, expanded on Enter. */
   private pastedTexts: Map<number, string> = new Map();
-  private dropdown!: Dropdown;
+  private promptBox!: PromptBox;
   private wordwheelItems: WordwheelItem[] = [];
   private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
 
   constructor(adapterName: string) {
     this.adapterName = adapterName;
+  }
+
+  /** Show the prompt with the top border fence. */
+  private showPrompt(): void {
+    this.promptBox.drawTopBorder();
+    this.rl.prompt();
   }
 
   // ─── Onboarding ───────────────────────────────────────────────────
@@ -393,11 +404,11 @@ class TeammatesREPL {
   }
 
   private clearWordwheel(): void {
-    this.dropdown.clear();
+    this.promptBox.clearDropdown();
   }
 
   private writeWordwheel(lines: string[]): void {
-    this.dropdown.render(lines);
+    this.promptBox.setDropdown(lines);
   }
 
   /**
@@ -658,6 +669,9 @@ class TeammatesREPL {
     // Start recall watch mode if recall is installed
     this.startRecallWatch();
 
+    // Background maintenance: compact stale dailies + sync recall indexes
+    this.startupMaintenance().catch(() => {});
+
     // Register commands
     this.registerCommands();
 
@@ -690,14 +704,18 @@ class TeammatesREPL {
       prompt: chalk.cyan("teammates") + chalk.gray("> "),
       terminal: true,
     });
-    this.dropdown = new Dropdown(this.rl);
+    this.promptBox = new PromptBox({
+      rl: this.rl,
+      borderStyle: (s) => chalk.gray(s),
+    });
 
-    // Pre-mute: if stdin delivers a chunk with multiple newlines (paste),
-    // mute output immediately BEFORE readline echoes anything.
+    // Pre-mute: if stdin delivers a large chunk (paste), mute output
+    // immediately BEFORE readline echoes anything.
     process.stdin.prependListener("data", (chunk: Buffer) => {
       const str = chunk.toString();
-      if (str.includes("\n") && str.indexOf("\n") < str.length - 1) {
-        // Multiple lines in one chunk — it's a paste, mute now
+      const hasMultipleNewlines = str.includes("\n") && str.indexOf("\n") < str.length - 1;
+      const isLongChunk = str.length > 100;
+      if (hasMultipleNewlines || isLongChunk) {
         outputMuted = true;
       }
     });
@@ -751,7 +769,7 @@ class TeammatesREPL {
             (this.rl as any).cursor = item.completion.length;
           }
         }
-        this.dropdown.clear();
+        this.promptBox.clearDropdown();
         this.wordwheelItems = [];
         this.wordwheelIndex = -1;
         // Force a refresh to erase dropdown, then let readline process Enter
@@ -762,7 +780,7 @@ class TeammatesREPL {
 
       // Any other key — clear dropdown, let readline handle keystroke,
       // then recompute and render the new dropdown.
-      this.dropdown.clear();
+      this.promptBox.clearDropdown();
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
       origTtyWrite(s, key);
@@ -775,7 +793,7 @@ class TeammatesREPL {
     this.printBanner(this.orchestrator.listTeammates());
 
     // REPL loop
-    this.rl.prompt();
+    this.showPrompt();
 
     // ── Paste detection ──────────────────────────────────────────────
     // Strategy: the first `line` event echoes normally. We immediately
@@ -796,24 +814,15 @@ class TeammatesREPL {
 
       if (lines.length === 0) return;
 
-      const isLongSingleLine = lines.length === 1 && lines[0].length > 200;
-      if (lines.length > 1 || isLongSingleLine) {
-        // Pasted text — the first line was echoed (possibly wrapping), erase it.
-        // For long single-line pastes that wrap, we need to erase multiple visual rows.
-        const termWidth = process.stdout.columns || 100;
-        const promptLen = "teammates> ".length;
-        const visualRows = Math.ceil((lines[0].length + promptLen) / termWidth);
-        for (let i = 0; i < visualRows; i++) {
-          process.stdout.write("\x1b[2K"); // clear current line
-          if (i < visualRows - 1) process.stdout.write("\x1b[A"); // move up
-        }
-        process.stdout.write("\r"); // move to start
+      if (lines.length > 1) {
+        // Multi-line paste — the first line was echoed, the rest were muted.
+        // Erase the first echoed line (move up 1, clear).
+        process.stdout.write("\x1b[A\x1b[2K");
 
         pasteCount++;
         const combined = lines.join("\n");
         const sizeKB = Buffer.byteLength(combined, "utf-8") / 1024;
-        const label = isLongSingleLine ? `${combined.length} chars` : `${lines.length} lines`;
-        const tag = `[Pasted text #${pasteCount} +${label}, ${sizeKB.toFixed(1)}KB] `;
+        const tag = `[Pasted text #${pasteCount} +${lines.length} lines, ${sizeKB.toFixed(1)}KB] `;
 
         // Store the pasted text — expanded when the user presses Enter.
         this.pastedTexts.set(pasteCount, combined);
@@ -827,8 +836,16 @@ class TeammatesREPL {
         return;
       }
 
-      // Expand paste placeholders with actual content
+      // Single line — may have been muted if it was a long paste.
       const rawLine = lines[0];
+      if (rawLine.length > 100) {
+        // Was muted — show a truncated version so user sees what was submitted
+        const preview = rawLine.slice(0, 80) + chalk.gray("...");
+        process.stdout.write(`\r\x1b[2K`);
+        console.log(chalk.cyan("teammates") + chalk.gray("> ") + preview);
+      }
+
+      // Expand paste placeholders with actual content
       const hasPaste = /\[Pasted text #\d+/.test(rawLine);
 
       let input = rawLine.replace(/\[Pasted text #(\d+) \+\d+ lines, [\d.]+KB\]\s*/g, (_match, num) => {
@@ -859,7 +876,7 @@ class TeammatesREPL {
       }
 
       if (!input || this.dispatching) {
-        this.rl.prompt();
+        this.showPrompt();
         return;
       }
 
@@ -868,6 +885,7 @@ class TeammatesREPL {
       }
 
       this.dispatching = true;
+      this.promptBox.deactivate();
       try {
         await this.dispatch(input);
       } catch (err: any) {
@@ -876,11 +894,11 @@ class TeammatesREPL {
         this.dispatching = false;
       }
 
-      this.rl.prompt();
+      this.showPrompt();
     };
 
     this.rl.on("line", (line: string) => {
-      this.dropdown.clear();
+      this.promptBox.clearDropdown();
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
 
@@ -969,7 +987,6 @@ class TeammatesREPL {
     }
 
     console.log();
-    console.log(divider);
   }
 
   private registerCommands(): void {
@@ -1531,7 +1548,7 @@ class TeammatesREPL {
       return;
     }
 
-    this.taskQueue.push({ teammate, task: task.trim() });
+    this.taskQueue.push({ type: "agent", teammate, task: task.trim() });
     console.log();
     console.log(
       chalk.gray("  Queued: ") +
@@ -1576,19 +1593,23 @@ class TeammatesREPL {
         const entry = this.taskQueue.shift()!;
         this.queueActive = entry;
 
-        const extraContext = this.buildConversationContext();
-        const result = await this.orchestrator.assign({
-          teammate: entry.teammate,
-          task: entry.task,
-          extraContext: extraContext || undefined,
-        });
+        if (entry.type === "compact") {
+          await this.runCompact(entry.teammate);
+        } else {
+          const extraContext = this.buildConversationContext();
+          const result = await this.orchestrator.assign({
+            teammate: entry.teammate,
+            task: entry.task,
+            extraContext: extraContext || undefined,
+          });
+          this.storeResult(result);
+        }
 
         this.queueActive = null;
-        this.storeResult(result);
       }
 
       console.log(chalk.green("  ✔ Queue complete."));
-      this.rl.prompt();
+      this.showPrompt();
     } finally {
       this.queueDraining = false;
     }
@@ -1745,43 +1766,136 @@ class TeammatesREPL {
       ? [argsStr.trim()]
       : this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
 
+    // Validate all names first
+    const valid: string[] = [];
     for (const name of names) {
       const teammateDir = join(this.teammatesDir, name);
       try {
         const s = await stat(teammateDir);
-        if (!s.isDirectory()) continue;
+        if (!s.isDirectory()) {
+          console.log(chalk.yellow(`  ${name}: not a directory, skipping`));
+          continue;
+        }
+        valid.push(name);
       } catch {
         console.log(chalk.yellow(`  ${name}: no directory found, skipping`));
-        continue;
+      }
+    }
+
+    if (valid.length === 0) return;
+
+    // Queue a compact task for each teammate
+    for (const name of valid) {
+      this.taskQueue.push({ type: "compact", teammate: name, task: "compact + index update" });
+    }
+
+    console.log();
+    console.log(
+      chalk.gray("  Queued compaction for ") +
+        chalk.cyan(valid.map((n) => `@${n}`).join(", ")) +
+        chalk.gray(` (${valid.length} task${valid.length === 1 ? "" : "s"})`)
+    );
+    console.log();
+
+    // Start draining if not already
+    if (!this.drainLock) {
+      this.drainLock = this.drainQueue().finally(() => { this.drainLock = null; });
+    }
+  }
+
+  /** Run compaction + recall index update for a single teammate. */
+  private async runCompact(name: string): Promise<void> {
+    const teammateDir = join(this.teammatesDir, name);
+    const spinner = ora({ text: `Compacting ${name}...`, color: "cyan" }).start();
+    try {
+      const result = await compactEpisodic(teammateDir, name);
+
+      const parts: string[] = [];
+      if (result.weekliesCreated.length > 0) {
+        parts.push(`${result.weekliesCreated.length} weekly summaries created`);
+      }
+      if (result.monthliesCreated.length > 0) {
+        parts.push(`${result.monthliesCreated.length} monthly summaries created`);
+      }
+      if (result.dailiesRemoved.length > 0) {
+        parts.push(`${result.dailiesRemoved.length} daily logs compacted`);
+      }
+      if (result.weekliesRemoved.length > 0) {
+        parts.push(`${result.weekliesRemoved.length} old weekly summaries archived`);
       }
 
-      const spinner = ora({ text: `Compacting ${name}...`, color: "cyan" }).start();
+      if (parts.length === 0) {
+        spinner.info(`${name}: nothing to compact`);
+      } else {
+        spinner.succeed(`${name}: ${parts.join(", ")}`);
+      }
+
+      // Trigger recall sync if installed
       try {
-        const result = await compactEpisodic(teammateDir, name);
+        const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+        if (svcJson && "recall" in svcJson) {
+          const syncSpinner = ora({ text: `Syncing ${name} index...`, color: "cyan" }).start();
+          await execAsync(`teammates-recall sync --dir "${this.teammatesDir}"`);
+          syncSpinner.succeed(`${name}: index synced`);
+        }
+      } catch { /* recall not installed or sync failed — non-fatal */ }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      spinner.fail(`${name}: ${msg}`);
+    }
+  }
 
-        const parts: string[] = [];
-        if (result.weekliesCreated.length > 0) {
-          parts.push(`${result.weekliesCreated.length} weekly summaries created`);
-        }
-        if (result.monthliesCreated.length > 0) {
-          parts.push(`${result.monthliesCreated.length} monthly summaries created`);
-        }
-        if (result.dailiesRemoved.length > 0) {
-          parts.push(`${result.dailiesRemoved.length} daily logs compacted`);
-        }
-        if (result.weekliesRemoved.length > 0) {
-          parts.push(`${result.weekliesRemoved.length} old weekly summaries archived`);
-        }
+  /**
+   * Background startup maintenance:
+   * 1. Scan all teammates for daily logs older than a week → compact them
+   * 2. Sync recall indexes if recall is installed
+   */
+  private async startupMaintenance(): Promise<void> {
+    const teammates = this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
+    if (teammates.length === 0) return;
 
-        if (parts.length === 0) {
-          spinner.info(`${name}: nothing to compact`);
-        } else {
-          spinner.succeed(`${name}: ${parts.join(", ")}`);
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        spinner.fail(`${name}: ${msg}`);
+    // Check if recall is installed
+    let recallInstalled = false;
+    try {
+      const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+      recallInstalled = !!(svcJson && "recall" in svcJson);
+    } catch { /* no services.json */ }
+
+    // 1. Check each teammate for stale daily logs (older than 7 days)
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const cutoff = oneWeekAgo.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    const needsCompact: string[] = [];
+    for (const name of teammates) {
+      const memoryDir = join(this.teammatesDir, name, "memory");
+      try {
+        const entries = await readdir(memoryDir);
+        const hasStale = entries.some((e) => {
+          if (!e.endsWith(".md")) return false;
+          const stem = e.replace(".md", "");
+          return /^\d{4}-\d{2}-\d{2}$/.test(stem) && stem < cutoff;
+        });
+        if (hasStale) needsCompact.push(name);
+      } catch { /* no memory dir */ }
+    }
+
+    if (needsCompact.length > 0) {
+      console.log(
+        chalk.gray("  Compacting stale logs for ") +
+          chalk.cyan(needsCompact.map((n) => `@${n}`).join(", ")) +
+          chalk.gray("...")
+      );
+      for (const name of needsCompact) {
+        await this.runCompact(name);
       }
+    }
+
+    // 2. Sync recall indexes if installed
+    if (recallInstalled) {
+      try {
+        await execAsync(`teammates-recall sync --dir "${this.teammatesDir}"`);
+      } catch { /* sync failed — non-fatal */ }
     }
   }
 
