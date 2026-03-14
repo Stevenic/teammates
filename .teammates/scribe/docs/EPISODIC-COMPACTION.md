@@ -94,9 +94,9 @@ These are injected directly into every prompt by `adapter.ts`:
 |---------|--------|-----------|
 | SOUL.md | Direct injection | Identity, boundaries, ownership — always needed |
 | WISDOM.md | Direct injection | Distilled principles — always needed |
-| Last 3 daily logs | Direct injection | Immediate context about current work |
+| Last 7 daily logs | Direct injection | Immediate context — covers the full week before weekly compaction |
 
-Recall's job starts where direct injection ends — it fills the gap between "the last 3 days" and "everything else."
+Recall's job starts where direct injection ends — it fills the gap between "the last 7 days" and "everything else."
 
 ### Multi-Pass Retrieval Strategy
 
@@ -104,7 +104,7 @@ Recall should perform two retrieval passes per query, then merge results:
 
 #### Pass 1: Recency (always runs)
 
-Return the **last 2–3 weekly summaries** regardless of query relevance. This gives the agent a sense of "what's been happening lately" beyond the 3 daily logs already in context.
+Return the **last 2–3 weekly summaries** regardless of query relevance. This gives the agent a sense of "what's been happening lately" beyond the 7 daily logs already in context.
 
 - Recency pass uses **file date sorting**, not semantic similarity
 - Default: 2 most recent weekly summaries
@@ -157,7 +157,7 @@ Typed memories already have frontmatter (`name`, `description`, `type`). No chan
 adapter.ts builds prompt:
     ┌─ SOUL.md                          (always, direct)
     ├─ WISDOM.md                        (always, direct)
-    ├─ Last 3 daily logs                (always, direct)
+    ├─ Last 7 daily logs                (always, direct)
     ├─ Recency: 2–3 recent weeklies     (always, via recall)
     ├─ Semantic: relevant memories       (query-driven, via recall)
     └─ Task prompt
@@ -165,7 +165,7 @@ adapter.ts builds prompt:
 
 The open question is whether the recency pass should be done by recall (as a search mode) or by `adapter.ts` directly (just read the 2 most recent files from `memory/weekly/`). Doing it in recall keeps the adapter simple; doing it in adapter avoids a recall dependency for basic context.
 
-**Recommendation:** Do recency in `adapter.ts` (it's just reading 2 files by date), semantic in recall. This means adapter.ts loads: SOUL + WISDOM + 3 dailies + 2 weeklies. Recall handles everything else on-demand.
+**Recommendation:** Do recency in `adapter.ts` (it's just reading 2 files by date), semantic in recall. This means adapter.ts loads: SOUL + WISDOM + 7 dailies + 2 weeklies. Recall handles everything else on-demand.
 
 ## Compaction Triggers
 

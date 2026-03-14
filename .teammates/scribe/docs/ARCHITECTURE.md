@@ -70,7 +70,7 @@ cli.ts ─── parse command, tokenize ───▶ orchestrator.ts
                                             │
                                    hydrate prompt:
                                    • SOUL.md (identity)
-                                   • WISDOM.md + last 3 daily logs
+                                   • WISDOM.md + last 7 daily logs
                                    • roster (all teammates)
                                    • handoff context (if chained)
                                    • output protocol
