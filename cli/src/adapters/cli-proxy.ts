@@ -59,16 +59,19 @@ export const PRESETS: Record<string, AgentPreset> = {
   codex: {
     name: "codex",
     command: "codex",
-    buildArgs({ prompt }, teammate, options) {
-      const args = ["exec", prompt];
+    buildArgs(_ctx, teammate, options) {
+      const args = ["exec", "-"];
       if (teammate.cwd) args.push("-C", teammate.cwd);
       const sandbox = teammate.sandbox ?? options.defaultSandbox ?? "workspace-write";
       args.push("-s", sandbox);
       args.push("--full-auto");
+      args.push("--ephemeral");
       if (options.model) args.push("-m", options.model);
       return args;
     },
     env: { FORCE_COLOR: "1" },
+    stdinPrompt: true,
+    shell: true,
   },
 
   aider: {
@@ -175,7 +178,8 @@ export class CliProxyAdapter implements AgentAdapter {
             : "";
           parts.push(`- @${t.name}: ${t.role}${owns}`);
         }
-        parts.push("\nTo hand off, start your response with `TO: <teammate>` followed by `# <Subject>` and the task details.");
+        parts.push("\nTo hand off, include a fenced handoff block in your response:");
+        parts.push("```handoff\n@<teammate>\n<task details>\n```");
       }
       fullPrompt = parts.join("\n");
     }
@@ -392,43 +396,36 @@ function parseResult(teammateName: string, output: string, teammateNames: string
   const parsed = parseMessageProtocol(output, teammateName, teammateNames);
   if (parsed) return parsed;
 
-  // Legacy: try JSON protocol blocks for backward compatibility
-  const structured = parseLegacyJsonProtocol(output);
-  if (structured) {
-    return { ...structured, teammate: teammateName, rawOutput: output };
-  }
-
-  // Fallback: scrape what we can from freeform output
+  // Fallback: no structured output detected
   return {
     teammate: teammateName,
     success: true,
-    summary: extractSummary(output),
+    summary: "",
     changedFiles: parseChangedFiles(output),
-    handoff: parseHandoffEnvelope(output) ?? parseHandoffFromMention(teammateName, output, teammateNames, originalTask) ?? undefined,
+    handoffs: [],
     rawOutput: output,
   };
 }
 
 /**
- * Parse the TO: / # Subject message protocol.
+ * Parse the message protocol from agent output.
  *
- * Format:
- *   TO: <recipient>     (optional — defaults to "user")
- *   # <Subject line>
- *   <body>
+ * Detects two things:
+ *   1. ```handoff blocks — fenced code blocks with language "handoff"
+ *      containing @<teammate> on the first line and the task body below.
+ *   2. TO: / # Subject headers for message framing.
+ *
+ * The ```handoff block is the primary handoff signal and works reliably
+ * regardless of where it appears in the output.
  */
-function parseMessageProtocol(output: string, teammateName: string, teammateNames: string[]): TaskResult | null {
+function parseMessageProtocol(output: string, teammateName: string, _teammateNames: string[]): TaskResult | null {
   const lines = output.split("\n");
-  let recipient = "user";
-  let subjectLineIdx = -1;
 
-  // Look for TO: line (must be in the first few lines)
-  for (let i = 0; i < Math.min(lines.length, 5); i++) {
-    const toMatch = lines[i].match(/^TO:\s*(\S+)/i);
-    if (toMatch) {
-      recipient = toMatch[1].toLowerCase();
-      continue;
-    }
+  // Find # Subject heading
+  let subjectLineIdx = -1;
+  for (let i = 0; i < Math.min(lines.length, 10); i++) {
+    // Skip TO: lines
+    if (lines[i].match(/^TO:\s/i)) continue;
     const headingMatch = lines[i].match(/^#\s+(.+)/);
     if (headingMatch) {
       subjectLineIdx = i;
@@ -436,93 +433,50 @@ function parseMessageProtocol(output: string, teammateName: string, teammateName
     }
   }
 
-  // If no H1 heading found, try just the heading without TO:
-  if (subjectLineIdx < 0) {
-    for (let i = 0; i < Math.min(lines.length, 3); i++) {
-      const headingMatch = lines[i].match(/^#\s+(.+)/);
-      if (headingMatch) {
-        subjectLineIdx = i;
-        break;
-      }
-    }
-  }
+  // Find all ```handoff blocks
+  const handoffBlocks = findHandoffBlocks(output);
+  const handoffs: HandoffEnvelope[] = handoffBlocks.map((h) => ({
+    from: teammateName,
+    to: h.target,
+    task: h.task,
+  }));
 
-  if (subjectLineIdx < 0) return null;
+  // If no heading and no handoffs, can't parse
+  if (subjectLineIdx < 0 && handoffs.length === 0) return null;
 
-  const subject = lines[subjectLineIdx].replace(/^#\s+/, "").trim();
-
-  // Body is everything after the subject line
-  const body = lines.slice(subjectLineIdx + 1).join("\n").trim();
-
-  // Check if this is a handoff (TO: is a teammate, not "user")
-  const isHandoff = recipient !== "user" && teammateNames.includes(recipient);
-
-  if (isHandoff) {
-    return {
-      teammate: teammateName,
-      success: true,
-      summary: subject,
-      changedFiles: parseChangedFiles(output),
-      rawOutput: output,
-      handoff: {
-        from: teammateName,
-        to: recipient,
-        task: body || subject,
-        changedFiles: parseChangedFiles(output),
-        context: subject,
-      },
-    };
-  }
+  const subject = subjectLineIdx >= 0
+    ? lines[subjectLineIdx].replace(/^#\s+/, "").trim()
+    : "";
 
   return {
     teammate: teammateName,
     success: true,
     summary: subject,
     changedFiles: parseChangedFiles(output),
+    handoffs,
     rawOutput: output,
   };
 }
 
 /**
- * Legacy: parse JSON protocol blocks for backward compatibility.
+ * Find a ```handoff fenced code block in the output.
+ *
+ * Format:
+ *   ```handoff
+ *   @<teammate>
+ *   <task description>
+ *   ```
+ *
+ * Returns the target teammate name and task body, or null.
  */
-function parseLegacyJsonProtocol(output: string): Omit<TaskResult, "teammate" | "rawOutput"> | null {
-  const jsonBlocks = [...output.matchAll(/```json\s*\n([\s\S]*?)```/g)];
-  for (let i = jsonBlocks.length - 1; i >= 0; i--) {
-    const block = jsonBlocks[i][1].trim();
-    try {
-      const parsed = JSON.parse(block);
-
-      if (parsed.result) {
-        return {
-          success: true,
-          summary: parsed.result.subject ?? parsed.result.summary ?? "",
-          changedFiles: parsed.result.changedFiles ?? parsed.result.changed_files ?? [],
-        };
-      }
-
-      if (parsed.handoff && parsed.handoff.to && parsed.handoff.task) {
-        const h = parsed.handoff;
-        return {
-          success: true,
-          summary: h.context ?? h.task,
-          changedFiles: h.changedFiles ?? h.changed_files ?? [],
-          handoff: {
-            from: h.from ?? "",
-            to: h.to,
-            task: h.task,
-            changedFiles: h.changedFiles ?? h.changed_files,
-            acceptanceCriteria: h.acceptanceCriteria ?? h.acceptance_criteria,
-            openQuestions: h.openQuestions ?? h.open_questions,
-            context: h.context,
-          },
-        };
-      }
-    } catch {
-      // Not valid JSON
-    }
+function findHandoffBlocks(output: string): { target: string; task: string }[] {
+  const results: { target: string; task: string }[] = [];
+  const pattern = /```handoff\s*\n@(\w+)\s*\n([\s\S]*?)```/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(output)) !== null) {
+    results.push({ target: match[1].toLowerCase(), task: match[2].trim() });
   }
-  return null;
+  return results;
 }
 
 /** Extract file paths from agent output. */
@@ -542,90 +496,4 @@ function parseChangedFiles(output: string): string[] {
   }
 
   return Array.from(files);
-}
-
-/**
- * Look for a JSON handoff envelope in the output.
- * Agents request handoffs by including a fenced JSON block:
- *
- * ```json
- * { "handoff": { "to": "tester", "task": "...", ... } }
- * ```
- */
-function parseHandoffEnvelope(output: string): HandoffEnvelope | null {
-  const jsonBlocks = output.matchAll(/```json\s*\n([\s\S]*?)```/g);
-
-  for (const match of jsonBlocks) {
-    const block = match[1].trim();
-    if (!block.includes('"handoff"') && !block.includes('"to"')) continue;
-
-    try {
-      const parsed = JSON.parse(block);
-      const envelope = parsed.handoff ?? parsed;
-
-      if (envelope.to && envelope.task) {
-        return {
-          from: envelope.from ?? "",
-          to: envelope.to,
-          task: envelope.task,
-          changedFiles: envelope.changedFiles ?? envelope.changed_files,
-          acceptanceCriteria:
-            envelope.acceptanceCriteria ?? envelope.acceptance_criteria,
-          openQuestions: envelope.openQuestions ?? envelope.open_questions,
-          context: envelope.context,
-        };
-      }
-    } catch {
-      // Not valid JSON, skip
-    }
-  }
-
-  return null;
-}
-
-/**
- * Detect handoff intent from plain-text @mentions in the agent's response.
- * Catches cases like "This is in @beacon's domain. Let me hand it off."
- * where the agent didn't produce the structured JSON block.
- */
-/**
- * Detect handoff intent from plain-text @mentions in the agent's response.
- * Catches cases like "This is in @beacon's domain. Let me hand it off."
- * where the agent didn't produce the structured JSON block.
- */
-function parseHandoffFromMention(
-  fromTeammate: string,
-  output: string,
-  teammateNames: string[],
-  originalTask?: string
-): HandoffEnvelope | null {
-  if (teammateNames.length === 0) return null;
-
-  // Look for @teammate mentions (excluding the agent's own name)
-  const others = teammateNames.filter((n) => n !== fromTeammate);
-  if (others.length === 0) return null;
-
-  // Match @name patterns — require handoff-like language nearby
-  const handoffPatterns = /\bhand(?:ing)?\s*(?:it\s+)?off\b|\bdelegate\b|\broute\b|\bpass(?:ing)?\s+(?:it\s+)?(?:to|along)\b|\bbelong(?:s)?\s+to\b|\b(?:is\s+in)\s+@\w+'?s?\s+domain\b/i;
-
-  for (const name of others) {
-    const mentionPattern = new RegExp(`@${name}\\b`, "i");
-    if (mentionPattern.test(output) && handoffPatterns.test(output)) {
-      return {
-        from: fromTeammate,
-        to: name,
-        task: originalTask || output.slice(0, 200).trim(),
-        context: output.replace(/```json[\s\S]*?```/g, "").trim().slice(0, 500),
-      };
-    }
-  }
-
-  return null;
-}
-
-/** Extract a summary from agent output. Returns empty if no explicit summary found. */
-function extractSummary(_output: string): string {
-  // The new protocol uses # Subject headings — parsed by parseMessageProtocol.
-  // This fallback intentionally returns empty to avoid promoting random text as the subject.
-  return "";
 }

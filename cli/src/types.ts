@@ -70,8 +70,8 @@ export interface TaskResult {
   summary: string;
   /** Files that were changed */
   changedFiles: string[];
-  /** Optional handoff request to another teammate */
-  handoff?: HandoffEnvelope;
+  /** Handoff requests to other teammates */
+  handoffs: HandoffEnvelope[];
   /** Raw output from the agent */
   rawOutput?: string;
 }
@@ -82,8 +82,6 @@ export interface TaskAssignment {
   teammate: string;
   /** Task description / prompt */
   task: string;
-  /** Optional handoff envelope if this came from another teammate */
-  handoff?: HandoffEnvelope;
   /** Extra context to include in the prompt */
   extraContext?: string;
 }
@@ -92,6 +90,4 @@ export interface TaskAssignment {
 export type OrchestratorEvent =
   | { type: "task_assigned"; assignment: TaskAssignment }
   | { type: "task_completed"; result: TaskResult }
-  | { type: "handoff_initiated"; envelope: HandoffEnvelope }
-  | { type: "handoff_completed"; envelope: HandoffEnvelope; result: TaskResult }
   | { type: "error"; teammate: string; error: string };

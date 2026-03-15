@@ -35,8 +35,8 @@ describe("buildTeammatePrompt", () => {
   it("includes output protocol", () => {
     const prompt = buildTeammatePrompt(makeConfig(), "task");
     expect(prompt).toContain("## Output Protocol");
-    expect(prompt).toContain('"result"');
-    expect(prompt).toContain('"handoff"');
+    expect(prompt).toContain("TO: user");
+    expect(prompt).toContain("```handoff");
   });
 
   it("includes memory updates section", () => {

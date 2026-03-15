@@ -30,6 +30,7 @@ export class EchoAdapter implements AgentAdapter {
       success: true,
       summary: `[echo] ${teammate.name} received task (${prompt.length} chars)`,
       changedFiles: [],
+      handoffs: [],
       rawOutput: fullPrompt,
     };
   }

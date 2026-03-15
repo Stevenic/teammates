@@ -108,6 +108,9 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `cli/src/**` — All CLI TypeScript source (REPL, orchestrator, adapters, registry, types)
 - `cli/package.json` — CLI package manifest and dependencies
 - `cli/tsconfig.json` — CLI TypeScript configuration
+- `consolonia/src/**` — Consolonia terminal UI rendering source
+- `consolonia/package.json` — Consolonia package manifest and dependencies
+- `consolonia/tsconfig.json` — Consolonia TypeScript configuration
 
 ### Secondary
 

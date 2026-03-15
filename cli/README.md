@@ -87,7 +87,16 @@ Queued tasks drain one at a time. If a handoff requires approval, the queue paus
 
 ## Handoffs
 
-When a teammate finishes a task, it may propose a handoff to another teammate. The CLI presents a menu:
+Teammates propose handoffs by including fenced handoff blocks in their response:
+
+````
+```handoff
+@beacon
+Update the search index to support the new memory format
+```
+````
+
+Multiple handoff blocks can appear anywhere in a single response. The CLI detects them automatically and presents each one with an approval menu:
 
 ```
   1) Approve          — execute the handoff
@@ -95,7 +104,7 @@ When a teammate finishes a task, it may propose a handoff to another teammate. T
   3) Reject           — decline the handoff
 ```
 
-Handoff details (task, changed files, acceptance criteria, open questions) are displayed before you choose.
+Each handoff is approved individually — there is no automatic chaining.
 
 ## Conversation History
 
@@ -120,7 +129,7 @@ The CLI uses a generic adapter interface to support any coding agent. Each adapt
 2. The prompt is written to a temp file
 3. The agent CLI is spawned with the prompt
 4. stdout/stderr are captured for result parsing
-5. The output is parsed for structured JSON result/handoff blocks
+5. The output is parsed for embedded handoff blocks
 6. Temp files are cleaned up
 
 ### Writing a Custom Adapter
@@ -155,7 +164,7 @@ Or add a preset to `cli-proxy.ts` for any CLI agent that accepts a prompt and ru
 ```
 cli/src/
   cli.ts            # Entry point, REPL, slash commands, wordwheel UI
-  orchestrator.ts   # Task routing, handoff chains, session management
+  orchestrator.ts   # Task routing, session management
   adapter.ts        # AgentAdapter interface, prompt builder, handoff formatting
   registry.ts       # Discovers teammates from .teammates/, loads SOUL.md + memory
   types.ts          # Core types (TeammateConfig, TaskResult, HandoffEnvelope)
@@ -167,19 +176,16 @@ cli/src/
 
 ### Output Protocol
 
-Agents are instructed to end their response with a structured JSON block:
+Agents format their response as a markdown message with a `# Subject` line. Handoffs are embedded as fenced code blocks:
 
-```json
-{ "result": { "summary": "...", "changedFiles": ["..."] } }
+````
+```handoff
+@<teammate>
+<task description with full context>
 ```
+````
 
-Or for handoffs:
-
-```json
-{ "handoff": { "to": "teammate", "task": "...", "context": "..." } }
-```
-
-The CLI parses the last JSON fence in the output. If no structured block is found, it falls back to scraping file paths and summaries from freeform output.
+The CLI parses all `` ```handoff `` fences in the output. Multiple handoff blocks are supported in a single response. Each is presented to the user for individual approval.
 
 ## Testing
 
@@ -201,7 +207,7 @@ Tests use [Vitest](https://vitest.dev/) and cover the core modules:
 | File | Covers |
 |---|---|
 | `src/adapter.test.ts` | `buildTeammatePrompt`, `formatHandoffContext` |
-| `src/orchestrator.test.ts` | Task routing, assignment, handoff chains, cycle detection, reset |
+| `src/orchestrator.test.ts` | Task routing, assignment, reset |
 | `src/registry.test.ts` | Teammate discovery, SOUL.md parsing (role, ownership), daily logs |
 | `src/adapters/echo.test.ts` | Echo adapter session and task execution |
 

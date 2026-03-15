@@ -361,6 +361,15 @@ export class ChatView extends Control {
     return this._feedLines.length;
   }
 
+  /** Update the content of an existing feed line by index. Also removes its action if any. */
+  updateFeedLine(index: number, content: StyledLine): void {
+    if (index < 0 || index >= this._feedLines.length) return;
+    this._feedLines[index].lines = [content];
+    this._feedActions.delete(index);
+    if (this._hoveredAction === index) this._hoveredAction = -1;
+    this.invalidate();
+  }
+
   /** Scroll the feed to the bottom. */
   scrollToBottom(): void {
     this._autoScrollToBottom();

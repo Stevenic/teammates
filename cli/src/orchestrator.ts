@@ -27,27 +27,22 @@ export interface OrchestratorConfig {
 }
 
 export interface TeammateStatus {
-  state: "idle" | "working" | "pending-handoff";
+  state: "idle" | "working";
   lastSummary?: string;
   lastChangedFiles?: string[];
   lastTimestamp?: Date;
-  pendingHandoff?: HandoffEnvelope;
 }
 
 export class Orchestrator {
   private registry: Registry;
   private adapter: AgentAdapter;
-  private sessions: Map<string, string> = new Map(); // teammate -> sessionId
+  private sessions: Map<string, string> = new Map();
   private statuses: Map<string, TeammateStatus> = new Map();
-  private maxHandoffDepth: number;
   private onEvent: (event: OrchestratorEvent) => void;
-  /** When true, handoffs require explicit /approve */
-  public requireApproval = true;
 
   constructor(config: OrchestratorConfig) {
     this.registry = new Registry(config.teammatesDir);
     this.adapter = config.adapter;
-    this.maxHandoffDepth = config.maxHandoffDepth ?? 5;
     this.onEvent = config.onEvent ?? (() => {});
   }
 
@@ -69,25 +64,6 @@ export class Orchestrator {
     return this.statuses;
   }
 
-  /** Get the pending handoff if any teammate has one */
-  getPendingHandoff(): HandoffEnvelope | null {
-    for (const [, status] of this.statuses) {
-      if (status.state === "pending-handoff" && status.pendingHandoff) {
-        return status.pendingHandoff;
-      }
-    }
-    return null;
-  }
-
-  /** Clear a pending handoff (on reject) */
-  clearPendingHandoff(teammate: string): void {
-    const status = this.statuses.get(teammate);
-    if (status && status.state === "pending-handoff") {
-      status.state = "idle";
-      status.pendingHandoff = undefined;
-    }
-  }
-
   /** List available teammates */
   listTeammates(): string[] {
     return this.registry.list();
@@ -102,13 +78,9 @@ export class Orchestrator {
    * Assign a task to a specific teammate and execute it.
    * If the result contains a handoff, follows the chain automatically.
    */
-  async assign(assignment: TaskAssignment, depth = 0, visited?: Set<string>): Promise<TaskResult> {
-    // Normalize: strip leading @ from teammate names (agents may use @mentions)
+  async assign(assignment: TaskAssignment): Promise<TaskResult> {
+    // Normalize: strip leading @ from teammate names
     assignment.teammate = assignment.teammate.replace(/^@/, "");
-    if (assignment.handoff) {
-      assignment.handoff.to = assignment.handoff.to.replace(/^@/, "");
-      assignment.handoff.from = assignment.handoff.from.replace(/^@/, "");
-    }
     const teammate = this.registry.get(assignment.teammate);
     if (!teammate) {
       const error = `Unknown teammate: ${assignment.teammate}`;
@@ -118,27 +90,11 @@ export class Orchestrator {
         success: false,
         summary: error,
         changedFiles: [],
+        handoffs: [],
       };
     }
-
-    // ── Handoff cycle detection ──────────────────────────────────
-    const chain = visited ?? new Set<string>();
-    if (chain.has(assignment.teammate)) {
-      const cycle = [...chain, assignment.teammate].join(" → ");
-      const error = `Handoff cycle detected: ${cycle}`;
-      this.onEvent({ type: "error", teammate: assignment.teammate, error });
-      return {
-        teammate: assignment.teammate,
-        success: false,
-        summary: error,
-        changedFiles: [],
-      };
-    }
-    chain.add(assignment.teammate);
 
     this.onEvent({ type: "task_assigned", assignment });
-
-    // Update status
     this.statuses.set(assignment.teammate, { state: "working" });
 
     // Get or create session
@@ -148,12 +104,8 @@ export class Orchestrator {
       this.sessions.set(assignment.teammate, sessionId);
     }
 
-    // Build prompt with handoff context if present
+    // Build prompt
     let prompt = assignment.task;
-    if (assignment.handoff) {
-      const handoffCtx = formatHandoffContext(assignment.handoff);
-      prompt = `${handoffCtx}\n\n---\n\n${prompt}`;
-    }
     if (assignment.extraContext) {
       prompt = `${assignment.extraContext}\n\n---\n\n${prompt}`;
     }
@@ -162,46 +114,14 @@ export class Orchestrator {
     const result = await this.adapter.executeTask(sessionId, teammate, prompt);
     this.onEvent({ type: "task_completed", result });
 
-    // Update status with result
-    const newStatus: TeammateStatus = {
+    // Update status
+    this.statuses.set(assignment.teammate, {
       state: "idle",
       lastSummary: result.summary,
       lastChangedFiles: result.changedFiles,
       lastTimestamp: new Date(),
-    };
+    });
 
-    // Handle handoff
-    if (result.handoff && depth < this.maxHandoffDepth) {
-      this.onEvent({ type: "handoff_initiated", envelope: result.handoff });
-
-      if (this.requireApproval) {
-        // Park the handoff — user must /approve
-        newStatus.state = "pending-handoff";
-        newStatus.pendingHandoff = result.handoff;
-        this.statuses.set(assignment.teammate, newStatus);
-        return result;
-      }
-
-      // Auto-follow handoff
-      this.statuses.set(assignment.teammate, newStatus);
-
-      const nextAssignment: TaskAssignment = {
-        teammate: result.handoff.to,
-        task: result.handoff.task,
-        handoff: result.handoff,
-      };
-
-      const handoffResult = await this.assign(nextAssignment, depth + 1, chain);
-      this.onEvent({
-        type: "handoff_completed",
-        envelope: result.handoff,
-        result: handoffResult,
-      });
-
-      return handoffResult;
-    }
-
-    this.statuses.set(assignment.teammate, newStatus);
     return result;
   }
 

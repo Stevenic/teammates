@@ -27,6 +27,7 @@ function makeMockAdapter(results?: Map<string, TaskResult>): AgentAdapter {
         success: true,
         summary: `${t.name} completed task`,
         changedFiles: [],
+        handoffs: [],
       };
     }),
     destroySession: vi.fn(async () => {}),
@@ -161,105 +162,25 @@ describe("Orchestrator.assign", () => {
 });
 
 describe("Orchestrator handoffs", () => {
-  it("parks handoff when requireApproval is true", async () => {
+  it("returns handoffs in the result for CLI to handle", async () => {
     const results = new Map<string, TaskResult>();
     results.set("beacon", {
       teammate: "beacon",
       success: true,
       summary: "done",
       changedFiles: [],
-      handoff: { from: "beacon", to: "scribe", task: "update docs" },
+      handoffs: [{ from: "beacon", to: "scribe", task: "update docs" }],
     });
     const adapter = makeMockAdapter(results);
     const { orch } = createOrchestrator(
       [makeTeammate("beacon"), makeTeammate("scribe")],
       adapter
     );
-    orch.requireApproval = true;
-    await orch.assign({ teammate: "beacon", task: "do stuff" });
-    expect(orch.getStatus("beacon")?.state).toBe("pending-handoff");
-    expect(orch.getPendingHandoff()?.to).toBe("scribe");
-  });
-
-  it("auto-follows handoff when requireApproval is false", async () => {
-    const results = new Map<string, TaskResult>();
-    results.set("beacon", {
-      teammate: "beacon",
-      success: true,
-      summary: "done",
-      changedFiles: [],
-      handoff: { from: "beacon", to: "scribe", task: "update docs" },
-    });
-    const adapter = makeMockAdapter(results);
-    const { orch } = createOrchestrator(
-      [makeTeammate("beacon"), makeTeammate("scribe")],
-      adapter
-    );
-    orch.requireApproval = false;
     const result = await orch.assign({ teammate: "beacon", task: "do stuff" });
-    // Final result should be from scribe (the handoff target)
-    expect(result.teammate).toBe("scribe");
-  });
-
-  it("detects handoff cycles", async () => {
-    const results = new Map<string, TaskResult>();
-    results.set("beacon", {
-      teammate: "beacon",
-      success: true,
-      summary: "done",
-      changedFiles: [],
-      handoff: { from: "beacon", to: "scribe", task: "your turn" },
-    });
-    results.set("scribe", {
-      teammate: "scribe",
-      success: true,
-      summary: "done",
-      changedFiles: [],
-      handoff: { from: "scribe", to: "beacon", task: "back to you" },
-    });
-    const adapter = makeMockAdapter(results);
-    const { orch } = createOrchestrator(
-      [makeTeammate("beacon"), makeTeammate("scribe")],
-      adapter
-    );
-    orch.requireApproval = false;
-    const result = await orch.assign({ teammate: "beacon", task: "do stuff" });
-    expect(result.success).toBe(false);
-    expect(result.summary).toContain("cycle");
-  });
-
-  it("respects max handoff depth", async () => {
-    // Create a chain: a -> b -> c -> d -> e -> f (depth 5 should stop)
-    const teammates = ["a", "b", "c", "d", "e", "f"].map((n) => makeTeammate(n));
-    const results = new Map<string, TaskResult>();
-    for (let i = 0; i < 5; i++) {
-      const from = teammates[i].name;
-      const to = teammates[i + 1].name;
-      results.set(from, {
-        teammate: from,
-        success: true,
-        summary: "done",
-        changedFiles: [],
-        handoff: { from, to, task: "next" },
-      });
-    }
-    const adapter = makeMockAdapter(results);
-    const { orch } = createOrchestrator(teammates, adapter);
-    orch.requireApproval = false;
-    const result = await orch.assign({ teammate: "a", task: "start" });
-    // Should stop at max depth, returning result from the teammate at depth limit
-    expect(adapter.executeTask).toHaveBeenCalled();
-  });
-
-  it("clears pending handoff on reject", () => {
-    const { orch } = createOrchestrator([makeTeammate("beacon")]);
-    orch.getAllStatuses().set("beacon", {
-      state: "pending-handoff",
-      pendingHandoff: { from: "beacon", to: "scribe", task: "docs" },
-    });
-    orch.clearPendingHandoff("beacon");
+    expect(result.handoffs).toHaveLength(1);
+    expect(result.handoffs[0].to).toBe("scribe");
+    // Orchestrator doesn't auto-follow — status goes to idle
     expect(orch.getStatus("beacon")?.state).toBe("idle");
-    expect(orch.getStatus("beacon")?.pendingHandoff).toBeUndefined();
   });
 });
 

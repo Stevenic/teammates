@@ -525,6 +525,9 @@ class TeammatesREPL {
   private ctrlcPending = false;      // true after first Ctrl+C, waiting for second
   private ctrlcTimer: ReturnType<typeof setTimeout> | null = null;
   private lastCleanedOutput = "";    // last teammate output for clipboard copy
+  private autoApproveHandoffs = false;
+  /** Pending handoffs awaiting user approval. */
+  private pendingHandoffs: { id: string; envelope: HandoffEnvelope; approveIdx: number; rejectIdx: number }[] = [];
   private defaultFooter: StyledSpan | null = null; // cached default footer content
 
   // ── Animated status tracker ─────────────────────────────────────
@@ -637,7 +640,7 @@ class TeammatesREPL {
   /** Feed a line with the user message background, padded to full width. */
   private feedUserLine(spans: StyledSpan): void {
     if (!this.chatView) return;
-    const termW = process.stdout.columns || 80;
+    const termW = (process.stdout.columns || 80) - 1; // -1 for scrollbar
     // Calculate visible length of spans
     let len = 0;
     for (const seg of spans) len += seg.text.length;
@@ -650,7 +653,7 @@ class TeammatesREPL {
     if (this.chatView) {
       const bg = this._userBg;
       const t = theme();
-      const termW = process.stdout.columns || 80;
+      const termW = (process.stdout.columns || 80) - 1; // -1 for scrollbar
       // First line: "User: <text>" with accent label
       const firstLine = text.split("\n")[0];
       const label = "User: ";
@@ -748,6 +751,170 @@ class TeammatesREPL {
       (styledSpan as any).__brand = "StyledSpan";
       this.feedLine(styledSpan);
     }
+  }
+
+  /** Render handoff blocks with approve/reject actions. */
+  /** Helper to create a branded StyledSpan from segments. */
+  private makeSpan(...segs: { text: string; style: { fg?: Color } }[]): StyledSpan {
+    const s = segs as unknown as StyledSpan;
+    (s as any).__brand = "StyledSpan";
+    return s;
+  }
+
+  /** Word-wrap a string to fit within maxWidth. */
+  private wordWrap(text: string, maxWidth: number): string[] {
+    const words = text.split(" ");
+    const lines: string[] = [];
+    let current = "";
+    for (const word of words) {
+      if (current.length === 0) {
+        current = word;
+      } else if (current.length + 1 + word.length <= maxWidth) {
+        current += " " + word;
+      } else {
+        lines.push(current);
+        current = word;
+      }
+    }
+    if (current) lines.push(current);
+    return lines.length > 0 ? lines : [""];
+  }
+
+  private renderHandoffs(from: string, handoffs: HandoffEnvelope[]): void {
+    const t = theme();
+    const names = this.orchestrator.listTeammates();
+    const avail = (process.stdout.columns || 80) - 4; // -4 for "  │ " + " │"
+    const boxW = Math.max(40, Math.round(avail * 0.6));
+    const innerW = boxW - 4; // space inside │ _ content _ │
+
+    for (let i = 0; i < handoffs.length; i++) {
+      const h = handoffs[i];
+      const isValid = names.includes(h.to);
+      const handoffId = `handoff-${Date.now()}-${i}`;
+      const chrome = isValid ? t.accentDim : t.error;
+
+      // Top border with label
+      this.feedLine();
+      const label = ` handoff → @${h.to} `;
+      const topFill = Math.max(0, boxW - 2 - label.length);
+      this.feedLine(this.makeSpan(
+        { text: "  ┌" + label + "─".repeat(topFill) + "┐", style: { fg: chrome } },
+      ));
+
+      // Task body — word-wrap each paragraph line
+      for (const rawLine of h.task.split("\n")) {
+        const wrapped = rawLine.length === 0 ? [""] : this.wordWrap(rawLine, innerW);
+        for (const wl of wrapped) {
+          const pad = Math.max(0, innerW - wl.length);
+          this.feedLine(this.makeSpan(
+            { text: "  │ ", style: { fg: chrome } },
+            { text: wl + " ".repeat(pad), style: { fg: t.textMuted } },
+            { text: " │", style: { fg: chrome } },
+          ));
+        }
+      }
+
+      // Bottom border
+      this.feedLine(this.makeSpan(
+        { text: "  └" + "─".repeat(Math.max(0, boxW - 2)) + "┘", style: { fg: chrome } },
+      ));
+
+      if (!isValid) {
+        this.feedLine(tp.error(`  ✖ Unknown teammate: @${h.to}`));
+      } else if (this.autoApproveHandoffs) {
+        this.taskQueue.push({ type: "agent", teammate: h.to, task: h.task });
+        this.feedLine(tp.muted("  automatically approved"));
+        this.kickDrain();
+      } else if (this.chatView) {
+        const approveIdx = this.chatView.feedLineCount;
+        this.chatView.appendAction(
+          `approve-${handoffId}`,
+          this.makeSpan({ text: "  [approve]", style: { fg: t.textDim } }),
+          this.makeSpan({ text: "  [approve]", style: { fg: t.accent } }),
+        );
+        const rejectIdx = this.chatView.feedLineCount;
+        this.chatView.appendAction(
+          `reject-${handoffId}`,
+          this.makeSpan({ text: "  [reject]", style: { fg: t.textDim } }),
+          this.makeSpan({ text: "  [reject]", style: { fg: t.accent } }),
+        );
+        this.pendingHandoffs.push({
+          id: handoffId,
+          envelope: h,
+          approveIdx,
+          rejectIdx,
+        });
+      }
+    }
+
+    // Bulk/always-approve actions
+    if (this.pendingHandoffs.length > 1 && this.chatView) {
+      this.feedLine();
+      this.chatView.appendAction("approve-all", this.makeSpan({ text: "  [approve all]", style: { fg: t.textDim } }), this.makeSpan({ text: "  [approve all]", style: { fg: t.accent } }));
+      this.chatView.appendAction("always-approve", this.makeSpan({ text: "  [always approve]", style: { fg: t.textDim } }), this.makeSpan({ text: "  [always approve]", style: { fg: t.accent } }));
+      this.chatView.appendAction("reject-all", this.makeSpan({ text: "  [reject all]", style: { fg: t.textDim } }), this.makeSpan({ text: "  [reject all]", style: { fg: t.accent } }));
+    } else if (this.pendingHandoffs.length === 1 && this.chatView) {
+      this.chatView.appendAction("always-approve", this.makeSpan({ text: "  [always approve]", style: { fg: t.textDim } }), this.makeSpan({ text: "  [always approve]", style: { fg: t.accent } }));
+    }
+
+    this.refreshView();
+  }
+
+  /** Handle handoff approve/reject actions. */
+  private handleHandoffAction(actionId: string): void {
+    const approveMatch = actionId.match(/^approve-(.+)$/);
+    if (approveMatch) {
+      const hId = approveMatch[1];
+      const idx = this.pendingHandoffs.findIndex((h) => h.id === hId);
+      if (idx >= 0 && this.chatView) {
+        const h = this.pendingHandoffs.splice(idx, 1)[0];
+        this.taskQueue.push({ type: "agent", teammate: h.envelope.to, task: h.envelope.task });
+        // Replace action lines in-place
+        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  approved", style: { fg: theme().success } }));
+        this.chatView.updateFeedLine(h.rejectIdx, "");
+        this.kickDrain();
+        this.refreshView();
+      }
+      return;
+    }
+
+    const rejectMatch = actionId.match(/^reject-(.+)$/);
+    if (rejectMatch) {
+      const hId = rejectMatch[1];
+      const idx = this.pendingHandoffs.findIndex((h) => h.id === hId);
+      if (idx >= 0 && this.chatView) {
+        const h = this.pendingHandoffs.splice(idx, 1)[0];
+        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  rejected", style: { fg: theme().textMuted } }));
+        this.chatView.updateFeedLine(h.rejectIdx, "");
+        this.refreshView();
+      }
+      return;
+    }
+  }
+
+  /** Handle bulk handoff actions. */
+  private handleBulkHandoff(action: string): void {
+    if (!this.chatView) return;
+    const t = theme();
+    const isApprove = action === "Approve all" || action === "Always approve";
+
+    if (action === "Always approve") {
+      this.autoApproveHandoffs = true;
+    }
+
+    for (const h of this.pendingHandoffs) {
+      if (isApprove) {
+        this.taskQueue.push({ type: "agent", teammate: h.envelope.to, task: h.envelope.task });
+        const label = action === "Always approve" ? "  automatically approved" : "  approved";
+        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: label, style: { fg: t.success } }));
+      } else {
+        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  rejected", style: { fg: t.textMuted } }));
+      }
+      this.chatView.updateFeedLine(h.rejectIdx, "");
+    }
+    this.pendingHandoffs = [];
+    if (isApprove) this.kickDrain();
+    this.refreshView();
   }
 
   /** Refresh the ChatView app if active. */
@@ -1563,6 +1730,14 @@ class TeammatesREPL {
     this.chatView.on("action", (id: string) => {
       if (id === "copy") {
         this.doCopy(this.lastCleanedOutput || undefined);
+      } else if (id === "approve-all") {
+        this.handleBulkHandoff("Approve all");
+      } else if (id === "always-approve") {
+        this.handleBulkHandoff("Always approve");
+      } else if (id === "reject-all") {
+        this.handleBulkHandoff("Reject all");
+      } else if (id.startsWith("approve-") || id.startsWith("reject-")) {
+        this.handleHandoffAction(id);
       }
     });
 
@@ -1629,17 +1804,6 @@ class TeammatesREPL {
     }).trim();
 
     if (!input) return;
-
-    // Handle pending handoff menu (1/2/3)
-    if (this.orchestrator.getPendingHandoff()) {
-      const handled = await this.handleHandoffChoice(input);
-      if (handled) {
-        this.refreshView();
-        return;
-      }
-      this.refreshView();
-      return;
-    }
 
     // Slash commands
     if (input.startsWith("/")) {
@@ -1866,11 +2030,12 @@ class TeammatesREPL {
         if (!this.chatView) this.input.deactivateAndErase();
 
         const raw = event.result.rawOutput ?? "";
-        // Strip protocol artifacts: TO: line, # Subject heading, trailing JSON blocks
+        // Strip protocol artifacts
         let cleaned = raw
-          .replace(/^TO:\s*\S+\s*\n/im, "")              // TO: line
-          .replace(/^#\s+.+\n*/m, "")                      // H1 subject heading
-          .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "") // trailing JSON
+          .replace(/^TO:\s*\S+\s*\n/im, "")
+          .replace(/^#\s+.+\n*/m, "")
+          .replace(/```handoff\s*\n@\w+\s*\n[\s\S]*?```/g, "")
+          .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
           .trim();
         const sizeKB = cleaned ? Buffer.byteLength(cleaned, "utf-8") / 1024 : 0;
 
@@ -1890,6 +2055,12 @@ class TeammatesREPL {
           this.feedMarkdown(cleaned);
         }
 
+        // Render handoffs
+        const handoffs = event.result.handoffs;
+        if (handoffs.length > 0) {
+          this.renderHandoffs(event.result.teammate, handoffs);
+        }
+
         // Clickable [copy] action after the response
         if (this.chatView && cleaned) {
           const t = theme();
@@ -1899,22 +2070,11 @@ class TeammatesREPL {
           (hoverCopy as any).__brand = "StyledSpan";
           this.chatView.appendAction("copy", normalCopy, hoverCopy);
         }
-        this.feedLine(); // single blank line after response
+        this.feedLine();
 
         this.showPrompt();
         break;
       }
-
-      case "handoff_initiated":
-        if (!this.chatView) this.input.deactivateAndErase();
-        this.feedLine(concat(tp.warning("  Handoff: "), tp.bold(event.envelope.from), tp.warning(" → "), tp.bold(event.envelope.to)));
-        this.printHandoffDetails(event.envelope);
-        this.showPrompt();
-        break;
-
-      case "handoff_completed":
-        // Already handled via task_completed
-        break;
 
       case "error":
         this.activeTasks.delete(event.teammate);
@@ -1923,97 +2083,6 @@ class TeammatesREPL {
         this.feedLine(tp.error(`  ✖ ${event.teammate}: ${event.error}`));
         this.showPrompt();
         break;
-    }
-  }
-
-  private printHandoffDetails(envelope: HandoffEnvelope): void {
-    const lines: string[] = [];
-    lines.push("Task: " + envelope.task);
-    if (envelope.changedFiles?.length) {
-      lines.push("Files: " + envelope.changedFiles.join(", "));
-    }
-    if (envelope.context) {
-      lines.push("Context: " + envelope.context);
-    }
-    if (envelope.acceptanceCriteria?.length) {
-      lines.push("Criteria:");
-      for (const c of envelope.acceptanceCriteria) {
-        lines.push("  • " + c);
-      }
-    }
-    if (envelope.openQuestions?.length) {
-      lines.push("Questions:");
-      for (const q of envelope.openQuestions) {
-        lines.push("  ? " + q);
-      }
-    }
-
-    const maxContent = Math.max(...lines.map((l) => l.length));
-    const innerWidth = Math.max(maxContent + 2, 40);
-    const h = "─".repeat(innerWidth);
-
-    this.feedLine(tp.muted("  ┌" + h + "┐"));
-    for (const line of lines) {
-      const colonIdx = line.indexOf(": ");
-      const padded = " " + line + " ".repeat(Math.max(0, innerWidth - line.length - 2)) + " ";
-      if (colonIdx >= 0) {
-        const label = line.slice(0, colonIdx + 2);
-        const value = line.slice(colonIdx + 2);
-        const trailing = " ".repeat(Math.max(0, innerWidth - line.length - 2)) + " ";
-        this.feedLine(concat(tp.muted("  │ "), tp.text(label), pen(value + trailing), tp.muted("│")));
-      } else {
-        this.feedLine(concat(tp.muted("  │"), pen(padded), tp.muted("│")));
-      }
-    }
-    this.feedLine(tp.muted("  └" + h + "┘"));
-    this.feedLine();
-    this.feedLine(concat(tp.accent("  1"), tp.muted(") Approve")));
-    this.feedLine(concat(tp.accent("  2"), tp.muted(") Always approve handoffs")));
-    this.feedLine(concat(tp.accent("  3"), tp.muted(") Reject")));
-    this.feedLine();
-    this.refreshView();
-  }
-
-  /** Handle the numbered handoff menu choice. */
-  private async handleHandoffChoice(choice: string): Promise<boolean> {
-    const pending = this.orchestrator.getPendingHandoff();
-    if (!pending) return false;
-
-    switch (choice) {
-      case "1": {
-        this.orchestrator.clearPendingHandoff(pending.from);
-    
-        const result = await this.orchestrator.assign({
-          teammate: pending.to,
-          task: pending.task,
-          handoff: pending,
-        });
-    
-        this.storeResult(result);
-        return true;
-      }
-      case "2": {
-        this.orchestrator.requireApproval = false;
-        this.orchestrator.clearPendingHandoff(pending.from);
-        this.feedLine(tp.muted("  Auto-approving all future handoffs."));
-    
-        const result = await this.orchestrator.assign({
-          teammate: pending.to,
-          task: pending.task,
-          handoff: pending,
-        });
-    
-        this.storeResult(result);
-        return true;
-      }
-      case "3": {
-        this.orchestrator.clearPendingHandoff(pending.from);
-        this.feedLine(concat(tp.muted("  Rejected handoff from "), tp.bold(pending.from), tp.muted(" to "), tp.bold(pending.to)));
-        this.refreshView();
-        return true;
-      }
-      default:
-        return false;
     }
   }
 
@@ -2033,10 +2102,6 @@ class TeammatesREPL {
     const result = await this.orchestrator.assign({ teammate, task, extraContext: extraContext || undefined });
 
     this.storeResult(result);
-
-    if (result.handoff && this.orchestrator.requireApproval) {
-      // Handoff is pending — user was already prompted
-    }
     this.refreshView();
   }
 
@@ -2075,7 +2140,6 @@ class TeammatesREPL {
       // Teammate name + state
       const stateLabel = active ? "working" : status.state;
       const stateColor = stateLabel === "working" ? tp.info(` (${stateLabel})`)
-        : stateLabel === "pending-handoff" ? tp.warning(` (${stateLabel})`)
         : tp.muted(` (${stateLabel})`);
       this.feedLine(concat(tp.accent(`  @${name}`), stateColor));
 
@@ -2197,38 +2261,31 @@ class TeammatesREPL {
   /** Drain tasks for a single agent — runs in parallel with other agents. */
   private async drainAgentQueue(agent: string): Promise<void> {
     while (true) {
-      // Find next task for this agent
       const idx = this.taskQueue.findIndex((e) => e.teammate === agent);
       if (idx < 0) break;
-
-      // If a handoff is pending, pause until it's resolved
-      if (this.orchestrator.getPendingHandoff()) {
-        await new Promise<void>((resolve) => {
-          const check = () => {
-            if (!this.orchestrator.getPendingHandoff()) {
-              resolve();
-            } else {
-              setTimeout(check, 500);
-            }
-          };
-          setTimeout(check, 500);
-        });
-        continue;
-      }
 
       const entry = this.taskQueue.splice(idx, 1)[0];
       this.agentActive.set(agent, entry);
 
-      if (entry.type === "compact") {
-        await this.runCompact(entry.teammate);
-      } else {
-        const extraContext = this.buildConversationContext();
-        const result = await this.orchestrator.assign({
-          teammate: entry.teammate,
-          task: entry.task,
-          extraContext: extraContext || undefined,
-        });
-        this.storeResult(result);
+      try {
+        if (entry.type === "compact") {
+          await this.runCompact(entry.teammate);
+        } else {
+          const extraContext = this.buildConversationContext();
+          const result = await this.orchestrator.assign({
+            teammate: entry.teammate,
+            task: entry.task,
+            extraContext: extraContext || undefined,
+          });
+          this.storeResult(result);
+        }
+      } catch (err: any) {
+        // Handle spawn failures, network errors, etc. gracefully
+        this.activeTasks.delete(agent);
+        if (this.activeTasks.size === 0) this.stopStatusAnimation();
+        const msg = err?.message ?? String(err);
+        this.feedLine(tp.error(`  ✖ @${agent}: ${msg}`));
+        this.refreshView();
       }
 
       this.agentActive.delete(agent);

@@ -178,23 +178,28 @@ These files are your persistent memory. Without them, your next session starts f
   parts.push(`Your response is a message. Format it as:
 
 \`\`\`
-TO: <recipient>
+TO: user
 # <Subject line>
 
 <Body — full markdown response>
 \`\`\`
 
-**Recipients:**
-- \`TO: user\` — respond directly to the user (default if omitted)
-- \`TO: <teammate>\` — hand off to another teammate (e.g. \`TO: beacon\`)
+**Handoffs:** To hand off work to a teammate, include a fenced handoff block anywhere in your response:
+
+\`\`\`
+\`\`\`handoff
+@<teammate>
+<task description — what you need them to do, with full context>
+\`\`\`
+\`\`\`
 
 **Rules:**
 - The \`# Subject\` line is REQUIRED — it becomes the message title.
 - Always write a substantive body. Never return just the subject.
 - Use markdown: headings, lists, code blocks, bold, etc.
-- A handoff is just a message addressed to a teammate instead of the user. Describe what you need them to do in the body.
-- Only hand off to teammates listed in "Your Team" above.
 - Do as much work as you can before handing off.
+- Only hand off to teammates listed in "Your Team" above.
+- The handoff block can appear anywhere in your response — it will be detected automatically.
 `);
   parts.push("\n---\n");
 
