@@ -175,10 +175,7 @@ export class CliProxyAdapter implements AgentAdapter {
             : "";
           parts.push(`- @${t.name}: ${t.role}${owns}`);
         }
-        parts.push("\nTo hand off, end your response with:");
-        parts.push("```json");
-        parts.push('{ "handoff": { "to": "<teammate>", "task": "<what you need them to do>", "context": "<any context>" } }');
-        parts.push("```");
+        parts.push("\nTo hand off, start your response with `TO: <teammate>` followed by `# <Subject>` and the task details.");
       }
       fullPrompt = parts.join("\n");
     }
@@ -391,8 +388,12 @@ export class CliProxyAdapter implements AgentAdapter {
 // ─── Output parsing (shared across all agents) ─────────────────────
 
 function parseResult(teammateName: string, output: string, teammateNames: string[] = [], originalTask?: string): TaskResult {
-  // Try to parse the structured JSON block the agent was asked to produce
-  const structured = parseStructuredOutput(output);
+  // Parse the TO: / # Subject protocol
+  const parsed = parseMessageProtocol(output, teammateName, teammateNames);
+  if (parsed) return parsed;
+
+  // Legacy: try JSON protocol blocks for backward compatibility
+  const structured = parseLegacyJsonProtocol(output);
   if (structured) {
     return { ...structured, teammate: teammateName, rawOutput: output };
   }
@@ -409,12 +410,84 @@ function parseResult(teammateName: string, output: string, teammateNames: string
 }
 
 /**
- * Parse the structured JSON block from the output protocol.
- * Looks for either { "result": ... } or { "handoff": ... }.
+ * Parse the TO: / # Subject message protocol.
+ *
+ * Format:
+ *   TO: <recipient>     (optional — defaults to "user")
+ *   # <Subject line>
+ *   <body>
  */
-function parseStructuredOutput(output: string): Omit<TaskResult, "teammate" | "rawOutput"> | null {
+function parseMessageProtocol(output: string, teammateName: string, teammateNames: string[]): TaskResult | null {
+  const lines = output.split("\n");
+  let recipient = "user";
+  let subjectLineIdx = -1;
+
+  // Look for TO: line (must be in the first few lines)
+  for (let i = 0; i < Math.min(lines.length, 5); i++) {
+    const toMatch = lines[i].match(/^TO:\s*(\S+)/i);
+    if (toMatch) {
+      recipient = toMatch[1].toLowerCase();
+      continue;
+    }
+    const headingMatch = lines[i].match(/^#\s+(.+)/);
+    if (headingMatch) {
+      subjectLineIdx = i;
+      break;
+    }
+  }
+
+  // If no H1 heading found, try just the heading without TO:
+  if (subjectLineIdx < 0) {
+    for (let i = 0; i < Math.min(lines.length, 3); i++) {
+      const headingMatch = lines[i].match(/^#\s+(.+)/);
+      if (headingMatch) {
+        subjectLineIdx = i;
+        break;
+      }
+    }
+  }
+
+  if (subjectLineIdx < 0) return null;
+
+  const subject = lines[subjectLineIdx].replace(/^#\s+/, "").trim();
+
+  // Body is everything after the subject line
+  const body = lines.slice(subjectLineIdx + 1).join("\n").trim();
+
+  // Check if this is a handoff (TO: is a teammate, not "user")
+  const isHandoff = recipient !== "user" && teammateNames.includes(recipient);
+
+  if (isHandoff) {
+    return {
+      teammate: teammateName,
+      success: true,
+      summary: subject,
+      changedFiles: parseChangedFiles(output),
+      rawOutput: output,
+      handoff: {
+        from: teammateName,
+        to: recipient,
+        task: body || subject,
+        changedFiles: parseChangedFiles(output),
+        context: subject,
+      },
+    };
+  }
+
+  return {
+    teammate: teammateName,
+    success: true,
+    summary: subject,
+    changedFiles: parseChangedFiles(output),
+    rawOutput: output,
+  };
+}
+
+/**
+ * Legacy: parse JSON protocol blocks for backward compatibility.
+ */
+function parseLegacyJsonProtocol(output: string): Omit<TaskResult, "teammate" | "rawOutput"> | null {
   const jsonBlocks = [...output.matchAll(/```json\s*\n([\s\S]*?)```/g)];
-  // Take the last JSON block — that's the protocol output
   for (let i = jsonBlocks.length - 1; i >= 0; i--) {
     const block = jsonBlocks[i][1].trim();
     try {
@@ -550,27 +623,9 @@ function parseHandoffFromMention(
   return null;
 }
 
-/** Extract a summary from agent output. */
-function extractSummary(output: string): string {
-  // Look for a "## Summary" or "Summary:" section
-  const summaryMatch = output.match(
-    /(?:##?\s*Summary|Summary:)\s*\n([\s\S]*?)(?:\n##|\n---|\n```|$)/i
-  );
-  if (summaryMatch) {
-    const summary = summaryMatch[1].trim();
-    if (summary.length > 0) return summary.slice(0, 500);
-  }
-
-  // Fall back to last non-empty paragraph
-  const paragraphs = output
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0 && !p.startsWith("```"));
-
-  if (paragraphs.length > 0) {
-    const last = paragraphs[paragraphs.length - 1];
-    return last.length > 500 ? last.slice(0, 497) + "..." : last;
-  }
-
-  return output.slice(0, 200).trim();
+/** Extract a summary from agent output. Returns empty if no explicit summary found. */
+function extractSummary(_output: string): string {
+  // The new protocol uses # Subject headings — parsed by parseMessageProtocol.
+  // This fallback intentionally returns empty to avoid promoting random text as the subject.
+  return "";
 }

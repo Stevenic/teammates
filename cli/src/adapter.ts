@@ -175,37 +175,34 @@ These files are your persistent memory. Without them, your next session starts f
 
   // ── Output protocol ───────────────────────────────────────────────
   parts.push("## Output Protocol\n");
-  parts.push(`When you finish, you MUST end your response with exactly one of these two blocks:
+  parts.push(`Your response is a message. Format it as:
 
-### Option 1: Direct response
+\`\`\`
+TO: <recipient>
+# <Subject line>
 
-If you can complete the task yourself, do the work and then end with:
-
-\`\`\`json
-{ "result": { "subject": "<short subject line for this response>", "changedFiles": ["<file>", ...] } }
+<Body — full markdown response>
 \`\`\`
 
-### Option 2: Handoff
+**Recipients:**
+- \`TO: user\` — respond directly to the user (default if omitted)
+- \`TO: <teammate>\` — hand off to another teammate (e.g. \`TO: beacon\`)
 
-If the task (or part of it) belongs to another teammate, end with:
-
-\`\`\`json
-{ "handoff": { "to": "<teammate>", "task": "<specific request for them>", "changedFiles": ["<files you changed, if any>"], "context": "<any context they need>" } }
-\`\`\`
-
-You may also write a task file (e.g. \`.teammates/tasks/<name>.md\`) with detailed instructions and reference it in the handoff:
-
-\`\`\`json
-{ "handoff": { "to": "<teammate>", "task": "See .teammates/tasks/<name>.md", "changedFiles": [".teammates/tasks/<name>.md"] } }
-\`\`\`
-
-Rules:
-- Always include exactly one JSON block at the end — either \`result\` or \`handoff\`.
+**Rules:**
+- The \`# Subject\` line is REQUIRED — it becomes the message title.
+- Always write a substantive body. Never return just the subject.
+- Use markdown: headings, lists, code blocks, bold, etc.
+- A handoff is just a message addressed to a teammate instead of the user. Describe what you need them to do in the body.
 - Only hand off to teammates listed in "Your Team" above.
-- Do as much of the work as you can before handing off.
-- If the task is outside everyone's ownership, do your best and return a result.
+- Do as much work as you can before handing off.
 `);
   parts.push("\n---\n");
+
+  // ── Current date/time ────────────────────────────────────────────
+  const now = new Date();
+  parts.push(`**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})`);
+  parts.push(`**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}\n`);
+  parts.push("---\n");
 
   // ── Task ──────────────────────────────────────────────────────────
   parts.push("## Task\n");

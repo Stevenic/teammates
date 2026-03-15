@@ -209,7 +209,7 @@ interface BannerInfo {
 class AnimatedBanner extends Control {
   private _lines: StyledLine[] = [];
   private _info: BannerInfo;
-  private _phase: "idle" | "spelling" | "pause" | "compact" | "roster" | "commands" | "done" = "idle";
+  private _phase: "idle" | "spelling" | "version" | "pause" | "compact" | "roster" | "commands" | "done" = "idle";
   private _inner: StyledText;
   private _timer: ReturnType<typeof setTimeout> | null = null;
   private _onDirty: (() => void) | null = null;
@@ -219,6 +219,8 @@ class AnimatedBanner extends Control {
   private _charIndex = 0;
   private _builtTop = "";
   private _builtBot = "";
+  private _versionStr = " v0.1.0";
+  private _versionIndex = 0;
 
   // Roster/command reveal state
   private _revealIndex = 0;
@@ -303,12 +305,12 @@ class AnimatedBanner extends Control {
     const col1 = [
       ["@mention", "assign to teammate"],
       ["text", "auto-route task"],
-      ["/queue", "view task queue"],
+      ["/status", "teammates & queue"],
     ];
     const col2 = [
-      ["/status", "session overview"],
       ["/debug", "raw agent output"],
       ["/log", "last task output"],
+      ["/copy", "copy session"],
     ];
     const col3 = [
       ["/install", "add a service"],
@@ -346,8 +348,27 @@ class AnimatedBanner extends Control {
         this._apply();
         this._charIndex++;
         if (this._charIndex >= this._word.length) {
+          this._phase = "version";
+          this._versionIndex = 0;
+          this._schedule(60);
+        } else {
+          this._schedule(60);
+        }
+        break;
+      }
+
+      case "version": {
+        // Type out version string character by character on the bottom row
+        this._versionIndex++;
+        const partial = this._versionStr.slice(0, this._versionIndex);
+        this._lines = [
+          concat(tp.accent(this._builtTop)),
+          concat(tp.accent(this._builtBot), tp.muted(partial)),
+        ];
+        this._apply();
+        if (this._versionIndex >= this._versionStr.length) {
           this._phase = "pause";
-          this._schedule(800);
+          this._schedule(600);
         } else {
           this._schedule(60);
         }
@@ -355,14 +376,9 @@ class AnimatedBanner extends Control {
       }
 
       case "pause": {
-        // Show version briefly on the spelled-out word
-        this._lines = [
-          concat(tp.accent(this._builtTop)),
-          concat(tp.accent(this._builtBot), tp.muted(" v0.1.0")),
-        ];
-        this._apply();
+        // Brief pause before transitioning to compact view
         this._phase = "compact";
-        this._schedule(1200);
+        this._schedule(800);
         break;
       }
 
@@ -492,10 +508,11 @@ class TeammatesREPL {
   private teammatesDir!: string;
   private recallWatchProcess: ChildProcess | null = null;
   private taskQueue: QueueEntry[] = [];
-  private queueActive: QueueEntry | null = null;
+  /** Per-agent active tasks — one per agent running in parallel. */
+  private agentActive: Map<string, QueueEntry> = new Map();
+  /** Per-agent drain locks — prevents double-draining a single agent. */
+  private agentDrainLocks: Map<string, Promise<void>> = new Map();
   private queueDraining = false;
-  /** Mutex to prevent concurrent drainQueue invocations. Resolves when drain finishes. */
-  private drainLock: Promise<void> | null = null;
   /** True while a task is being dispatched — prevents concurrent dispatches from pasted text. */
   private dispatching = false;
   /** Stored pasted text keyed by paste number, expanded on Enter. */
@@ -615,9 +632,23 @@ class TeammatesREPL {
    * Print the user's message as an inverted block in the feed.
    * White text on dark background, right-aligned indicator.
    */
+  private readonly _userBg: Color = { r: 25, g: 25, b: 25, a: 255 };
+
+  /** Feed a line with the user message background, padded to full width. */
+  private feedUserLine(spans: StyledSpan): void {
+    if (!this.chatView) return;
+    const termW = process.stdout.columns || 80;
+    // Calculate visible length of spans
+    let len = 0;
+    for (const seg of spans) len += seg.text.length;
+    const pad = Math.max(0, termW - len);
+    const padded = concat(spans, pen.fg(this._userBg).bg(this._userBg)(" ".repeat(pad)));
+    this.chatView.appendStyledToFeed(padded);
+  }
+
   private printUserMessage(text: string): void {
     if (this.chatView) {
-      const bg = { r: 25, g: 25, b: 25, a: 255 } as Color;
+      const bg = this._userBg;
       const t = theme();
       const termW = process.stdout.columns || 80;
       // First line: "User: <text>" with accent label
@@ -690,7 +721,7 @@ class TeammatesREPL {
         bold: { fg: t.text, bold: true },
         italic: { fg: t.textMuted, italic: true },
         boldItalic: { fg: t.text, bold: true, italic: true },
-        code: { fg: t.warning },
+        code: { fg: t.accentDim },
         h1: { fg: t.accent, bold: true },
         h2: { fg: t.accent, bold: true },
         h3: { fg: t.accent },
@@ -725,12 +756,40 @@ class TeammatesREPL {
   }
 
   private queueTask(input: string): void {
+    // Check for @everyone — queue to all teammates except the coding agent
+    const everyoneMatch = input.match(/^@everyone\s+([\s\S]+)$/i);
+    if (everyoneMatch) {
+      const task = everyoneMatch[1];
+      const names = this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
+      for (const teammate of names) {
+        this.taskQueue.push({ type: "agent", teammate, task });
+      }
+      const bg = this._userBg;
+      const t = theme();
+      this.feedUserLine(concat(
+        pen.fg(t.textMuted).bg(bg)("  → "),
+        pen.fg(t.accent).bg(bg)(names.map((n) => `@${n}`).join(", ")),
+      ));
+      this.feedLine();
+      this.refreshView();
+      this.kickDrain();
+      return;
+    }
+
     // Check for @mention
     const mentionMatch = input.match(/^@(\S+)\s+([\s\S]+)$/);
     if (mentionMatch) {
       const [, teammate, task] = mentionMatch;
       const names = this.orchestrator.listTeammates();
       if (names.includes(teammate)) {
+        const bg = this._userBg;
+        const t = theme();
+        this.feedUserLine(concat(
+          pen.fg(t.textMuted).bg(bg)("  → "),
+          pen.fg(t.accent).bg(bg)(`@${teammate}`),
+        ));
+        this.feedLine();
+        this.refreshView();
         this.taskQueue.push({ type: "agent", teammate, task });
         this.kickDrain();
         return;
@@ -745,6 +804,14 @@ class TeammatesREPL {
       if (names.includes(teammate)) {
         const task = input.replace(/@\S+\s*/, "").trim();
         if (task) {
+          const bg = this._userBg;
+          const t = theme();
+          this.feedUserLine(concat(
+            pen.fg(t.textMuted).bg(bg)("  → "),
+            pen.fg(t.accent).bg(bg)(`@${teammate}`),
+          ));
+          this.feedLine();
+          this.refreshView();
           this.taskQueue.push({ type: "agent", teammate, task });
           this.kickDrain();
           return;
@@ -758,16 +825,34 @@ class TeammatesREPL {
       // Fall back to adapter name — avoid blocking for agent routing
       match = this.adapterName;
     }
-    this.feedLine(concat(tp.muted("  → "), tp.accent(match)));
+    {
+      const bg = this._userBg;
+      const t = theme();
+      this.feedUserLine(concat(
+        pen.fg(t.textMuted).bg(bg)("  → "),
+        pen.fg(t.accent).bg(bg)(`@${match}`),
+      ));
+    }
+    this.feedLine();
     this.refreshView();
     this.taskQueue.push({ type: "agent", teammate: match, task: input });
     this.kickDrain();
   }
 
-  /** Start draining the queue if not already running. */
+  /** Start draining per-agent queues in parallel. Each agent gets its own drain loop. */
   private kickDrain(): void {
-    if (!this.drainLock) {
-      this.drainLock = this.drainQueue().finally(() => { this.drainLock = null; });
+    // Find agents that have queued tasks but no active drain
+    const agentsWithWork = new Set<string>();
+    for (const entry of this.taskQueue) {
+      agentsWithWork.add(entry.teammate);
+    }
+    for (const agent of agentsWithWork) {
+      if (!this.agentDrainLocks.has(agent)) {
+        const lock = this.drainAgentQueue(agent).finally(() => {
+          this.agentDrainLocks.delete(agent);
+        });
+        this.agentDrainLocks.set(agent, lock);
+      }
     }
   }
 
@@ -1057,16 +1142,28 @@ class TeammatesREPL {
     const teammates = this.orchestrator.listTeammates();
     const lower = partial.toLowerCase();
     const after = line.slice(atPos + 1 + partial.length);
-    return teammates
-      .filter((n) => n.toLowerCase().startsWith(lower))
-      .map((name) => {
+    const items: DropdownItem[] = [];
+
+    // @everyone alias
+    if ("everyone".startsWith(lower)) {
+      items.push({
+        label: "@everyone",
+        description: "Send to all teammates",
+        completion: before + "@everyone " + after.replace(/^\s+/, ""),
+      });
+    }
+
+    for (const name of teammates) {
+      if (name.toLowerCase().startsWith(lower)) {
         const t = this.orchestrator.getRegistry().get(name);
-        return {
+        items.push({
           label: "@" + name,
           description: t?.role ?? "",
           completion: before + "@" + name + " " + after.replace(/^\s+/, ""),
-        };
-      });
+        });
+      }
+    }
+    return items;
   }
 
   /** Recompute matches and draw the wordwheel. */
@@ -1465,7 +1562,7 @@ class TeammatesREPL {
     });
     this.chatView.on("action", (id: string) => {
       if (id === "copy") {
-        this.doCopy();
+        this.doCopy(this.lastCleanedOutput || undefined);
       }
     });
 
@@ -1598,12 +1695,12 @@ class TeammatesREPL {
     const col1 = [
       ["@mention", "assign to teammate"],
       ["text", "auto-route task"],
-      ["/queue", "view task queue"],
+      ["/status", "teammates & queue"],
     ];
     const col2 = [
-      ["/status", "session overview"],
       ["/debug", "raw agent output"],
       ["/log", "last task output"],
+      ["/copy", "copy session"],
     ];
     const col3 = [
       ["/install", "add a service"],
@@ -1629,17 +1726,10 @@ class TeammatesREPL {
     const cmds: SlashCommand[] = [
       {
         name: "status",
-        aliases: ["s"],
+        aliases: ["s", "queue", "qu"],
         usage: "/status",
-        description: "Show teammate roster and session status",
+        description: "Show teammates, active tasks, and queue",
         run: () => this.cmdStatus(),
-      },
-      {
-        name: "teammates",
-        aliases: ["team", "t"],
-        usage: "/teammates",
-        description: "List all teammates and their roles",
-        run: () => this.cmdTeammates(),
       },
       {
         name: "log",
@@ -1661,13 +1751,6 @@ class TeammatesREPL {
         usage: "/debug [teammate]",
         description: "Show raw agent output from the last task",
         run: (args) => this.cmdDebug(args),
-      },
-      {
-        name: "queue",
-        aliases: ["qu"],
-        usage: "/queue",
-        description: "Show task queue status",
-        run: () => this.cmdQueue(),
       },
       {
         name: "cancel",
@@ -1783,7 +1866,12 @@ class TeammatesREPL {
         if (!this.chatView) this.input.deactivateAndErase();
 
         const raw = event.result.rawOutput ?? "";
-        const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
+        // Strip protocol artifacts: TO: line, # Subject heading, trailing JSON blocks
+        let cleaned = raw
+          .replace(/^TO:\s*\S+\s*\n/im, "")              // TO: line
+          .replace(/^#\s+.+\n*/m, "")                      // H1 subject heading
+          .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "") // trailing JSON
+          .trim();
         const sizeKB = cleaned ? Buffer.byteLength(cleaned, "utf-8") / 1024 : 0;
 
         // Header: "teammate: subject"
@@ -1805,7 +1893,7 @@ class TeammatesREPL {
         // Clickable [copy] action after the response
         if (this.chatView && cleaned) {
           const t = theme();
-          const normalCopy: StyledSpan = [{ text: "  [copy]", style: { fg: t.textMuted } }] as unknown as StyledSpan;
+          const normalCopy: StyledSpan = [{ text: "  [copy]", style: { fg: t.textDim } }] as unknown as StyledSpan;
           (normalCopy as any).__brand = "StyledSpan";
           const hoverCopy: StyledSpan = [{ text: "  [copy]", style: { fg: t.accent } }] as unknown as StyledSpan;
           (hoverCopy as any).__brand = "StyledSpan";
@@ -1977,44 +2065,45 @@ class TeammatesREPL {
 
     this.feedLine();
     this.feedLine(tp.bold("  Status"));
-    this.feedLine(tp.muted("  " + "─".repeat(60)));
+    this.feedLine(tp.muted("  " + "─".repeat(50)));
 
     for (const [name, status] of statuses) {
-      const teammate = registry.get(name);
-      const stateLabel = status.state.padEnd(16);
-      const nameLabel = name.padEnd(14);
+      const t = registry.get(name);
+      const active = this.agentActive.get(name);
+      const queued = this.taskQueue.filter((e) => e.teammate === name);
 
-      let detail = "—";
-      if (status.lastSummary) {
-        const time = status.lastTimestamp ? ` (${relativeTime(status.lastTimestamp)})` : "";
-        detail = status.lastSummary.slice(0, 50) + time;
-      }
-      if (status.state === "pending-handoff" && status.pendingHandoff) {
-        detail = `→ ${status.pendingHandoff.to}: ${status.pendingHandoff.task.slice(0, 40)}`;
+      // Teammate name + state
+      const stateLabel = active ? "working" : status.state;
+      const stateColor = stateLabel === "working" ? tp.info(` (${stateLabel})`)
+        : stateLabel === "pending-handoff" ? tp.warning(` (${stateLabel})`)
+        : tp.muted(` (${stateLabel})`);
+      this.feedLine(concat(tp.accent(`  @${name}`), stateColor));
+
+      // Role
+      if (t) {
+        this.feedLine(tp.muted(`    ${t.role}`));
       }
 
-      const stateColor = status.state === "working" ? tp.info(stateLabel)
-        : status.state === "pending-handoff" ? tp.warning(stateLabel)
-        : tp.muted(stateLabel);
-      this.feedLine(concat(pen("  "), tp.bold(nameLabel), pen(" "), stateColor, pen(" "), tp.text(detail)));
+      // Active task
+      if (active) {
+        const taskText = active.task.length > 60 ? active.task.slice(0, 57) + "…" : active.task;
+        this.feedLine(concat(tp.info("    ▸ "), tp.text(taskText)));
+      }
+
+      // Queued tasks
+      for (let i = 0; i < queued.length; i++) {
+        const taskText = queued[i].task.length > 60 ? queued[i].task.slice(0, 57) + "…" : queued[i].task;
+        this.feedLine(concat(tp.muted(`    ${i + 1}. `), tp.muted(taskText)));
+      }
+
+      // Last result
+      if (!active && status.lastSummary) {
+        const time = status.lastTimestamp ? ` ${relativeTime(status.lastTimestamp)}` : "";
+        this.feedLine(tp.muted(`    last: ${status.lastSummary.slice(0, 50)}${time}`));
+      }
+
+      this.feedLine();
     }
-    this.feedLine();
-    this.refreshView();
-  }
-
-  private async cmdTeammates(): Promise<void> {
-    const names = this.orchestrator.listTeammates();
-    const registry = this.orchestrator.getRegistry();
-
-    this.feedLine();
-    for (const name of names) {
-      const t = registry.get(name)!;
-      this.feedLine(concat(tp.accent("  @" + name.padEnd(14)), tp.muted(t.role)));
-      if (t.ownership.primary.length > 0) {
-        this.feedLine(concat(tp.muted("                owns: "), tp.text(t.ownership.primary.join(", "))));
-      }
-    }
-    this.feedLine();
     this.refreshView();
   }
 
@@ -2105,77 +2194,44 @@ class TeammatesREPL {
     this.refreshView();
   }
 
-  private async cmdQueue(): Promise<void> {
-    if (this.taskQueue.length === 0 && !this.queueActive) {
-      this.feedLine(tp.muted("  Queue is empty."));
-      this.refreshView();
-      return;
-    }
-    this.feedLine();
-    this.feedLine(tp.bold("  Task Queue"));
-    this.feedLine(tp.muted("  " + "─".repeat(50)));
-    if (this.queueActive) {
-      const taskText = this.queueActive.task.length > 60 ? this.queueActive.task.slice(0, 57) + "..." : this.queueActive.task;
-      this.feedLine(
-        concat(tp.info("  ▸ "), tp.accent("@" + this.queueActive.teammate), tp.muted(" — "), tp.text(taskText), tp.info("  (running)"))
-      );
-    }
-    for (let i = 0; i < this.taskQueue.length; i++) {
-      const entry = this.taskQueue[i];
-      const taskText = entry.task.length > 60 ? entry.task.slice(0, 57) + "..." : entry.task;
-      this.feedLine(
-        concat(tp.muted("  " + (i + 1) + ". "), tp.accent("@" + entry.teammate), tp.muted(" — "), tp.text(taskText))
-      );
-    }
-    if (this.taskQueue.length > 0) {
-      this.feedLine(tp.muted("  /cancel <n> to remove a task"));
-    }
-    this.feedLine();
-    this.refreshView();
-  }
+  /** Drain tasks for a single agent — runs in parallel with other agents. */
+  private async drainAgentQueue(agent: string): Promise<void> {
+    while (true) {
+      // Find next task for this agent
+      const idx = this.taskQueue.findIndex((e) => e.teammate === agent);
+      if (idx < 0) break;
 
-  /** Drain the queue in the background — REPL stays responsive. Mutex via drainLock. */
-  private async drainQueue(): Promise<void> {
-    this.queueDraining = true;
-
-    try {
-      while (this.taskQueue.length > 0) {
-        // If a handoff is pending, pause until it's resolved
-        if (this.orchestrator.getPendingHandoff()) {
-          await new Promise<void>((resolve) => {
-            const check = () => {
-              if (!this.orchestrator.getPendingHandoff()) {
-                resolve();
-              } else {
-                setTimeout(check, 500);
-              }
-            };
-            setTimeout(check, 500);
-          });
-          continue;
-        }
-
-        const entry = this.taskQueue.shift()!;
-        this.queueActive = entry;
-
-        if (entry.type === "compact") {
-          await this.runCompact(entry.teammate);
-        } else {
-          const extraContext = this.buildConversationContext();
-          const result = await this.orchestrator.assign({
-            teammate: entry.teammate,
-            task: entry.task,
-            extraContext: extraContext || undefined,
-          });
-          this.storeResult(result);
-        }
-
-        this.queueActive = null;
+      // If a handoff is pending, pause until it's resolved
+      if (this.orchestrator.getPendingHandoff()) {
+        await new Promise<void>((resolve) => {
+          const check = () => {
+            if (!this.orchestrator.getPendingHandoff()) {
+              resolve();
+            } else {
+              setTimeout(check, 500);
+            }
+          };
+          setTimeout(check, 500);
+        });
+        continue;
       }
 
-      // Queue finished — prompt is already shown by event handler
-    } finally {
-      this.queueDraining = false;
+      const entry = this.taskQueue.splice(idx, 1)[0];
+      this.agentActive.set(agent, entry);
+
+      if (entry.type === "compact") {
+        await this.runCompact(entry.teammate);
+      } else {
+        const extraContext = this.buildConversationContext();
+        const result = await this.orchestrator.assign({
+          teammate: entry.teammate,
+          task: entry.task,
+          extraContext: extraContext || undefined,
+        });
+        this.storeResult(result);
+      }
+
+      this.agentActive.delete(agent);
     }
   }
 
@@ -2316,7 +2372,7 @@ class TeammatesREPL {
     this.lastResult = null;
     this.lastResults.clear();
     this.taskQueue.length = 0;
-    this.queueActive = null;
+    this.agentActive.clear();
     this.pastedTexts.clear();
     await this.orchestrator.reset();
 
@@ -2397,10 +2453,8 @@ class TeammatesREPL {
     this.feedLine();
     this.refreshView();
 
-    // Start draining if not already
-    if (!this.drainLock) {
-      this.drainLock = this.drainQueue().finally(() => { this.drainLock = null; });
-    }
+    // Start draining
+    this.kickDrain();
   }
 
   /** Run compaction + recall index update for a single teammate. */
@@ -2528,12 +2582,35 @@ class TeammatesREPL {
   }
 
   private async cmdCopy(): Promise<void> {
-    this.doCopy();
+    this.doCopy(); // copies entire session
   }
 
-  private doCopy(): void {
-    if (!this.lastCleanedOutput) {
-      this.feedLine(tp.muted("  No response to copy."));
+  /** Build the full chat session as a markdown document. */
+  private buildSessionMarkdown(): string {
+    if (this.conversationHistory.length === 0) return "";
+    const lines: string[] = [];
+    lines.push(`# Chat Session\n`);
+    for (const entry of this.conversationHistory) {
+      if (entry.role === "user") {
+        lines.push(`**User:** ${entry.text}\n`);
+      } else {
+        // Strip protocol artifacts from the raw output
+        const cleaned = entry.text
+          .replace(/^TO:\s*\S+\s*\n/im, "")
+          .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
+          .trim();
+        lines.push(`**${entry.role}:**\n\n${cleaned}\n`);
+      }
+      lines.push("---\n");
+    }
+    return lines.join("\n");
+  }
+
+  private doCopy(content?: string): void {
+    // Build content: if none specified, export the entire chat session as markdown
+    const text = content ?? this.buildSessionMarkdown();
+    if (!text) {
+      this.feedLine(tp.muted("  Nothing to copy."));
       this.refreshView();
       return;
     }
@@ -2541,7 +2618,7 @@ class TeammatesREPL {
       const isWin = process.platform === "win32";
       const cmd = isWin ? "clip" : (process.platform === "darwin" ? "pbcopy" : "xclip -selection clipboard");
       const child = execCb(cmd, () => {});
-      child.stdin?.write(this.lastCleanedOutput);
+      child.stdin?.write(text);
       child.stdin?.end();
       // Show brief "Copied" message in the progress area
       if (this.chatView) {
