@@ -41,6 +41,8 @@ export interface AgentPreset {
   shell?: boolean;
   /** Whether to pipe the prompt via stdin instead of as a CLI argument */
   stdinPrompt?: boolean;
+  /** Optional output parser — transforms raw stdout into clean agent output */
+  parseOutput?(raw: string): string;
 }
 
 export const PRESETS: Record<string, AgentPreset> = {
@@ -66,12 +68,26 @@ export const PRESETS: Record<string, AgentPreset> = {
       args.push("-s", sandbox);
       args.push("--full-auto");
       args.push("--ephemeral");
+      args.push("--json");
       if (options.model) args.push("-m", options.model);
       return args;
     },
-    env: { FORCE_COLOR: "1" },
+    env: { NO_COLOR: "1" },
     stdinPrompt: true,
-    shell: true,
+    /** Parse JSONL output from codex exec --json to extract agent messages */
+    parseOutput(raw: string): string {
+      const messages: string[] = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "item.completed" && event.item?.type === "agent_message") {
+            messages.push(event.item.text);
+          }
+        } catch { /* skip non-JSON lines (e.g. deprecation warnings) */ }
+      }
+      return messages.length > 0 ? messages.join("\n\n") : raw;
+    },
   },
 
   aider: {
@@ -190,7 +206,8 @@ export class CliProxyAdapter implements AgentAdapter {
     this.pendingTempFiles.add(promptFile);
 
     try {
-      const output = await this.spawnAndProxy(teammate, promptFile, fullPrompt);
+      const rawOutput = await this.spawnAndProxy(teammate, promptFile, fullPrompt);
+      const output = this.preset.parseOutput ? this.preset.parseOutput(rawOutput) : rawOutput;
       const teammateNames = this.roster.map((r) => r.name);
       return parseResult(teammate.name, output, teammateNames, prompt);
     } finally {
@@ -228,11 +245,14 @@ export class CliProxyAdapter implements AgentAdapter {
 
       const output = await new Promise<string>((resolve, reject) => {
         const routeStdin = this.preset.stdinPrompt ?? false;
-        const child = spawn(command, args, {
+        const needsShell = this.preset.shell ?? (process.platform === "win32");
+        const spawnCmd = needsShell ? [command, ...args].join(" ") : command;
+        const spawnArgs = needsShell ? [] : args;
+        const child = spawn(spawnCmd, spawnArgs, {
           cwd: process.cwd(),
           env,
           stdio: [routeStdin ? "pipe" : "ignore", "pipe", "pipe"],
-          shell: this.preset.shell ?? false,
+          shell: needsShell,
         });
 
         if (routeStdin && child.stdin) {
@@ -311,11 +331,17 @@ export class CliProxyAdapter implements AgentAdapter {
       const interactive = this.preset.interactive ?? false;
       const useStdin = this.preset.stdinPrompt ?? false;
 
-      const child: ChildProcess = spawn(command, args, {
+      // On Windows, npm-installed CLIs are .cmd wrappers that require shell.
+      // When using shell mode, pass command+args as a single string to avoid
+      // Node DEP0190 deprecation warning about unescaped args with shell: true.
+      const needsShell = this.preset.shell ?? (process.platform === "win32");
+      const spawnCmd = needsShell ? [command, ...args].join(" ") : command;
+      const spawnArgs = needsShell ? [] : args;
+      const child: ChildProcess = spawn(spawnCmd, spawnArgs, {
         cwd: teammate.cwd ?? process.cwd(),
         env,
         stdio: [(interactive || useStdin) ? "pipe" : "ignore", "pipe", "pipe"],
-        shell: this.preset.shell ?? false,
+        shell: needsShell,
       });
 
       // Pipe prompt via stdin if the preset requires it
