@@ -61,6 +61,7 @@ Copy the following files from this repo's `template/` directory into the target 
 | `template/TEMPLATE.md` | `.teammates/TEMPLATE.md` |
 | `template/USER.md` | `.teammates/USER.md` |
 | `template/.gitignore` | `.teammates/.gitignore` |
+| `template/DECISIONS.md` | `.teammates/DECISIONS.md` |
 | `template/services.json` | `.teammates/services.json` |
 
 **Populate CROSS-TEAM.md immediately** — fill in the Ownership Scopes table with one row per teammate. Each row should list the teammate's self-owned folder (`.teammates/<name>/**`) and their codebase ownership paths (matching the Primary Ownership section of their SOUL.md). Do not leave the placeholder row.
@@ -196,6 +197,8 @@ frontend-repo/
 - **Souls evolve.** Teammates should update their own SOUL.md as they learn more about their domain. If a teammate changes their SOUL.md, they should tell the user what changed and why.
 - **Boundaries are strict.** Teammates must never modify files outside their ownership, even for small or obvious fixes. If a task touches another teammate's domain, they should hand off that portion with a clear description. This prevents stepping on toes and keeps ownership clean.
 - **Template versions.** Template files contain a `<!-- template-version: N -->` comment. When copying templates to a project, preserve this marker. It helps detect drift between the upstream framework and a project's local copies.
+- **The cookbook has recipes for common tasks.** See `docs/cookbook.md` for step-by-step guides to adding teammates, running retros, recording decisions, handling handoffs, and more.
+- **Template upgrades have a guide.** When the upstream `template/` files change version, consult `docs/migration-guide.md` for what changed and how to upgrade your project's `.teammates/` files.
 - **Memory search is optional.** For projects that accumulate many memory files, suggest installing `@teammates/recall` for semantic search. It's not required — teammates work fine by reading files directly.
 - **Typed memories replace MEMORIES.md.** The old monolithic MEMORIES.md is replaced by individual files in `memory/` with typed frontmatter. See TEMPLATE.md for the full format and examples.
 - **Episodic compaction keeps memory lean.** The `/compact` command compacts completed weeks' daily logs into `memory/weekly/` summaries (kept 52 weeks) and old weekly summaries into `memory/monthly/` summaries (kept permanently). It also extracts durable facts as typed memories and distills typed memories into WISDOM.md. Run it periodically to keep the memory directory manageable.

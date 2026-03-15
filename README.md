@@ -121,6 +121,8 @@ teammates/
     README.md           # Recall documentation
   docs/                 # Vision and design documents
     adoption-guide.md   # How to introduce teammates to an existing team
+    cookbook.md          # Concrete recipes for common workflows
+    migration-guide.md  # Template version upgrade instructions
     teammates-vision.md # Architecture and Microsoft Teams roadmap
     teammates-memory.md # Memory system design and comparison
   template/
@@ -128,6 +130,7 @@ teammates/
     README.md           # Roster template with placeholders
     PROTOCOL.md         # Collaboration rules template
     CROSS-TEAM.md       # Empty starter for cross-team notes
+    DECISIONS.md        # Decision log template
     TEMPLATE.md         # Template for individual teammate files (SOUL, WISDOM, typed memories, daily logs)
     USER.md             # User profile template (gitignored)
     example/

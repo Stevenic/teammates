@@ -18,7 +18,28 @@ type: project
 
 ## Active Goals
 
-_(All previous active goals completed as of 2026-03-15. New goals TBD.)_
+### P0 — Ship Now
+- [x] **S1 — Cookbook / recipes doc** — `docs/cookbook.md` with 11 recipes covering all common workflows
+- [x] **S2 — Shared decision log (ADR-lite)** — `template/DECISIONS.md` + `.teammates/DECISIONS.md` with 3 backfilled decisions
+- [x] **S3 — Template version migration guide** — `docs/migration-guide.md` with full v1→v2 upgrade steps
+
+### P1 — High Impact
+- [ ] **S4 — Teammate lifecycle management** — retire/archive flow for teammates
+- [ ] **S5 — `/health` self-audit spec** — design correctness checker, hand off to Beacon
+- [ ] **S6 — Conflict resolution protocol** — what happens when two teammates edit the same file
+
+### P2 — Medium Impact
+- [ ] **S7 — Template archetypes** — role-specific starting templates
+- [ ] **S8 — Post-onboarding checklist** — "first session" verification guide
+- [ ] **S9 — Teammate discovery protocol** — how teammates learn about new additions
+- [ ] **S10 — Framework changelog** — track template version changes
+
+### P3 — Lower Priority
+- [ ] **S11 — Landscape comparison doc**
+- [ ] **S12 — Onboarding dry-run mode spec**
+- [ ] **S13 — Interactive onboarding questionnaire spec**
+- [ ] **S14 — Cross-repo handoff spec**
+- [ ] **S15 — npm init teammates scaffolder spec**
 
 ## Completed (2026-03-15, batch 2)
 

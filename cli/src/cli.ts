@@ -17,6 +17,7 @@ import {
 } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -2805,12 +2806,15 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         this.lastCleanedOutput = cleaned;
 
         if (sizeKB > 5) {
+          const tmpFile = join(tmpdir(), `teammates-${event.result.teammate}-${Date.now()}.md`);
+          writeFileSync(tmpFile, cleaned, "utf-8");
           this.feedLine(tp.muted(`  ${"─".repeat(40)}`));
           this.feedLine(
             tp.warning(
-              `  ⚠ Response is ${sizeKB.toFixed(1)}KB — use /debug ${event.result.teammate} to view full output`,
+              `  ⚠ Response is ${sizeKB.toFixed(1)}KB — saved to temp file:`,
             ),
           );
+          this.feedLine(tp.muted(`  ${tmpFile}`));
           this.feedLine(tp.muted(`  ${"─".repeat(40)}`));
         } else if (cleaned) {
           this.feedMarkdown(cleaned);
@@ -3012,9 +3016,29 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.feedLine();
     this.feedLine(tp.muted(`  ── raw output from ${result.teammate} ──`));
     this.feedLine();
-    this.feedLine(result.rawOutput);
+    this.feedMarkdown(result.rawOutput);
     this.feedLine();
     this.feedLine(tp.muted("  ── end raw output ──"));
+
+    // [copy] action for the debug output
+    if (this.chatView) {
+      const t = theme();
+      this.lastCleanedOutput = result.rawOutput;
+      this.chatView.appendActionList([
+        {
+          id: "copy",
+          normalStyle: this.makeSpan({
+            text: "  [copy]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.makeSpan({
+            text: "  [copy]",
+            style: { fg: t.accent },
+          }),
+        },
+      ]);
+    }
+
     this.feedLine();
     this.refreshView();
   }
