@@ -56,7 +56,6 @@ import {
   wrapLine,
 } from "./cli-utils.js";
 import { compactEpisodic } from "./compact.js";
-import { renderMarkdownTables } from "./console/markdown-table.js";
 import { PromptInput } from "./console/prompt-input.js";
 import { buildTitle } from "./console/startup.js";
 import { copyTemplateFiles, getOnboardingPrompt } from "./onboard.js";
@@ -1750,8 +1749,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "")
       .trim();
     if (cleaned) {
-      const rendered = renderMarkdownTables(cleaned);
-      this.feedLine(rendered);
+      this.feedMarkdown(cleaned);
     }
     this.feedLine();
   }
