@@ -675,9 +675,45 @@ function wordWrapSegments(
       continue;
     }
 
-    // Check if we need to wrap
+    // Check if we need to wrap — find the last space to break at
     if (col >= maxWidth) {
-      flushLine();
+      // Walk back through lineSegs to find the last space
+      let broke = false;
+      let backtrack = 0;
+      for (let s = lineSegs.length - 1; s >= 1; s--) {
+        const seg = lineSegs[s];
+        const spaceIdx = seg.text.lastIndexOf(" ");
+        if (spaceIdx >= 0) {
+          // Split this segment at the space
+          const overflow: Seg[] = [];
+          if (spaceIdx + 1 < seg.text.length) {
+            overflow.push({ text: seg.text.slice(spaceIdx + 1), style: seg.style });
+          }
+          // Collect all segments after s
+          for (let a = s + 1; a < lineSegs.length; a++) {
+            overflow.push(lineSegs[a]);
+          }
+          // Trim this segment and remove everything after
+          seg.text = seg.text.slice(0, spaceIdx);
+          lineSegs.length = s + 1;
+          // Remove trailing empty segment
+          if (seg.text.length === 0) lineSegs.length = s;
+
+          flushLine();
+          // Push overflow segments onto new line
+          for (const o of overflow) {
+            lineSegs.push(o);
+            col += o.text.length;
+          }
+          broke = true;
+          break;
+        }
+        backtrack += seg.text.length;
+      }
+      if (!broke) {
+        // No space found — hard break at maxWidth
+        flushLine();
+      }
     }
 
     // Append character to current line (never merge into the indent segment)

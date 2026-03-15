@@ -786,7 +786,7 @@ class TeammatesREPL {
     const t = theme();
     const width = process.stdout.columns || 80;
     const lines = renderMarkdown(source, {
-      width: width - 2,
+      width: width - 3, // -2 for indent, -1 for scrollbar
       indent: "  ",
       theme: {
         text: { fg: t.textMuted },
@@ -1859,8 +1859,30 @@ class TeammatesREPL {
    * For multi-line or large pastes, store the text and replace
    * the input with a compact placeholder that gets expanded on submit.
    */
+  /** Image extensions for drag & drop detection. */
+  private static readonly IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico"]);
+
   private handlePaste(text: string): void {
     if (!this.chatView) return;
+
+    // Check if the pasted text is a file path to an image (drag & drop)
+    const trimmed = text.trim().replace(/^["']|["']$/g, ""); // strip quotes from drag & drop paths
+    if (this.isImagePath(trimmed)) {
+      const current = this.chatView.inputValue;
+      const clean = text.replace(/[\r\n]/g, "");
+      const idx = current.indexOf(clean);
+      if (idx >= 0) {
+        const fileName = trimmed.split(/[/\\]/).pop() || trimmed;
+        const n = ++this.pasteCounter;
+        this.pastedTexts.set(n, `[Image: source: ${trimmed}]`);
+        const placeholder = `[Image ${fileName}]`;
+        const newVal = current.slice(0, idx) + placeholder + current.slice(idx + clean.length);
+        this.chatView.inputValue = newVal;
+        this.refreshView();
+      }
+      return;
+    }
+
     const lines = text.split(/\r?\n/).length;
     const sizeKB = (text.length / 1024).toFixed(1);
     // Only use placeholder for multi-line or large pastes
@@ -1885,6 +1907,16 @@ class TeammatesREPL {
     this.refreshView();
   }
 
+  /** Check if a string looks like a path to an image file. */
+  private isImagePath(text: string): boolean {
+    // Must look like a file path (contains slash or backslash, or starts with drive letter)
+    if (!/[/\\]/.test(text) && !/^[a-zA-Z]:/.test(text)) return false;
+    // Must not contain newlines or spaces (unless the whole thing is a single path)
+    if (/\n/.test(text)) return false;
+    const ext = text.slice(text.lastIndexOf(".")).toLowerCase();
+    return TeammatesREPL.IMAGE_EXTS.has(ext);
+  }
+
   /** Handle line submission from ChatView. */
   private async handleSubmit(rawLine: string): Promise<void> {
     this.clearWordwheel();
@@ -1900,6 +1932,18 @@ class TeammatesREPL {
         return text + "\n";
       }
       return "";
+    });
+
+    // Expand [Image filename] placeholders with stored image source paths
+    input = input.replace(/\[Image [^\]]+\]/g, (match) => {
+      // Find the matching pastedText entry by checking stored values
+      for (const [n, stored] of this.pastedTexts) {
+        if (stored.startsWith("[Image: source:")) {
+          this.pastedTexts.delete(n);
+          return stored;
+        }
+      }
+      return match;
     }).trim();
 
     // Expand [quoted reply] placeholder with blockquoted message
