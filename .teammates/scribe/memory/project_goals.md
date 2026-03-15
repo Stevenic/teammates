@@ -18,14 +18,13 @@ type: project
 
 ## Active Goals
 
-### 1. Multi-project onboarding
-ONBOARDING.md assumes a single repo. Support monorepos or multi-repo setups where teammates span repos. Needs design before implementation.
+_(All previous active goals completed as of 2026-03-15. New goals TBD.)_
 
-### 2. Adoption guide
-A doc covering "how to introduce teammates to an existing team" — pitching it, rolling it out incrementally, what to expect. Target: `docs/adoption-guide.md`.
+## Completed (2026-03-15, batch 2)
 
-### 3. Retrospective mechanism
-A `/retro` command or structured format where teammates review what went well/poorly and propose changes to their own SOUL.md. Needs design, then handoff to Beacon for CLI implementation.
+- ~~Multi-project onboarding~~ — Added monorepo + multi-repo sections to ONBOARDING.md with step-by-step adaptations and a "When to Use Which" table
+- ~~Adoption guide~~ — Created `docs/adoption-guide.md` covering prerequisites, gradual rollout, team FAQ, restructuring guidance, and troubleshooting
+- ~~Retrospective mechanism~~ — Designed `/retro` format (Working / Not Working / Proposed Changes / Questions) at `.teammates/scribe/docs/RETRO-FORMAT.md`. Handed off to Beacon for CLI implementation
 
 ## Standing Goals
 

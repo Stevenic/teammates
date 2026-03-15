@@ -11,6 +11,7 @@ function makeConfig(overrides?: Partial<TeammateConfig>): TeammateConfig {
     dailyLogs: [],
     weeklyLogs: [],
     ownership: { primary: ["recall/src/**"], secondary: [] },
+    routingKeywords: [],
     ...overrides,
   };
 }

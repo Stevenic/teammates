@@ -17,11 +17,16 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: release-${{ inputs.package }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
-  publish:
+  validate:
+    name: Pre-publish validation
     runs-on: ubuntu-latest
 
     steps:
@@ -31,7 +36,44 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Build all packages
+        run: npm run build
+
+      - name: Test all packages
+        run: npm test
+
+      - name: Verify package version
+        run: |
+          PKG="${{ inputs.package }}"
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$PKG/package.json','utf8')).version)")
+          echo "Publishing @teammates/${PKG}@${VERSION}"
+          echo "package-version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish @teammates/${{ inputs.package }}
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
 
@@ -54,3 +96,16 @@ jobs:
         working-directory: ${{ inputs.package }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          PKG="${{ inputs.package }}"
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$PKG/package.json','utf8')).version)")
+          DRY="${{ inputs.dry-run }}"
+          if [ "$DRY" = "true" ]; then
+            echo "## 🏷️ Dry Run: @teammates/${PKG}@${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+            echo "No package was published. Re-run with dry-run unchecked to publish." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## 📦 Published: @teammates/${PKG}@${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Package is live on npm." >> "$GITHUB_STEP_SUMMARY"
+          fi

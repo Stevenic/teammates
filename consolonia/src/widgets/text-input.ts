@@ -167,7 +167,7 @@ export class TextInput extends Control {
   clear(): void {
     this._value = "";
     this._cursor = 0;
-    this._scrollOffset = 0;
+    this._vScrollOffset = 0;
     this._historyIndex = -1;
     this._savedInput = "";
     this.emit("change", "");

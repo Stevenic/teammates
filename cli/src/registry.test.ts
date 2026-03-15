@@ -192,6 +192,39 @@ describe("Registry ownership parsing", () => {
   });
 });
 
+describe("Registry routing keyword parsing", () => {
+  it("parses routing keywords from ### Routing section", async () => {
+    const soul = `# Beacon
+
+## Ownership
+
+### Primary
+
+- \`recall/src/**\` — All source files
+
+### Routing
+
+- \`search\`, \`embeddings\`, \`vector\`, \`semantic\`
+`;
+    await createTeammate("beacon", soul);
+    const registry = new Registry(tempDir);
+    const config = await registry.loadTeammate("beacon");
+    expect(config?.routingKeywords).toEqual([
+      "search",
+      "embeddings",
+      "vector",
+      "semantic",
+    ]);
+  });
+
+  it("returns empty array when no ### Routing section", async () => {
+    await createTeammate("beacon", "# Beacon\n\nJust a description.");
+    const registry = new Registry(tempDir);
+    const config = await registry.loadTeammate("beacon");
+    expect(config?.routingKeywords).toEqual([]);
+  });
+});
+
 describe("Registry.register", () => {
   it("registers a teammate programmatically", () => {
     const registry = new Registry(tempDir);
@@ -203,6 +236,7 @@ describe("Registry.register", () => {
       dailyLogs: [],
       weeklyLogs: [],
       ownership: { primary: [], secondary: [] },
+      routingKeywords: [],
     });
     expect(registry.list()).toEqual(["test"]);
     expect(registry.get("test")?.role).toBe("Test role.");

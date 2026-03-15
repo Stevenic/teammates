@@ -56,6 +56,7 @@ export class Registry {
     const weeklyLogs = await loadWeeklyLogs(join(dir, "memory"));
     const ownership = parseOwnership(soul);
     const role = parseRole(soul);
+    const routingKeywords = parseRoutingKeywords(soul);
 
     const config: TeammateConfig = {
       name,
@@ -65,6 +66,7 @@ export class Registry {
       dailyLogs,
       weeklyLogs,
       ownership,
+      routingKeywords,
     };
 
     this.teammates.set(name, config);
@@ -190,6 +192,19 @@ function parseOwnership(soul: string): OwnershipRules {
   }
 
   return rules;
+}
+
+/**
+ * Parse explicit routing keywords from a ### Routing section in SOUL.md.
+ * Keywords are backtick-wrapped, comma-separated. Example:
+ *
+ *   ### Routing
+ *   - `search`, `embeddings`, `vector`, `semantic`
+ */
+function parseRoutingKeywords(soul: string): string[] {
+  const routingMatch = soul.match(/### Routing[\s\S]*?(?=###|## |$)/);
+  if (!routingMatch) return [];
+  return extractPatterns(routingMatch[0]);
 }
 
 /** Extract file patterns (backtick-wrapped) from a markdown section */

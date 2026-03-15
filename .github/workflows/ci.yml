@@ -18,6 +18,10 @@ on:
       - 'LICENSE'
       - '.gitignore'
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -62,6 +66,9 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Security audit
+        run: npm audit --audit-level=high
+
   build-and-test:
     name: Build & Test (Node ${{ matrix.node-version }})
     needs: quality
@@ -102,5 +109,17 @@ jobs:
       - name: Build CLI (depends on consolonia)
         run: npm run build -w cli
 
-      - name: Test all packages
-        run: npm test
+      - name: Test all packages with coverage
+        run: npm run test:coverage
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo "## Test Coverage" >> "$GITHUB_STEP_SUMMARY"
+          for pkg in consolonia recall cli; do
+            SUMMARY="$pkg/coverage/coverage-summary.json"
+            if [ -f "$SUMMARY" ]; then
+              PCT=$(node -e "const s=JSON.parse(require('fs').readFileSync('$SUMMARY','utf8'));console.log(s.total.lines.pct)")
+              echo "- **$pkg**: ${PCT}% lines" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done

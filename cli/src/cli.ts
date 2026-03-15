@@ -47,6 +47,13 @@ import ora, { type Ora } from "ora";
 import type { AgentAdapter } from "./adapter.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
 import { EchoAdapter } from "./adapters/echo.js";
+import {
+  findAtMention,
+  IMAGE_EXTS,
+  isImagePath,
+  relativeTime,
+  wrapLine,
+} from "./cli-utils.js";
 import { compactEpisodic } from "./compact.js";
 import { renderMarkdownTables } from "./console/markdown-table.js";
 import { PromptInput } from "./console/prompt-input.js";
@@ -130,15 +137,7 @@ function resolveAdapter(name: string): AgentAdapter {
   process.exit(1);
 }
 
-function relativeTime(date: Date): string {
-  const diff = Date.now() - date.getTime();
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  return `${hrs}h ago`;
-}
+// relativeTime is now imported from ./cli-utils.js
 
 // ─── Service registry ────────────────────────────────────────────────
 
@@ -158,7 +157,8 @@ interface ServiceEntry {
 /** A task queue entry — either an agent task or an internal operation. */
 type QueueEntry =
   | { type: "agent"; teammate: string; task: string }
-  | { type: "compact"; teammate: string; task: string };
+  | { type: "compact"; teammate: string; task: string }
+  | { type: "retro"; teammate: string; task: string };
 
 const SERVICE_REGISTRY: Record<string, ServiceEntry> = {
   recall: {
@@ -586,6 +586,18 @@ class TeammatesREPL {
     approveIdx: number;
     rejectIdx: number;
   }[] = [];
+  /** Pending retro proposals awaiting user approval. */
+  private pendingRetroProposals: {
+    id: string;
+    teammate: string;
+    index: number;
+    title: string;
+    section: string;
+    before: string;
+    after: string;
+    why: string;
+    actionIdx: number;
+  }[] = [];
   /** Maps reply action IDs to their context (teammate + message). */
   private _replyContexts: Map<string, { teammate: string; message: string }> =
     new Map();
@@ -742,19 +754,7 @@ class TeammatesREPL {
 
   /** Word-wrap text to maxWidth, breaking at spaces. */
   private wrapLine(text: string, maxWidth: number): string[] {
-    if (text.length <= maxWidth) return [text];
-    const lines: string[] = [];
-    let remaining = text;
-    while (remaining.length > maxWidth) {
-      let breakAt = remaining.lastIndexOf(" ", maxWidth);
-      if (breakAt <= 0) breakAt = maxWidth;
-      lines.push(remaining.slice(0, breakAt));
-      remaining = remaining.slice(
-        breakAt + (remaining[breakAt] === " " ? 1 : 0),
-      );
-    }
-    if (remaining) lines.push(remaining);
-    return lines;
+    return wrapLine(text, maxWidth);
   }
 
   private printUserMessage(text: string): void {
@@ -1166,6 +1166,260 @@ class TeammatesREPL {
     this.showHandoffDropdown();
   }
 
+  // ─── Retro Phase 2: proposal approval ─────────────────────────
+
+  /** Parse retro proposals from agent output and render approval UI. */
+  private handleRetroResult(result: TaskResult): void {
+    const raw = result.rawOutput ?? "";
+    const proposals = this.parseRetroProposals(raw);
+    if (proposals.length === 0) return;
+
+    const t = theme();
+    const teammate = result.teammate;
+    const retroId = `retro-${Date.now()}`;
+
+    this.feedLine();
+    this.feedLine(
+      concat(
+        tp.accent(`  ${proposals.length} SOUL.md proposal${proposals.length > 1 ? "s" : ""}`),
+        tp.muted(" — approve or reject each:"),
+      ),
+    );
+
+    for (let i = 0; i < proposals.length; i++) {
+      const p = proposals[i];
+      const pId = `${retroId}-${i}`;
+
+      this.feedLine();
+      this.feedLine(
+        tp.text(`  Proposal ${i + 1}: ${p.title}`),
+      );
+      this.feedLine(
+        tp.muted(`    Section: ${p.section}`),
+      );
+      if (p.before === "(new entry)") {
+        this.feedLine(tp.muted("    Before: (new entry)"));
+      } else {
+        this.feedLine(tp.muted(`    Before: ${p.before}`));
+      }
+      this.feedLine(
+        concat(tp.muted("    After: "), tp.text(p.after)),
+      );
+      this.feedLine(tp.muted(`    Why: ${p.why}`));
+
+      if (this.chatView) {
+        const actionIdx = this.chatView.feedLineCount;
+        this.chatView.appendActionList([
+          {
+            id: `retro-approve-${pId}`,
+            normalStyle: this.makeSpan({
+              text: "    [approve]",
+              style: { fg: t.textDim },
+            }),
+            hoverStyle: this.makeSpan({
+              text: "    [approve]",
+              style: { fg: t.accent },
+            }),
+          },
+          {
+            id: `retro-reject-${pId}`,
+            normalStyle: this.makeSpan({
+              text: " [reject]",
+              style: { fg: t.textDim },
+            }),
+            hoverStyle: this.makeSpan({
+              text: " [reject]",
+              style: { fg: t.accent },
+            }),
+          },
+        ]);
+        this.pendingRetroProposals.push({
+          id: pId,
+          teammate,
+          index: i + 1,
+          title: p.title,
+          section: p.section,
+          before: p.before,
+          after: p.after,
+          why: p.why,
+          actionIdx,
+        });
+      }
+    }
+
+    this.feedLine();
+    this.showRetroDropdown();
+    this.refreshView();
+  }
+
+  /** Parse Proposal N blocks from retro output. */
+  private parseRetroProposals(
+    text: string,
+  ): { title: string; section: string; before: string; after: string; why: string }[] {
+    const proposals: { title: string; section: string; before: string; after: string; why: string }[] = [];
+    // Match **Proposal N: title** blocks
+    const proposalPattern = /\*\*Proposal\s+\d+[:.]\s*(.+?)\*\*/gi;
+    let match;
+    const positions: { title: string; start: number }[] = [];
+    while ((match = proposalPattern.exec(text)) !== null) {
+      positions.push({ title: match[1].trim(), start: match.index });
+    }
+
+    for (let i = 0; i < positions.length; i++) {
+      const end = i + 1 < positions.length ? positions[i + 1].start : text.length;
+      const block = text.slice(positions[i].start, end);
+
+      const section = this.extractField(block, "Section") || "Unknown";
+      const before = this.extractField(block, "Before") || "(new entry)";
+      const after = this.extractField(block, "After") || "";
+      const why = this.extractField(block, "Why") || "";
+
+      if (after) {
+        proposals.push({
+          title: positions[i].title,
+          section,
+          before,
+          after,
+          why,
+        });
+      }
+    }
+    return proposals;
+  }
+
+  /** Extract a **Field:** value from a proposal block. */
+  private extractField(block: string, field: string): string {
+    // Match "- **Field:** value" or "**Field:** value" across potential line breaks
+    const pattern = new RegExp(
+      `\\*\\*${field}:\\*\\*\\s*(.+?)(?=\\n\\s*[-*]\\s*\\*\\*|\\n\\s*\\n|$)`,
+      "is",
+    );
+    const m = block.match(pattern);
+    if (!m) return "";
+    // Clean up: remove backticks and trim
+    return m[1].trim().replace(/^`+|`+$/g, "");
+  }
+
+  /** Show/hide the retro approval dropdown based on pending proposals. */
+  private showRetroDropdown(): void {
+    if (!this.chatView) return;
+    if (this.pendingRetroProposals.length > 0 && this.pendingHandoffs.length === 0) {
+      const n = this.pendingRetroProposals.length;
+      const items: { label: string; description: string; completion: string }[] = [];
+      items.push({
+        label: "approve all",
+        description: `approve ${n} SOUL.md proposal${n > 1 ? "s" : ""}`,
+        completion: "/approve-retro",
+      });
+      items.push({
+        label: "reject all",
+        description: `reject ${n} SOUL.md proposal${n > 1 ? "s" : ""}`,
+        completion: "/reject-retro",
+      });
+      this.chatView.showDropdown(items);
+    } else if (this.pendingHandoffs.length === 0) {
+      this.chatView.hideDropdown();
+    }
+    this.refreshView();
+  }
+
+  /** Handle retro approve/reject actions (individual clicks). */
+  private handleRetroAction(actionId: string): void {
+    const approveMatch = actionId.match(/^retro-approve-(.+)$/);
+    if (approveMatch) {
+      const pId = approveMatch[1];
+      const idx = this.pendingRetroProposals.findIndex((p) => p.id === pId);
+      if (idx >= 0 && this.chatView) {
+        const p = this.pendingRetroProposals.splice(idx, 1)[0];
+        this.chatView.updateFeedLine(
+          p.actionIdx,
+          this.makeSpan({ text: "    approved", style: { fg: theme().success } }),
+        );
+        this.queueRetroApply(p.teammate, [p]);
+        this.showRetroDropdown();
+      }
+      return;
+    }
+    const rejectMatch = actionId.match(/^retro-reject-(.+)$/);
+    if (rejectMatch) {
+      const pId = rejectMatch[1];
+      const idx = this.pendingRetroProposals.findIndex((p) => p.id === pId);
+      if (idx >= 0 && this.chatView) {
+        const p = this.pendingRetroProposals.splice(idx, 1)[0];
+        this.chatView.updateFeedLine(
+          p.actionIdx,
+          this.makeSpan({ text: "    rejected", style: { fg: theme().error } }),
+        );
+        this.showRetroDropdown();
+      }
+      return;
+    }
+  }
+
+  /** Handle bulk retro approve/reject. */
+  private handleBulkRetro(action: string): void {
+    if (!this.chatView) return;
+    const t = theme();
+    const isApprove = action === "Approve all";
+    const grouped = new Map<string, typeof this.pendingRetroProposals>();
+
+    for (const p of this.pendingRetroProposals) {
+      if (isApprove) {
+        this.chatView.updateFeedLine(
+          p.actionIdx,
+          this.makeSpan({ text: "    approved", style: { fg: t.success } }),
+        );
+        const list = grouped.get(p.teammate) || [];
+        list.push(p);
+        grouped.set(p.teammate, list);
+      } else {
+        this.chatView.updateFeedLine(
+          p.actionIdx,
+          this.makeSpan({ text: "    rejected", style: { fg: t.error } }),
+        );
+      }
+    }
+
+    if (isApprove) {
+      for (const [teammate, proposals] of grouped) {
+        this.queueRetroApply(teammate, proposals);
+      }
+    }
+
+    this.pendingRetroProposals = [];
+    this.showRetroDropdown();
+  }
+
+  /** Queue a follow-up task for the teammate to apply approved SOUL.md changes. */
+  private queueRetroApply(
+    teammate: string,
+    proposals: typeof this.pendingRetroProposals,
+  ): void {
+    const changes = proposals
+      .map(
+        (p) =>
+          `- **Proposal ${p.index}: ${p.title}**\n  - Section: ${p.section}\n  - Before: ${p.before}\n  - After: ${p.after}`,
+      )
+      .join("\n\n");
+
+    const applyPrompt = `The user approved the following SOUL.md changes from your retrospective. Apply them now.
+
+**Edit your SOUL.md file** (\`.teammates/${teammate}/SOUL.md\`) to incorporate these changes:
+
+${changes}
+
+After editing SOUL.md, record a brief summary of the retro outcome in your daily log: which proposals were approved and what changed.
+
+Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily log.`;
+
+    this.taskQueue.push({ type: "agent", teammate, task: applyPrompt });
+    this.feedLine(
+      concat(tp.muted("  Queued SOUL.md update for "), tp.accent(`@${teammate}`)),
+    );
+    this.refreshView();
+    this.kickDrain();
+  }
+
   /** Refresh the ChatView app if active. */
   private refreshView(): void {
     if (this.app) this.app.refresh();
@@ -1388,6 +1642,7 @@ class TeammatesREPL {
       dailyLogs: [] as { date: string; content: string }[],
       weeklyLogs: [] as { week: string; content: string }[],
       ownership: { primary: [] as string[], secondary: [] as string[] },
+      routingKeywords: [] as string[],
     };
 
     const sessionId = await adapter.startSession(tempConfig);
@@ -1551,6 +1806,7 @@ class TeammatesREPL {
       log: new Set([0]),
       compact: new Set([0]),
       debug: new Set([0]),
+      retro: new Set([0]),
     };
 
   /** Build param-completion items for the current line, if any. */
@@ -1603,16 +1859,7 @@ class TeammatesREPL {
     line: string,
     cursor: number,
   ): { before: string; partial: string; atPos: number } | null {
-    // Walk backward from cursor to find the nearest unescaped '@'
-    const left = line.slice(0, cursor);
-    const atPos = left.lastIndexOf("@");
-    if (atPos < 0) return null;
-    // '@' must be at start of line or preceded by whitespace
-    if (atPos > 0 && !/\s/.test(line[atPos - 1])) return null;
-    const partial = left.slice(atPos + 1);
-    // Partial must be a single token (no spaces)
-    if (/\s/.test(partial)) return null;
-    return { before: line.slice(0, atPos), partial, atPos };
+    return findAtMention(line, cursor);
   }
 
   /** Build @mention teammate completion items. */
@@ -1827,6 +2074,7 @@ class TeammatesREPL {
       dailyLogs: [],
       weeklyLogs: [],
       ownership: { primary: [], secondary: [] },
+      routingKeywords: [],
     });
     // Add status entry (init() already ran, so we add it manually)
     this.orchestrator.getAllStatuses().set(this.adapterName, { state: "idle" });
@@ -2118,6 +2366,8 @@ class TeammatesREPL {
     this.chatView.on("action", (id: string) => {
       if (id === "copy") {
         this.doCopy(this.lastCleanedOutput || undefined);
+      } else if (id.startsWith("retro-approve-") || id.startsWith("retro-reject-")) {
+        this.handleRetroAction(id);
       } else if (id.startsWith("approve-") || id.startsWith("reject-")) {
         this.handleHandoffAction(id);
       } else if (id.startsWith("reply-")) {
@@ -2150,16 +2400,7 @@ class TeammatesREPL {
    * the input with a compact placeholder that gets expanded on submit.
    */
   /** Image extensions for drag & drop detection. */
-  private static readonly IMAGE_EXTS = new Set([
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".bmp",
-    ".webp",
-    ".svg",
-    ".ico",
-  ]);
+  // IMAGE_EXTS is now imported from ./cli-utils.js
 
   private handlePaste(text: string): void {
     if (!this.chatView) return;
@@ -2212,12 +2453,7 @@ class TeammatesREPL {
 
   /** Check if a string looks like a path to an image file. */
   private isImagePath(text: string): boolean {
-    // Must look like a file path (contains slash or backslash, or starts with drive letter)
-    if (!/[/\\]/.test(text) && !/^[a-zA-Z]:/.test(text)) return false;
-    // Must not contain newlines or spaces (unless the whole thing is a single path)
-    if (/\n/.test(text)) return false;
-    const ext = text.slice(text.lastIndexOf(".")).toLowerCase();
-    return TeammatesREPL.IMAGE_EXTS.has(ext);
+    return isImagePath(text);
   }
 
   /** Handle line submission from ChatView. */
@@ -2285,6 +2521,14 @@ class TeammatesREPL {
     }
     if (input === "/reject") {
       this.handleBulkHandoff("Reject all");
+      return;
+    }
+    if (input === "/approve-retro") {
+      this.handleBulkRetro("Approve all");
+      return;
+    }
+    if (input === "/reject-retro") {
+      this.handleBulkRetro("Reject all");
       return;
     }
 
@@ -2457,6 +2701,13 @@ class TeammatesREPL {
         usage: "/compact [teammate]",
         description: "Compact daily logs into weekly/monthly summaries",
         run: (args) => this.cmdCompact(args),
+      },
+      {
+        name: "retro",
+        aliases: [],
+        usage: "/retro [teammate]",
+        description: "Run a structured self-retrospective for a teammate",
+        run: (args) => this.cmdRetro(args),
       },
       {
         name: "copy",
@@ -2814,6 +3065,9 @@ class TeammatesREPL {
             extraContext: extraContext || undefined,
           });
           this.storeResult(result);
+          if (entry.type === "retro") {
+            this.handleRetroResult(result);
+          }
         }
       } catch (err: any) {
         // Handle spawn failures, network errors, etc. gracefully
@@ -2997,6 +3251,7 @@ class TeammatesREPL {
     this.taskQueue.length = 0;
     this.agentActive.clear();
     this.pastedTexts.clear();
+    this.pendingRetroProposals = [];
     await this.orchestrator.reset();
 
     if (this.chatView) {
@@ -3215,6 +3470,77 @@ class TeammatesREPL {
       }
     }
     this.refreshView();
+  }
+
+  private async cmdRetro(argsStr: string): Promise<void> {
+    let name = argsStr.trim();
+
+    // If no teammate specified, use the last one that returned a result
+    if (!name) {
+      if (this.lastResult) {
+        name = this.lastResult.teammate;
+      } else {
+        this.feedLine(
+          tp.warning(
+            "  No teammate specified and no recent task to infer from.",
+          ),
+        );
+        this.feedLine(tp.muted("  Usage: /retro <teammate>"));
+        this.refreshView();
+        return;
+      }
+    }
+
+    // Strip leading @ if present
+    name = name.replace(/^@/, "");
+
+    // Validate teammate exists
+    const names = this.orchestrator.listTeammates();
+    if (!names.includes(name)) {
+      this.feedLine(tp.warning(`  Unknown teammate: @${name}`));
+      this.refreshView();
+      return;
+    }
+
+    const retroPrompt = `Run a structured self-retrospective. Review your SOUL.md, WISDOM.md, your last 2-3 weekly summaries (or last 7 daily logs if no weeklies exist), and any typed memories in your memory/ folder.
+
+Produce a response with these four sections:
+
+## 1. What's Working
+Things you do well, based on evidence from recent work. Patterns worth reinforcing or codifying into wisdom. Cite specific examples from daily logs or memories.
+
+## 2. What's Not Working
+Friction, recurring issues, or patterns that aren't serving the project. Be specific — cite examples from daily logs or memories if possible.
+
+## 3. Proposed SOUL.md Changes
+The core output. Each proposal is a **specific edit** to your SOUL.md. Use this exact format for each proposal:
+
+**Proposal N: <short title>**
+- **Section:** <which SOUL.md section to change, e.g. Boundaries, Core Principles, Ownership>
+- **Before:** <the current text to replace, or "(new entry)" if adding>
+- **After:** <the exact replacement text>
+- **Why:** <evidence from recent work justifying the change>
+
+Only propose changes to your own SOUL.md. If a change affects shared files, note that it needs a handoff.
+
+## 4. Questions for the Team
+Issues that can't be resolved unilaterally — they need input from other teammates or the user.
+
+**Rules:**
+- This is a self-review of YOUR work. Do not evaluate other teammates.
+- Evidence over opinion — cite specific examples.
+- No busywork — if everything is working well, say "all good, no changes." That's a valid outcome.
+- Number each proposal (Proposal 1, Proposal 2, etc.) so the user can approve or reject individually.`;
+
+    this.feedLine();
+    this.feedLine(
+      concat(tp.muted("  Queued retro for "), tp.accent(`@${name}`)),
+    );
+    this.feedLine();
+    this.refreshView();
+
+    this.taskQueue.push({ type: "retro", teammate: name, task: retroPrompt });
+    this.kickDrain();
   }
 
   /**

@@ -131,6 +131,13 @@ export class Orchestrator {
     for (const [name, config] of this.registry.all()) {
       let score = 0;
 
+      // Check explicit routing keywords (highest priority, same weight as primary)
+      for (const kw of config.routingKeywords) {
+        if (taskLower.includes(kw.toLowerCase())) {
+          score += 2;
+        }
+      }
+
       // Check ownership patterns against task text
       for (const pattern of [
         ...config.ownership.primary,

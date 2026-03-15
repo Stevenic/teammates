@@ -10,11 +10,11 @@ Updated: 2026-03-15
 
 ## Current State Summary
 
-| Package | Files | LOC | Tests | Test LOC |
-|---------|-------|-----|-------|----------|
-| @teammates/cli | 29 | 8,118 | 4 suites (~35 cases) | ~800 |
-| @teammates/consolonia | 50 | ~8,200 | 9 suites (~1,122 cases) | ~6,700 |
-| @teammates/recall | 5 | 812 | 0 | 0 |
+| Package | Files | LOC | Test Suites | Tests |
+|---------|-------|-----|-------------|-------|
+| @teammates/cli | 29 | 8,118 | 10 | 153 |
+| @teammates/consolonia | 50 | ~8,200 | 9 | 561 |
+| @teammates/recall | 5 | 812 | 3 | 47 |
 
 All three packages compile cleanly with strict TypeScript. Zero TODO/FIXME/HACK markers across the entire codebase.
 
@@ -22,17 +22,17 @@ All three packages compile cleanly with strict TypeScript. Zero TODO/FIXME/HACK 
 
 ## @teammates/cli — Goals
 
-### P0 — Test coverage for cli.ts
-`cli.ts` is 3,156 lines of interactive CLI logic with zero tests. It's the largest untested surface in the monorepo. Need integration-style tests for slash command dispatch, event handling, queue management, and handoff rendering.
+### ~~P0 — Test coverage for cli.ts~~ DONE
+Extracted pure functions to `cli-utils.ts` (relativeTime, wrapLine, findAtMention, isImagePath). 33 tests in `cli-utils.test.ts`.
 
-### P0 — Test coverage for compact.ts
-`compact.ts` (309 lines) has no tests. Episodic compaction is critical to the memory system — weekly/monthly rollups must be correct.
+### ~~P0 — Test coverage for compact.ts~~ DONE
+14 tests covering compactDailies, compactWeeklies, compactEpisodic.
 
-### P1 — Test coverage for console/ utilities
-12 console files (~2,000 lines) are untested: prompt-input, paste-handler, wordwheel, dropdown, markdown-table, file-drop, startup. These are complex interactive components.
+### ~~P1 — Test coverage for console/ utilities~~ DONE
+4 test suites (49 tests): ansi.test.ts (15), file-drop.test.ts (21), markdown-table.test.ts (7), startup.test.ts (6).
 
-### P1 — Configurable routing threshold
-Routing threshold is hard-coded at 2 points (orchestrator.ts). Should be configurable per-project or per-teammate for tuning routing aggressiveness.
+### ~~P1 — Configurable routing~~ DONE
+Added `### Routing` section parsing in SOUL.md. Teammates declare explicit routing keywords that get primary weight (2pts) in `route()`. Registry parses `routingKeywords` from SOUL.md; orchestrator scores them before ownership patterns. 4 new tests.
 
 ### P2 — Session persistence across restarts
 Session files are created but lost on CLI restart. Investigate restoring session context (conversation history, last results) from the session file on startup.
@@ -50,15 +50,11 @@ Registry loads all daily logs without size limits. A teammate with 100+ logs cou
 
 ## @teammates/recall — Goals
 
-### P0 — Add test suite
-Zero test coverage. This is the highest priority for recall. Need tests for:
-- Indexer: teammate discovery, file collection, incremental sync, daily log skipping
-- Search: multi-pass retrieval, typed memory boost, dedup, auto-sync
-- Embeddings: model loading, dimension validation
-- CLI: command parsing, JSON output mode, watch debounce
+### ~~P0 — Add test suite~~ DONE
+3 test suites, 47 tests: indexer.test.ts (18), search.test.ts (6), cli.test.ts (23).
 
-### P1 — Search CLI flags
-No CLI flags for recency depth, typed memory boost factor, or max tokens. These are configurable in the API but not exposed to users.
+### ~~P1 — Search CLI flags~~ DONE
+Added --max-chunks, --max-tokens, --recency-depth, --typed-memory-boost flags. All pass through to search API.
 
 ### P2 — Index health check
 No way to verify index integrity or detect corruption. A `teammates-recall check` command would help.
@@ -95,8 +91,8 @@ Only JS/TS, Python, and C# are built in. Adding Go, Rust, and shell would cover 
 
 ## Cross-cutting Goals
 
-### Linting & formatting
-No linter or formatter configured in any package. Adding biome or eslint+prettier would enforce consistency, especially as the codebase grows.
+### ~~Linting & formatting~~ DONE
+Biome configured at repo root. 0 errors, 18 warnings. `npm run lint` and `npm run lint:fix` scripts.
 
 ### Integration tests
 No end-to-end tests that exercise the full pipeline: CLI → orchestrator → adapter → agent → result parsing → handoff. Would catch regressions in the interaction between packages.

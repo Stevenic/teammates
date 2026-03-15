@@ -10,6 +10,7 @@ const teammate: TeammateConfig = {
   dailyLogs: [],
   weeklyLogs: [],
   ownership: { primary: [], secondary: [] },
+  routingKeywords: [],
 };
 
 describe("EchoAdapter", () => {

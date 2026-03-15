@@ -10,6 +10,10 @@ interface Args {
   dir: string;
   teammate?: string;
   results: number;
+  maxChunks?: number;
+  maxTokens?: number;
+  recencyDepth?: number;
+  typedMemoryBoost?: number;
   model?: string;
   json: boolean;
   sync: boolean;
@@ -68,6 +72,18 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--model":
         args.model = argv[i++];
+        break;
+      case "--max-chunks":
+        args.maxChunks = parseInt(argv[i++], 10);
+        break;
+      case "--max-tokens":
+        args.maxTokens = parseInt(argv[i++], 10);
+        break;
+      case "--recency-depth":
+        args.recencyDepth = parseInt(argv[i++], 10);
+        break;
+      case "--typed-memory-boost":
+        args.typedMemoryBoost = parseFloat(argv[i++]);
         break;
       case "--no-sync":
         args.sync = false;
@@ -225,5 +241,84 @@ describe("parseArgs", () => {
     expect(args.results).toBe(3);
     expect(args.json).toBe(true);
     expect(args.sync).toBe(false);
+  });
+
+  it("parses --max-chunks flag", () => {
+    const args = parseArgs([
+      "node",
+      "cli.js",
+      "search",
+      "query",
+      "--max-chunks",
+      "7",
+    ]);
+    expect(args.maxChunks).toBe(7);
+  });
+
+  it("parses --max-tokens flag", () => {
+    const args = parseArgs([
+      "node",
+      "cli.js",
+      "search",
+      "query",
+      "--max-tokens",
+      "1000",
+    ]);
+    expect(args.maxTokens).toBe(1000);
+  });
+
+  it("parses --recency-depth flag", () => {
+    const args = parseArgs([
+      "node",
+      "cli.js",
+      "search",
+      "query",
+      "--recency-depth",
+      "4",
+    ]);
+    expect(args.recencyDepth).toBe(4);
+  });
+
+  it("parses --typed-memory-boost flag", () => {
+    const args = parseArgs([
+      "node",
+      "cli.js",
+      "search",
+      "query",
+      "--typed-memory-boost",
+      "1.5",
+    ]);
+    expect(args.typedMemoryBoost).toBe(1.5);
+  });
+
+  it("handles multiple new search flags together", () => {
+    const args = parseArgs([
+      "node",
+      "cli.js",
+      "search",
+      "my query",
+      "--max-chunks",
+      "5",
+      "--max-tokens",
+      "800",
+      "--recency-depth",
+      "3",
+      "--typed-memory-boost",
+      "2.0",
+    ]);
+    expect(args.command).toBe("search");
+    expect(args.query).toBe("my query");
+    expect(args.maxChunks).toBe(5);
+    expect(args.maxTokens).toBe(800);
+    expect(args.recencyDepth).toBe(3);
+    expect(args.typedMemoryBoost).toBe(2.0);
+  });
+
+  it("leaves new flags undefined when not provided", () => {
+    const args = parseArgs(["node", "cli.js", "search", "query"]);
+    expect(args.maxChunks).toBeUndefined();
+    expect(args.maxTokens).toBeUndefined();
+    expect(args.recencyDepth).toBeUndefined();
+    expect(args.typedMemoryBoost).toBeUndefined();
   });
 });

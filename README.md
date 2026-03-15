@@ -120,6 +120,7 @@ teammates/
     package.json        # @teammates/recall package
     README.md           # Recall documentation
   docs/                 # Vision and design documents
+    adoption-guide.md   # How to introduce teammates to an existing team
     teammates-vision.md # Architecture and Microsoft Teams roadmap
     teammates-memory.md # Memory system design and comparison
   template/

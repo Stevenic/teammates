@@ -144,7 +144,11 @@ export class ChatView extends Control {
   private _separatorChar: string;
   private _dropdownHighlightStyle: TextStyle;
   private _dropdownStyle: TextStyle;
+  private _dropdownLabelStyle: TextStyle;
   private _footerStyle: TextStyle;
+  private _lastWidth: number = 0;
+  private _lastHeight: number = 0;
+  private _totalContentH: number = 0;
   private _maxInputH: number;
   private _feedScrollOffset: number = 0;
 

@@ -76,6 +76,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `/queue @teammate <task>` — Add tasks to a sequential queue
 - `/cancel <n>` — Cancel a queued task
 - `/install <service>` — Install an optional service (e.g. `recall`)
+- `/retro [teammate]` — Run a structured self-retrospective for a teammate
 - `/clear` — Clear conversation history, reset all sessions, reprint banner
 - `/help` — All commands
 - `/exit` — Exit session
@@ -115,6 +116,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 ### Secondary
 
 - `.teammates/<name>/.index/` — Vector index output (produced by recall, gitignored)
+
+### Routing
+
+- `search`, `embeddings`, `vector`, `index`, `semantic`, `REPL`, `terminal`, `orchestrator`, `adapter`, `routing`, `handoff`, `widget`, `consolonia`
 
 ### Key Interfaces
 

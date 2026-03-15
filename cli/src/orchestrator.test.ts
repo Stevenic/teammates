@@ -16,6 +16,7 @@ function makeTeammate(
     dailyLogs: [],
     weeklyLogs: [],
     ownership: { primary, secondary: [] },
+    routingKeywords: [],
   };
 }
 
@@ -101,6 +102,25 @@ describe("Orchestrator.route", () => {
     ]);
     // "write documentation" matches role word "documentation" (1pt) + ownership keyword "docs" (2pt)
     expect(orch.route("write docs and documentation")).toBe("scribe");
+  });
+
+  it("routes based on explicit routing keywords", () => {
+    const t1 = makeTeammate("beacon", "Platform engineer.");
+    t1.routingKeywords = ["search", "embeddings", "vector"];
+    const t2 = makeTeammate("scribe", "Documentation writer.");
+    t2.routingKeywords = ["template", "onboarding"];
+    const { orch } = createOrchestrator([t1, t2]);
+    expect(orch.route("fix the search feature")).toBe("beacon");
+    expect(orch.route("update the onboarding flow")).toBe("scribe");
+  });
+
+  it("routing keywords beat role-only matches", () => {
+    const t1 = makeTeammate("beacon", "Platform engineer.");
+    t1.routingKeywords = ["search"];
+    const t2 = makeTeammate("finder", "Search specialist.");
+    const { orch } = createOrchestrator([t1, t2]);
+    // "search" matches beacon's routing keyword (2pt) and finder's role (1pt)
+    expect(orch.route("improve search results")).toBe("beacon");
   });
 
   it("returns null for weak matches (score < 2)", () => {

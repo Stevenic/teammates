@@ -110,6 +110,80 @@ Before finishing, check:
 
 ---
 
+## Multi-Project Setup
+
+The default onboarding assumes a single repository. For monorepos or multi-repo setups, adapt as follows.
+
+### Monorepo (multiple packages, one repo)
+
+A monorepo with distinct packages (e.g., `packages/api`, `packages/web`, `packages/shared`) benefits from teammates whose ownership aligns with package boundaries.
+
+**How it differs from single-repo:**
+
+1. **Step 1 (Analysis)** — Map packages, not just directories. Identify which packages are upstream (shared libraries) and which are downstream (apps/services). Note cross-package dependencies.
+
+2. **Step 2 (Team Design)** — Assign teammates at the **package or package-group level**, not at the file level. For example:
+   - One teammate for `packages/api` + `packages/shared` (if they share a maintainer)
+   - One teammate for `packages/web`
+   - One teammate for `packages/mobile`
+   - One cross-cutting teammate for CI/CD and release automation
+
+   Avoid assigning one teammate per package unless packages are large and independently maintained. Fewer teammates with broader scope is better.
+
+3. **Step 3 (Directory Structure)** — Place `.teammates/` at the **repo root**, not inside individual packages. All teammates share one `.teammates/` directory, even if they own different packages.
+
+4. **Step 3b (README.md)** — The dependency flow diagram should reflect the package dependency graph:
+   ```
+   shared (upstream)
+     ↓
+   api / web / mobile (downstream)
+     ↓
+   CI/CD (cross-cutting)
+   ```
+
+5. **Step 4 (Verify)** — Confirm that every package is covered by at least one teammate's ownership globs. Shared code (`packages/shared/**`) should have a clear primary owner.
+
+### Multi-Repo (separate repositories, shared team)
+
+When teammates span multiple repositories (e.g., a backend repo and a frontend repo maintained by the same team), each repo gets its own `.teammates/` directory.
+
+**How it differs from single-repo:**
+
+1. **Each repo has its own `.teammates/`** — Run onboarding independently in each repository. Teammates in repo A do not directly reference files in repo B.
+
+2. **Shared teammates across repos** — If the same persona (e.g., "Atlas" for backend) exists in multiple repos, keep the SOUL.md files consistent but independent. Each repo's copy tracks its own memories and wisdom.
+
+3. **Cross-repo handoffs** — When a task spans repos, the teammate in repo A should describe the needed change and tell the user to hand it off to the corresponding teammate in repo B. The handoff is manual (the user switches repos), not automatic.
+
+4. **Shared framework files** — PROTOCOL.md, CROSS-TEAM.md, and TEMPLATE.md can be copied from this repo's `template/` directory into each repository independently. They don't need to stay in sync across repos, but starting from the same template keeps conventions consistent.
+
+**Example — two repos:**
+```
+backend-repo/
+  .teammates/
+    README.md
+    PROTOCOL.md
+    atlas/         # Backend teammate
+    forge/         # CI/CD teammate
+
+frontend-repo/
+  .teammates/
+    README.md
+    PROTOCOL.md
+    pixel/         # UI teammate
+    forge/         # CI/CD teammate (separate copy, same persona)
+```
+
+### When to Use Which
+
+| Setup | When to use |
+|---|---|
+| **Single repo** (default) | One repo, one team, one `.teammates/` directory |
+| **Monorepo** | Multiple packages in one repo. One `.teammates/` at root, teammates own package globs |
+| **Multi-repo** | Separate repos. Each gets its own `.teammates/`, teammates don't cross repo boundaries |
+
+---
+
 ## Tips
 
 - **The `template/example/` folder** has a complete worked example of a filled-in teammate (SOUL.md, WISDOM.md, daily logs, typed memories, weekly and monthly summaries). Use it as a reference for tone, detail level, and file structure.

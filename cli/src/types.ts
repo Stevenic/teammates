@@ -24,6 +24,8 @@ export interface TeammateConfig {
   weeklyLogs: WeeklyLog[];
   /** File ownership patterns from SOUL.md */
   ownership: OwnershipRules;
+  /** Explicit routing keywords from SOUL.md ### Routing section */
+  routingKeywords: string[];
   /** Working directory scope (defaults to repo root) */
   cwd?: string;
   /** Sandbox level (defaults to workspace-write) */

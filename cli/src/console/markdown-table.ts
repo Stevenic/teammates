@@ -116,58 +116,149 @@ function parseTable(lines: string[]): ParsedTable | null {
   return { headers, alignments, rows };
 }
 
-function renderTable(table: ParsedTable): string {
+/** Wrap text to fit within a given width, breaking at word boundaries. */
+function wrapText(text: string, width: number): string[] {
+  if (width <= 0) return [text];
+  if (text.length <= width) return [text];
+
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    if (current.length === 0) {
+      // Force-break words longer than width
+      if (word.length > width) {
+        for (let i = 0; i < word.length; i += width) {
+          lines.push(word.slice(i, i + width));
+        }
+        current = "";
+        // Last chunk becomes current line if it didn't fill the width
+        if (lines.length > 0 && lines[lines.length - 1].length < width) {
+          current = lines.pop()!;
+        }
+      } else {
+        current = word;
+      }
+    } else if (current.length + 1 + word.length <= width) {
+      current += " " + word;
+    } else {
+      lines.push(current);
+      // Force-break words longer than width
+      if (word.length > width) {
+        for (let i = 0; i < word.length; i += width) {
+          lines.push(word.slice(i, i + width));
+        }
+        current = "";
+        if (lines.length > 0 && lines[lines.length - 1].length < width) {
+          current = lines.pop()!;
+        }
+      } else {
+        current = word;
+      }
+    }
+  }
+  if (current.length > 0) lines.push(current);
+
+  return lines.length > 0 ? lines : [""];
+}
+
+function renderTable(table: ParsedTable, maxWidth?: number): string {
   const { headers, alignments, rows } = table;
   const colCount = headers.length;
+  const termWidth = maxWidth ?? (process.stdout.columns || 80);
 
-  // Calculate column widths (max of header + all rows, + 2 for padding)
-  const widths: number[] = [];
+  // Calculate natural column widths (max of header + all rows, + 2 for padding)
+  const naturalWidths: number[] = [];
   for (let c = 0; c < colCount; c++) {
     let max = headers[c].length;
     for (const row of rows) {
       if (row[c] && row[c].length > max) max = row[c].length;
     }
-    widths.push(max + 2); // 1 space padding each side
+    naturalWidths.push(max + 2); // 1 space padding each side
+  }
+
+  // Total width = sum of column widths + (colCount + 1) border characters
+  const borderChars = colCount + 1;
+  const totalNatural = naturalWidths.reduce((a, b) => a + b, 0) + borderChars;
+
+  let widths: number[];
+  if (totalNatural <= termWidth) {
+    widths = naturalWidths;
+  } else {
+    // Shrink columns proportionally to fit terminal width
+    const available = termWidth - borderChars;
+    const minColWidth = 4; // minimum: 2 padding + 2 chars
+
+    // First pass: give each column at least minColWidth, then distribute remaining proportionally
+    const totalContent = naturalWidths.reduce((a, b) => a + b, 0);
+    widths = naturalWidths.map((w) => {
+      const share = Math.floor((w / totalContent) * available);
+      return Math.max(share, minColWidth);
+    });
+
+    // Adjust rounding: distribute any leftover space to wider columns
+    let used = widths.reduce((a, b) => a + b, 0);
+    let idx = 0;
+    while (used < available && idx < colCount) {
+      widths[idx]++;
+      used++;
+      idx++;
+    }
+    // If we overshot, trim from the widest columns
+    while (used > available) {
+      let maxIdx = 0;
+      for (let c = 1; c < colCount; c++) {
+        if (widths[c] > widths[maxIdx]) maxIdx = c;
+      }
+      if (widths[maxIdx] <= minColWidth) break;
+      widths[maxIdx]--;
+      used--;
+    }
   }
 
   const hLine = (left: string, mid: string, right: string) =>
     left + widths.map((w) => BOX.horizontal.repeat(w)).join(mid) + right;
 
-  const _dataLine = (cells: string[]) =>
-    BOX.vertical +
-    cells
-      .map((cell, i) => ` ${padCell(cell, widths[i] - 2, alignments[i])} `)
-      .join(BOX.vertical) +
-    BOX.vertical;
+  /** Render a row that may have multi-line wrapped cells. */
+  const renderRow = (cells: string[], bold: boolean): string[] => {
+    // Wrap each cell
+    const wrapped: string[][] = cells.map((cell, i) =>
+      wrapText(cell, widths[i] - 2),
+    );
+    const maxLines = Math.max(...wrapped.map((w) => w.length));
+
+    // Pad each cell's wrapped lines to have the same count
+    const lines: string[] = [];
+    for (let line = 0; line < maxLines; line++) {
+      const parts = cells.map((_, i) => {
+        const text = wrapped[i][line] || "";
+        const padded = padCell(text, widths[i] - 2, alignments[i]);
+        return bold ? ` ${chalk.bold(padded)} ` : ` ${padded} `;
+      });
+      lines.push(
+        chalk.gray(BOX.vertical) +
+          parts.join(chalk.gray(BOX.vertical)) +
+          chalk.gray(BOX.vertical),
+      );
+    }
+    return lines;
+  };
 
   const out: string[] = [];
 
   // Top border
   out.push(chalk.gray(hLine(BOX.topLeft, BOX.teeDown, BOX.topRight)));
 
-  // Header row
-  out.push(
-    chalk.gray(BOX.vertical) +
-      headers
-        .map(
-          (h, i) => ` ${chalk.bold(padCell(h, widths[i] - 2, alignments[i]))} `,
-        )
-        .join(chalk.gray(BOX.vertical)) +
-      chalk.gray(BOX.vertical),
-  );
+  // Header row (with wrapping)
+  out.push(...renderRow(headers, true));
 
   // Header separator
   out.push(chalk.gray(hLine(BOX.teeRight, BOX.cross, BOX.teeLeft)));
 
-  // Data rows
+  // Data rows (with wrapping)
   for (const row of rows) {
-    out.push(
-      chalk.gray(BOX.vertical) +
-        row
-          .map((cell, i) => ` ${padCell(cell, widths[i] - 2, alignments[i])} `)
-          .join(chalk.gray(BOX.vertical)) +
-        chalk.gray(BOX.vertical),
-    );
+    out.push(...renderRow(row, false));
   }
 
   // Bottom border
@@ -182,7 +273,7 @@ function renderTable(table: ParsedTable): string {
  * Find and replace all markdown tables in a block of text with
  * box-drawing rendered versions.
  */
-export function renderMarkdownTables(text: string): string {
+export function renderMarkdownTables(text: string, maxWidth?: number): string {
   const lines = text.split("\n");
   const result: string[] = [];
   let i = 0;
@@ -204,7 +295,7 @@ export function renderMarkdownTables(text: string): string {
 
       const table = parseTable(tableLines);
       if (table) {
-        result.push(renderTable(table));
+        result.push(renderTable(table, maxWidth));
         i = j;
         continue;
       }

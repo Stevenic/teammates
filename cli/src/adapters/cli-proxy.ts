@@ -292,6 +292,7 @@ export class CliProxyAdapter implements AgentAdapter {
           dailyLogs: [],
           weeklyLogs: [],
           ownership: { primary: [], secondary: [] },
+          routingKeywords: [],
         },
         { ...this.options, model: this.options.model ?? "haiku" },
       );

@@ -18,13 +18,17 @@ Usage:
   teammates-recall watch   [options]              Watch for changes and auto-sync
 
 Options:
-  --dir <path>         Path to .teammates directory (default: ./.teammates)
-  --teammate <name>    Limit to a specific teammate
-  --results <n>        Max results (default: 5)
-  --model <name>       Embedding model (default: Xenova/all-MiniLM-L6-v2)
-  --no-sync            Skip auto-sync before search
-  --json               Output as JSON
-  --help               Show this help
+  --dir <path>              Path to .teammates directory (default: ./.teammates)
+  --teammate <name>         Limit to a specific teammate
+  --results <n>             Max results (default: 5)
+  --max-chunks <n>          Max chunks per document (default: 3)
+  --max-tokens <n>          Max tokens per section (default: 500)
+  --recency-depth <n>       Number of recent weekly summaries to include (default: 2)
+  --typed-memory-boost <n>  Relevance boost for typed memories (default: 1.2)
+  --model <name>            Embedding model (default: Xenova/all-MiniLM-L6-v2)
+  --no-sync                 Skip auto-sync before search
+  --json                    Output as JSON
+  --help                    Show this help
 `.trim();
 
 interface Args {
@@ -34,6 +38,10 @@ interface Args {
   dir: string;
   teammate?: string;
   results: number;
+  maxChunks?: number;
+  maxTokens?: number;
+  recencyDepth?: number;
+  typedMemoryBoost?: number;
   model?: string;
   json: boolean;
   sync: boolean;
@@ -94,6 +102,18 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--model":
         args.model = argv[i++];
+        break;
+      case "--max-chunks":
+        args.maxChunks = parseInt(argv[i++], 10);
+        break;
+      case "--max-tokens":
+        args.maxTokens = parseInt(argv[i++], 10);
+        break;
+      case "--recency-depth":
+        args.recencyDepth = parseInt(argv[i++], 10);
+        break;
+      case "--typed-memory-boost":
+        args.typedMemoryBoost = parseFloat(argv[i++]);
         break;
       case "--no-sync":
         args.sync = false;
@@ -216,6 +236,10 @@ async function cmdSearch(args: Args): Promise<void> {
     teammatesDir,
     teammate: args.teammate,
     maxResults: args.results,
+    maxChunks: args.maxChunks,
+    maxTokens: args.maxTokens,
+    recencyDepth: args.recencyDepth,
+    typedMemoryBoost: args.typedMemoryBoost,
     model: args.model,
     skipSync: !args.sync,
   });
