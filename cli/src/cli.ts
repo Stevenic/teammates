@@ -11,7 +11,7 @@
 
 import { createInterface } from "node:readline";
 import { resolve, join } from "node:path";
-import { stat, mkdir, readdir } from "node:fs/promises";
+import { stat, mkdir, readdir, rm, unlink } from "node:fs/promises";
 import { execSync, exec as execCb, spawn as cpSpawn, type ChildProcess } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
@@ -528,6 +528,10 @@ class TeammatesREPL {
   private autoApproveHandoffs = false;
   /** Pending handoffs awaiting user approval. */
   private pendingHandoffs: { id: string; envelope: HandoffEnvelope; approveIdx: number; rejectIdx: number }[] = [];
+  /** Maps reply action IDs to their context (teammate + message). */
+  private _replyContexts: Map<string, { teammate: string; message: string }> = new Map();
+  /** Quoted reply text to expand on next submit. */
+  private _pendingQuotedReply: string | null = null;
   private defaultFooter: StyledSpan | null = null; // cached default footer content
 
   // ── Animated status tracker ─────────────────────────────────────
@@ -649,26 +653,91 @@ class TeammatesREPL {
     this.chatView.appendStyledToFeed(padded);
   }
 
+  /** Word-wrap text to maxWidth, breaking at spaces. */
+  private wrapLine(text: string, maxWidth: number): string[] {
+    if (text.length <= maxWidth) return [text];
+    const lines: string[] = [];
+    let remaining = text;
+    while (remaining.length > maxWidth) {
+      let breakAt = remaining.lastIndexOf(" ", maxWidth);
+      if (breakAt <= 0) breakAt = maxWidth;
+      lines.push(remaining.slice(0, breakAt));
+      remaining = remaining.slice(breakAt + (remaining[breakAt] === " " ? 1 : 0));
+    }
+    if (remaining) lines.push(remaining);
+    return lines;
+  }
+
   private printUserMessage(text: string): void {
     if (this.chatView) {
       const bg = this._userBg;
       const t = theme();
       const termW = (process.stdout.columns || 80) - 1; // -1 for scrollbar
-      // First line: "User: <text>" with accent label
-      const firstLine = text.split("\n")[0];
-      const label = "User: ";
-      const pad = Math.max(0, termW - label.length - firstLine.length);
-      this.chatView.appendStyledToFeed(concat(
-        pen.fg(t.accent).bg(bg)(label),
-        pen.fg(t.text).bg(bg)(firstLine + " ".repeat(pad)),
-      ));
-      // Continuation lines with background
-      for (const line of text.split("\n").slice(1)) {
-        const lPad = Math.max(0, termW - line.length);
-        this.chatView.appendStyledToFeed(concat(
-          pen.fg(t.text).bg(bg)(line + " ".repeat(lPad)),
-        ));
+      const allLines = text.split("\n");
+
+      // Separate non-quote lines from blockquote lines (> prefix)
+      // Find contiguous blockquote regions and fence them with empty lines
+      const rendered: { type: "text" | "quote"; content: string }[] = [];
+      let inQuote = false;
+      for (const line of allLines) {
+        const isQuote = line.startsWith("> ") || line === ">";
+        if (isQuote && !inQuote) {
+          rendered.push({ type: "text", content: "" }); // empty line before quotes
+          inQuote = true;
+        } else if (!isQuote && inQuote) {
+          rendered.push({ type: "text", content: "" }); // empty line after quotes
+          inQuote = false;
+        }
+        if (isQuote) {
+          rendered.push({ type: "quote", content: line.startsWith("> ") ? line.slice(2) : "" });
+        } else {
+          rendered.push({ type: "text", content: line });
+        }
       }
+
+      // Render first line with "User: " label
+      const first = rendered.shift();
+      if (first) {
+        if (first.type === "text") {
+          const label = "User: ";
+          const pad = Math.max(0, termW - label.length - first.content.length);
+          this.chatView.appendStyledToFeed(concat(
+            pen.fg(t.accent).bg(bg)(label),
+            pen.fg(t.text).bg(bg)(first.content + " ".repeat(pad)),
+          ));
+        } else {
+          // First line is a quote (unusual but handle it)
+          const label = "User: ";
+          const pad = Math.max(0, termW - label.length);
+          this.chatView.appendStyledToFeed(concat(
+            pen.fg(t.accent).bg(bg)(label + " ".repeat(pad)),
+          ));
+          // Re-add to render as quote
+          rendered.unshift(first);
+        }
+      }
+
+      // Render remaining lines
+      for (const entry of rendered) {
+        if (entry.type === "quote") {
+          const prefix = "│ ";
+          const wrapWidth = termW - prefix.length;
+          const wrapped = this.wrapLine(entry.content, wrapWidth);
+          for (const wl of wrapped) {
+            const pad = Math.max(0, termW - prefix.length - wl.length);
+            this.chatView.appendStyledToFeed(concat(
+              pen.fg(t.textDim).bg(bg)(prefix),
+              pen.fg(t.textMuted).bg(bg)(wl + " ".repeat(pad)),
+            ));
+          }
+        } else {
+          const lPad = Math.max(0, termW - entry.content.length);
+          this.chatView.appendStyledToFeed(concat(
+            pen.fg(t.text).bg(bg)(entry.content + " ".repeat(lPad)),
+          ));
+        }
+      }
+
       this.app.refresh();
       return;
     }
@@ -826,37 +895,53 @@ class TeammatesREPL {
         this.feedLine(tp.muted("  automatically approved"));
         this.kickDrain();
       } else if (this.chatView) {
-        const approveIdx = this.chatView.feedLineCount;
-        this.chatView.appendAction(
-          `approve-${handoffId}`,
-          this.makeSpan({ text: "  [approve]", style: { fg: t.textDim } }),
-          this.makeSpan({ text: "  [approve]", style: { fg: t.accent } }),
-        );
-        const rejectIdx = this.chatView.feedLineCount;
-        this.chatView.appendAction(
-          `reject-${handoffId}`,
-          this.makeSpan({ text: "  [reject]", style: { fg: t.textDim } }),
-          this.makeSpan({ text: "  [reject]", style: { fg: t.accent } }),
-        );
+        const actionIdx = this.chatView.feedLineCount;
+        this.chatView.appendActionList([
+          {
+            id: `approve-${handoffId}`,
+            normalStyle: this.makeSpan({ text: "  [approve]", style: { fg: t.textDim } }),
+            hoverStyle: this.makeSpan({ text: "  [approve]", style: { fg: t.accent } }),
+          },
+          {
+            id: `reject-${handoffId}`,
+            normalStyle: this.makeSpan({ text: " [reject]", style: { fg: t.textDim } }),
+            hoverStyle: this.makeSpan({ text: " [reject]", style: { fg: t.accent } }),
+          },
+        ]);
         this.pendingHandoffs.push({
           id: handoffId,
           envelope: h,
-          approveIdx,
-          rejectIdx,
+          approveIdx: actionIdx,
+          rejectIdx: actionIdx,
         });
       }
     }
 
-    // Bulk/always-approve actions
-    if (this.pendingHandoffs.length > 1 && this.chatView) {
-      this.feedLine();
-      this.chatView.appendAction("approve-all", this.makeSpan({ text: "  [approve all]", style: { fg: t.textDim } }), this.makeSpan({ text: "  [approve all]", style: { fg: t.accent } }));
-      this.chatView.appendAction("always-approve", this.makeSpan({ text: "  [always approve]", style: { fg: t.textDim } }), this.makeSpan({ text: "  [always approve]", style: { fg: t.accent } }));
-      this.chatView.appendAction("reject-all", this.makeSpan({ text: "  [reject all]", style: { fg: t.textDim } }), this.makeSpan({ text: "  [reject all]", style: { fg: t.accent } }));
-    } else if (this.pendingHandoffs.length === 1 && this.chatView) {
-      this.chatView.appendAction("always-approve", this.makeSpan({ text: "  [always approve]", style: { fg: t.textDim } }), this.makeSpan({ text: "  [always approve]", style: { fg: t.accent } }));
-    }
+    // Show global approval options as dropdown when there are pending handoffs
+    this.showHandoffDropdown();
+    this.refreshView();
+  }
 
+  /** Show/hide the handoff approval dropdown based on pending handoffs. */
+  private showHandoffDropdown(): void {
+    if (!this.chatView) return;
+    if (this.pendingHandoffs.length > 0) {
+      const items: { label: string; description: string; completion: string }[] = [];
+      if (this.pendingHandoffs.length === 1) {
+        items.push({ label: "approve", description: `approve handoff to @${this.pendingHandoffs[0].envelope.to}`, completion: "/approve" });
+      } else {
+        items.push({ label: "approve", description: `approve ${this.pendingHandoffs.length} handoffs`, completion: "/approve" });
+      }
+      items.push({ label: "always approve", description: "auto-approve future handoffs", completion: "/always-approve" });
+      if (this.pendingHandoffs.length === 1) {
+        items.push({ label: "reject", description: `reject handoff to @${this.pendingHandoffs[0].envelope.to}`, completion: "/reject" });
+      } else {
+        items.push({ label: "reject", description: `reject ${this.pendingHandoffs.length} handoffs`, completion: "/reject" });
+      }
+      this.chatView.showDropdown(items);
+    } else {
+      this.chatView.hideDropdown();
+    }
     this.refreshView();
   }
 
@@ -869,11 +954,9 @@ class TeammatesREPL {
       if (idx >= 0 && this.chatView) {
         const h = this.pendingHandoffs.splice(idx, 1)[0];
         this.taskQueue.push({ type: "agent", teammate: h.envelope.to, task: h.envelope.task });
-        // Replace action lines in-place
         this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  approved", style: { fg: theme().success } }));
-        this.chatView.updateFeedLine(h.rejectIdx, "");
         this.kickDrain();
-        this.refreshView();
+        this.showHandoffDropdown();
       }
       return;
     }
@@ -884,9 +967,8 @@ class TeammatesREPL {
       const idx = this.pendingHandoffs.findIndex((h) => h.id === hId);
       if (idx >= 0 && this.chatView) {
         const h = this.pendingHandoffs.splice(idx, 1)[0];
-        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  rejected", style: { fg: theme().textMuted } }));
-        this.chatView.updateFeedLine(h.rejectIdx, "");
-        this.refreshView();
+        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  rejected", style: { fg: theme().error } }));
+        this.showHandoffDropdown();
       }
       return;
     }
@@ -908,13 +990,12 @@ class TeammatesREPL {
         const label = action === "Always approve" ? "  automatically approved" : "  approved";
         this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: label, style: { fg: t.success } }));
       } else {
-        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  rejected", style: { fg: t.textMuted } }));
+        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  rejected", style: { fg: t.error } }));
       }
-      this.chatView.updateFeedLine(h.rejectIdx, "");
     }
     this.pendingHandoffs = [];
     if (isApprove) this.kickDrain();
-    this.refreshView();
+    this.showHandoffDropdown();
   }
 
   /** Refresh the ChatView app if active. */
@@ -1396,11 +1477,16 @@ class TeammatesREPL {
           c.name.startsWith(partial) ||
           c.aliases.some((a) => a.startsWith(partial))
       )
-      .map((c) => ({
-        label: "/" + c.name,
-        description: c.description,
-        completion: "/" + c.name + " ",
-      }));
+      .map((c) => {
+        // Extract param placeholder from usage (e.g. "/log [teammate]" → "[teammate]")
+        const paramMatch = c.usage.match(/^\/\S+\s+(.+)$/);
+        const params = paramMatch ? " " + paramMatch[1] : "";
+        return {
+          label: "/" + c.name,
+          description: c.description,
+          completion: "/" + c.name + params,
+        };
+      });
 
     if (this.wordwheelItems.length === 0) {
       this.wordwheelIndex = -1;
@@ -1599,19 +1685,27 @@ class TeammatesREPL {
       inputColorize: (value: string) => {
         const styles: (import("@teammates/consolonia").TextStyle | null)[] = new Array(value.length).fill(null);
         const accentStyle = { fg: theme().accent };
-        // Colorize /commands and @mentions
-        const pattern = /(?:\/\w+|@\w+)/g;
+        const dimStyle = { fg: theme().textDim };
+        // Colorize /commands (including hyphenated) and @mentions
+        const pattern = /(?:\/[\w-]+|@\w+)/g;
         let m;
         while ((m = pattern.exec(value)) !== null) {
           for (let i = m.index; i < m.index + m[0].length; i++) {
             styles[i] = accentStyle;
           }
         }
+        // Colorize [placeholder] blocks as dim
+        const placeholders = /\[[^\[\]]+\]/g;
+        while ((m = placeholders.exec(value)) !== null) {
+          for (let i = m.index; i < m.index + m[0].length; i++) {
+            styles[i] = dimStyle;
+          }
+        }
         return styles;
       },
       inputDeleteSize: (value: string, cursor: number, direction: "backward" | "forward") => {
-        // Delete entire paste placeholder blocks as a unit
-        const placeholder = /\[Pasted text #\d+ \+\d+ lines, [\d.]+KB\]/g;
+        // Delete entire [placeholder] blocks as a unit (paste placeholders, quoted reply, etc.)
+        const placeholder = /\[[^\[\]]+\]/g;
         let m;
         while ((m = placeholder.exec(value)) !== null) {
           const start = m.index;
@@ -1643,6 +1737,10 @@ class TeammatesREPL {
       });
     });
     this.chatView.on("change", () => {
+      // Clear quoted reply if user backspaced over the placeholder
+      if (this._pendingQuotedReply && this.chatView && !this.chatView.inputValue.includes("[quoted reply]")) {
+        this._pendingQuotedReply = null;
+      }
       this.wordwheelItems = [];
       this.wordwheelIndex = -1;
       this.updateWordwheel();
@@ -1730,14 +1828,15 @@ class TeammatesREPL {
     this.chatView.on("action", (id: string) => {
       if (id === "copy") {
         this.doCopy(this.lastCleanedOutput || undefined);
-      } else if (id === "approve-all") {
-        this.handleBulkHandoff("Approve all");
-      } else if (id === "always-approve") {
-        this.handleBulkHandoff("Always approve");
-      } else if (id === "reject-all") {
-        this.handleBulkHandoff("Reject all");
       } else if (id.startsWith("approve-") || id.startsWith("reject-")) {
         this.handleHandoffAction(id);
+      } else if (id.startsWith("reply-")) {
+        const ctx = this._replyContexts.get(id);
+        if (ctx && this.chatView) {
+          this.chatView.inputValue = `@${ctx.teammate} [quoted reply] `;
+          this._pendingQuotedReply = ctx.message;
+          this.refreshView();
+        }
       }
     });
 
@@ -1803,7 +1902,34 @@ class TeammatesREPL {
       return "";
     }).trim();
 
+    // Expand [quoted reply] placeholder with blockquoted message
+    if (this._pendingQuotedReply && input.includes("[quoted reply]")) {
+      const quoted = this._pendingQuotedReply.split("\n").map((l) => `> ${l}`).join("\n");
+      const before = input.slice(0, input.indexOf("[quoted reply]")).trimEnd();
+      const after = input.slice(input.indexOf("[quoted reply]") + "[quoted reply]".length).trimStart();
+      const parts = [before, quoted];
+      if (after) parts.push(after);
+      input = parts.join("\n");
+      this._pendingQuotedReply = null;
+    } else {
+      this._pendingQuotedReply = null;
+    }
+
     if (!input) return;
+
+    // Handoff actions
+    if (input === "/approve") {
+      this.handleBulkHandoff("Approve all");
+      return;
+    }
+    if (input === "/always-approve") {
+      this.handleBulkHandoff("Always approve");
+      return;
+    }
+    if (input === "/reject") {
+      this.handleBulkHandoff("Reject all");
+      return;
+    }
 
     // Slash commands
     if (input.startsWith("/")) {
@@ -2061,14 +2187,24 @@ class TeammatesREPL {
           this.renderHandoffs(event.result.teammate, handoffs);
         }
 
-        // Clickable [copy] action after the response
+        // Clickable [reply] [copy] actions after the response
         if (this.chatView && cleaned) {
           const t = theme();
-          const normalCopy: StyledSpan = [{ text: "  [copy]", style: { fg: t.textDim } }] as unknown as StyledSpan;
-          (normalCopy as any).__brand = "StyledSpan";
-          const hoverCopy: StyledSpan = [{ text: "  [copy]", style: { fg: t.accent } }] as unknown as StyledSpan;
-          (hoverCopy as any).__brand = "StyledSpan";
-          this.chatView.appendAction("copy", normalCopy, hoverCopy);
+          const teammate = event.result.teammate;
+          const replyId = `reply-${teammate}-${Date.now()}`;
+          this._replyContexts.set(replyId, { teammate, message: cleaned });
+          this.chatView.appendActionList([
+            {
+              id: replyId,
+              normalStyle: this.makeSpan({ text: "  [reply]", style: { fg: t.textDim } }),
+              hoverStyle: this.makeSpan({ text: "  [reply]", style: { fg: t.accent } }),
+            },
+            {
+              id: "copy",
+              normalStyle: this.makeSpan({ text: " [copy]", style: { fg: t.textDim } }),
+              hoverStyle: this.makeSpan({ text: " [copy]", style: { fg: t.accent } }),
+            },
+          ]);
         }
         this.feedLine();
 
@@ -2590,7 +2726,33 @@ class TeammatesREPL {
    * 1. Scan all teammates for daily logs older than a week → compact them
    * 2. Sync recall indexes if recall is installed
    */
+  /** Recursively delete files/directories older than maxAgeMs. Removes empty parent dirs. */
+  private async cleanOldTempFiles(dir: string, maxAgeMs: number): Promise<void> {
+    const now = Date.now();
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await this.cleanOldTempFiles(fullPath, maxAgeMs);
+        // Remove dir if now empty
+        const remaining = await readdir(fullPath).catch(() => [""]);
+        if (remaining.length === 0) await rm(fullPath, { recursive: true }).catch(() => {});
+      } else {
+        const info = await stat(fullPath).catch(() => null);
+        if (info && now - info.mtimeMs > maxAgeMs) {
+          await unlink(fullPath).catch(() => {});
+        }
+      }
+    }
+  }
+
   private async startupMaintenance(): Promise<void> {
+    // Clean up .teammates/.tmp files older than 1 week
+    const tmpDir = join(this.teammatesDir, ".tmp");
+    try {
+      await this.cleanOldTempFiles(tmpDir, 7 * 24 * 60 * 60 * 1000);
+    } catch { /* .tmp dir may not exist yet — non-fatal */ }
+
     const teammates = this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
     if (teammates.length === 0) return;
 

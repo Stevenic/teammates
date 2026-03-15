@@ -50,6 +50,21 @@ export interface DropdownItem {
   completion: string;
 }
 
+/** A single action item within an action line. */
+export interface FeedActionItem {
+  id: string;
+  normalStyle: StyledLine;
+  hoverStyle: StyledLine;
+}
+
+/** Entry in the feed action map — single action or multiple side-by-side. */
+interface FeedActionEntry {
+  /** All action items on this line. */
+  items: FeedActionItem[];
+  /** Combined normal style for the full line. */
+  normalStyle: StyledLine;
+}
+
 export interface ChatViewOptions {
   /** Banner text shown at the top of the chat area. */
   banner?: string;
@@ -104,8 +119,8 @@ export class ChatView extends Control {
   private _banner: Control;
   private _topSeparator: _Separator;
   private _feedLines: StyledText[] = [];
-  /** Maps feed line index → action id for clickable lines. */
-  private _feedActions: Map<number, { id: string; normalStyle: StyledLine; hoverStyle: StyledLine }> = new Map();
+  /** Maps feed line index → action(s) for clickable lines. */
+  private _feedActions: Map<number, FeedActionEntry> = new Map();
   /** Feed line index currently hovered (-1 if none). */
   private _hoveredAction: number = -1;
   /** Maps screen Y → feed line index (rebuilt each render). */
@@ -328,9 +343,34 @@ export class ChatView extends Control {
     });
     const idx = this._feedLines.length;
     this._feedLines.push(line);
-    this._feedActions.set(idx, { id, normalStyle: normalContent, hoverStyle: hoverContent });
+    this._feedActions.set(idx, {
+      items: [{ id, normalStyle: normalContent, hoverStyle: hoverContent }],
+      normalStyle: normalContent,
+    });
     this._autoScrollToBottom();
     this.invalidate();
+  }
+
+  /** Append a line with multiple side-by-side clickable actions. */
+  appendActionList(actions: FeedActionItem[]): void {
+    if (actions.length === 0) return;
+    const combined = this._concatSpans(actions.map((a) => a.normalStyle));
+    const line = new StyledText({ lines: [combined], defaultStyle: this._feedStyle, wrap: false });
+    const idx = this._feedLines.length;
+    this._feedLines.push(line);
+    this._feedActions.set(idx, { items: actions, normalStyle: combined });
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
+  /** Concatenate multiple StyledLine arrays into one. */
+  private _concatSpans(spans: StyledLine[]): StyledLine {
+    const result: unknown[] = [];
+    for (const s of spans) {
+      if (Array.isArray(s)) result.push(...s);
+      else result.push(s);
+    }
+    return result as unknown as StyledLine;
   }
 
   /** Append multiple plain lines to the feed. */
@@ -585,11 +625,11 @@ export class ChatView extends Control {
       // Action hover/click in feed area
       if (this._feedActions.size > 0) {
         const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
-        const action = feedLineIdx >= 0 ? this._feedActions.get(feedLineIdx) : undefined;
+        const entry = feedLineIdx >= 0 ? this._feedActions.get(feedLineIdx) : undefined;
 
         if (me.type === "move") {
-          const newHover = action ? feedLineIdx : -1;
-          if (newHover !== this._hoveredAction) {
+          const newHover = entry ? feedLineIdx : -1;
+          if (newHover !== this._hoveredAction || (entry && entry.items.length > 1)) {
             // Restore previous hover
             if (this._hoveredAction >= 0) {
               const prev = this._feedActions.get(this._hoveredAction);
@@ -597,9 +637,11 @@ export class ChatView extends Control {
                 this._feedLines[this._hoveredAction].lines = [prev.normalStyle];
               }
             }
-            // Apply new hover
-            if (action && newHover >= 0) {
-              this._feedLines[newHover].lines = [action.hoverStyle];
+            // Apply new hover — highlight only the hovered action item
+            if (entry && newHover >= 0) {
+              const hitItem = this._resolveActionItem(entry, me.x);
+              const hoverLine = this._buildHoverLine(entry, hitItem);
+              this._feedLines[newHover].lines = [hoverLine];
             }
             this._hoveredAction = newHover;
             this.invalidate();
@@ -607,8 +649,9 @@ export class ChatView extends Control {
           // Don't consume — let other handlers run too
         }
 
-        if (me.type === "press" && me.button === "left" && action) {
-          this.emit("action", action.id);
+        if (me.type === "press" && me.button === "left" && entry) {
+          const hitItem = this._resolveActionItem(entry, me.x);
+          if (hitItem) this.emit("action", hitItem.id);
           return true;
         }
       }
@@ -616,6 +659,41 @@ export class ChatView extends Control {
 
     // Delegate to input
     return this._input.handleInput(event);
+  }
+
+  /** Resolve which action item the mouse x-position falls on. */
+  private _resolveActionItem(entry: FeedActionEntry, x: number): FeedActionItem | null {
+    if (entry.items.length === 1) return entry.items[0];
+    // Calculate text length of each item's normal style to find boundaries
+    let col = 0;
+    for (const item of entry.items) {
+      const len = this._spanTextLength(item.normalStyle);
+      if (x < col + len) return item;
+      col += len;
+    }
+    return entry.items[entry.items.length - 1];
+  }
+
+  /** Build a hover line: highlight only the target item, keep others normal. */
+  private _buildHoverLine(entry: FeedActionEntry, target: FeedActionItem | null): StyledLine {
+    if (entry.items.length === 1 && target) return target.hoverStyle;
+    const parts: StyledLine[] = entry.items.map((item) =>
+      item === target ? item.hoverStyle : item.normalStyle
+    );
+    return this._concatSpans(parts);
+  }
+
+  /** Get the plain text length of a StyledLine. */
+  private _spanTextLength(span: StyledLine): number {
+    if (typeof span === "string") return span.length;
+    const segments = span as unknown[];
+    if (!Array.isArray(segments)) return 0;
+    let len = 0;
+    for (const seg of segments) {
+      if (typeof seg === "string") len += seg.length;
+      else if (seg && typeof seg === "object" && "text" in seg) len += (seg as { text: string }).text.length;
+    }
+    return len;
   }
 
   // ── Layout ─────────────────────────────────────────────────────

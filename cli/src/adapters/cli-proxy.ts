@@ -16,7 +16,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { writeFile, unlink, mkdir } from "node:fs/promises";
+import { writeFile, readFile, unlink, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -74,19 +74,19 @@ export const PRESETS: Record<string, AgentPreset> = {
     },
     env: { NO_COLOR: "1" },
     stdinPrompt: true,
-    /** Parse JSONL output from codex exec --json to extract agent messages */
+    /** Parse JSONL output from codex exec --json, returning only the last agent message */
     parseOutput(raw: string): string {
-      const messages: string[] = [];
+      let lastMessage = "";
       for (const line of raw.split("\n")) {
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line);
           if (event.type === "item.completed" && event.item?.type === "agent_message") {
-            messages.push(event.item.text);
+            lastMessage = event.item.text;
           }
-        } catch { /* skip non-JSON lines (e.g. deprecation warnings) */ }
+        } catch { /* skip non-JSON lines */ }
       }
-      return messages.length > 0 ? messages.join("\n\n") : raw;
+      return lastMessage || raw;
     },
   },
 
@@ -154,10 +154,17 @@ export class CliProxyAdapter implements AgentAdapter {
   async startSession(teammate: TeammateConfig): Promise<string> {
     const id = `${this.name}-${teammate.name}-${nextId++}`;
 
-    // Create session file for this teammate
+    // Create session file inside .teammates/.tmp so sandboxed agents can access it
     if (!this.sessionsDir) {
-      this.sessionsDir = join(tmpdir(), `teammates-sessions-${randomUUID()}`);
+      const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
+      this.sessionsDir = join(tmpBase, "sessions");
       await mkdir(this.sessionsDir, { recursive: true });
+      // Ensure .tmp is gitignored
+      const gitignorePath = join(tmpBase, "..", ".gitignore");
+      const existing = await readFile(gitignorePath, "utf-8").catch(() => "");
+      if (!existing.includes(".tmp/")) {
+        await writeFile(gitignorePath, existing + (existing.endsWith("\n") || !existing ? "" : "\n") + ".tmp/\n").catch(() => {});
+      }
     }
     const sessionFile = join(this.sessionsDir, `${teammate.name}.md`);
     await writeFile(sessionFile, `# Session — ${teammate.name}\n\n`, "utf-8");

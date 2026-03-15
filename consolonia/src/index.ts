@@ -158,6 +158,7 @@ export {
   ChatView,
   type ChatViewOptions,
   type DropdownItem,
+  type FeedActionItem,
 } from "./widgets/chat-view.js";
 
 // ── Markdown ─────────────────────────────────────────────────────────
