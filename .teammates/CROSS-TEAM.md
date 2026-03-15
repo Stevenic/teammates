@@ -16,6 +16,7 @@ The **Boundary Rule** (see PROTOCOL.md) applies to the **codebase** — source c
 |---|---|---|
 | **Beacon** | `.teammates/beacon/**` | `recall/**`, `cli/**` |
 | **Scribe** | `.teammates/scribe/**` | `template/**`, `ONBOARDING.md`, `README.md`, `.teammates/README.md`, `.teammates/PROTOCOL.md`, `.teammates/CROSS-TEAM.md`, `.teammates/TEMPLATE.md` |
+| **Pipeline** | `.teammates/pipeline/**` | `.github/**` (workflows, CI/CD config, release automation) |
 
 When adding a new teammate, add a row to this table.
 

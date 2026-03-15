@@ -207,3 +207,33 @@ describe("Orchestrator.shutdown", () => {
     expect(adapter.destroySession).toHaveBeenCalled();
   });
 });
+
+describe("Orchestrator.refresh", () => {
+  it("detects new teammates added to registry after init", async () => {
+    const { orch } = createOrchestrator([makeTeammate("beacon")]);
+    expect(orch.listTeammates()).toEqual(["beacon"]);
+
+    // Mock loadAll to simulate a new teammate appearing on disk
+    const registry = orch.getRegistry();
+    vi.spyOn(registry, "loadAll").mockImplementation(async () => {
+      registry.register(makeTeammate("pipeline", "DevOps engineer."));
+      return registry.all();
+    });
+
+    const added = await orch.refresh();
+    expect(added).toEqual(["pipeline"]);
+    expect(orch.listTeammates()).toContain("pipeline");
+    expect(orch.getStatus("pipeline")?.state).toBe("idle");
+  });
+
+  it("returns empty array when no new teammates", async () => {
+    const { orch } = createOrchestrator([makeTeammate("beacon")]);
+
+    // Mock loadAll to return existing teammates only
+    const registry = orch.getRegistry();
+    vi.spyOn(registry, "loadAll").mockImplementation(async () => registry.all());
+
+    const added = await orch.refresh();
+    expect(added).toEqual([]);
+  });
+});

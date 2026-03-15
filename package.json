@@ -1,0 +1,21 @@
+{
+  "name": "@teammates/root",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo root for the teammates platform.",
+  "type": "module",
+  "workspaces": [
+    "consolonia",
+    "recall",
+    "cli"
+  ],
+  "scripts": {
+    "build": "npm run build -w consolonia && npm run build -w recall && npm run build -w cli",
+    "test": "npm test --workspaces --if-present",
+    "dev": "npm run dev --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}

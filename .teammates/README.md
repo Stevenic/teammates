@@ -1,6 +1,6 @@
 # Teammates AI Team
 
-Two teammates covering the teammates framework: Beacon owns the recall search package and the CLI orchestrator, Scribe owns the templates and onboarding system.
+Three teammates covering the teammates framework: Beacon owns the recall search package and the CLI orchestrator, Scribe owns the templates and onboarding system, and Pipeline owns the CI/CD pipelines and release automation.
 
 ## Roster
 
@@ -10,12 +10,14 @@ Two teammates covering the teammates framework: Beacon owns the recall search pa
 |---|---|---|---|
 | **Beacon** | Teammates platform engineer | `recall/src/**`, `recall/package.json`, `recall/tsconfig.json`, `cli/src/**`, `cli/package.json`, `cli/tsconfig.json` | 2026-03-12 |
 | **Scribe** | Framework & onboarding architect | `template/**`, `ONBOARDING.md`, `README.md` | 2026-03-12 |
+| **Pipeline** | DevOps & CI/CD engineer | `.github/workflows/**`, `.github/**` | 2026-03-15 |
 
 ## Dependency Flow
 
 ```
 Templates (Scribe) → Onboarding (Scribe) → Recall (Beacon)
                                           → CLI (Beacon)
+                                          → CI/CD (Pipeline)
 ```
 
 Scribe defines the framework structure (templates, onboarding instructions). Beacon builds the tooling that operates on the output of that framework: recall for indexing and searching memory files, and the CLI orchestrator for routing tasks to teammates. Templates are upstream, recall and CLI are downstream.
@@ -29,6 +31,7 @@ Scribe defines the framework structure (templates, onboarding instructions). Bea
 | recall, search, embeddings, vectra, indexer, vector, semantic | **Beacon** |
 | cli, orchestrator, adapter, REPL, handoff, agent, routing, queue | **Beacon** |
 | template, onboarding, SOUL.md, WISDOM.md, protocol, framework, roster, markdown | **Scribe** |
+| ci, cd, pipeline, workflow, actions, release, publish, deploy, build automation | **Pipeline** |
 
 ## Structure
 

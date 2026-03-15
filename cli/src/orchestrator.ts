@@ -197,6 +197,23 @@ export class Orchestrator {
     return this.adapter.routeTask(task, roster);
   }
 
+  /**
+   * Reload the registry from disk and detect new teammates.
+   * Returns the names of any newly discovered teammates.
+   */
+  async refresh(): Promise<string[]> {
+    const before = new Set(this.registry.list());
+    await this.registry.loadAll();
+    const added: string[] = [];
+    for (const name of this.registry.list()) {
+      if (!before.has(name)) {
+        this.statuses.set(name, { state: "idle" });
+        added.push(name);
+      }
+    }
+    return added;
+  }
+
   /** Reset all teammate statuses to idle and clear sessions */
   async reset(): Promise<void> {
     for (const [name, sessionId] of this.sessions) {

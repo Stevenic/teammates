@@ -699,7 +699,7 @@ class TeammatesREPL {
       const first = rendered.shift();
       if (first) {
         if (first.type === "text") {
-          const label = "User: ";
+          const label = "user: ";
           const pad = Math.max(0, termW - label.length - first.content.length);
           this.chatView.appendStyledToFeed(concat(
             pen.fg(t.accent).bg(bg)(label),
@@ -707,7 +707,7 @@ class TeammatesREPL {
           ));
         } else {
           // First line is a quote (unusual but handle it)
-          const label = "User: ";
+          const label = "user: ";
           const pad = Math.max(0, termW - label.length);
           this.chatView.appendStyledToFeed(concat(
             pen.fg(t.accent).bg(bg)(label + " ".repeat(pad)),
@@ -1686,8 +1686,8 @@ class TeammatesREPL {
         const styles: (import("@teammates/consolonia").TextStyle | null)[] = new Array(value.length).fill(null);
         const accentStyle = { fg: theme().accent };
         const dimStyle = { fg: theme().textDim };
-        // Colorize /commands (including hyphenated) and @mentions
-        const pattern = /(?:\/[\w-]+|@\w+)/g;
+        // Colorize /commands (only at start of input) and @mentions (anywhere)
+        const pattern = /(?:^\/[\w-]+|@\w+)/g;
         let m;
         while ((m = pattern.exec(value)) !== null) {
           for (let i = m.index; i < m.index + m[0].length; i++) {
@@ -2255,6 +2255,9 @@ class TeammatesREPL {
         }
         this.feedLine();
 
+        // Auto-detect new teammates added during this task
+        this.refreshTeammates();
+
         this.showPrompt();
         break;
       }
@@ -2481,7 +2484,16 @@ class TeammatesREPL {
     await this.runOnboardingAgent(this.adapter, cwd);
 
     // Reload the registry to pick up newly created teammates
-    await this.orchestrator.init();
+    const added = await this.orchestrator.refresh();
+    if (added.length > 0) {
+      const registry = this.orchestrator.getRegistry();
+      if ("roster" in this.adapter) {
+        (this.adapter as any).roster = this.orchestrator.listTeammates().map((name) => {
+          const t = registry.get(name)!;
+          return { name: t.name, role: t.role, ownership: t.ownership };
+        });
+      }
+    }
     this.feedLine(tp.muted("  Run /teammates to see the roster."));
     this.refreshView();
   }
@@ -2623,6 +2635,38 @@ class TeammatesREPL {
       process.stdout.write(esc.clearScreen + esc.moveTo(0, 0));
       this.printBanner(this.orchestrator.listTeammates());
     }
+  }
+
+  /**
+   * Reload the registry from disk. If new teammates appeared,
+   * announce them, update the adapter roster, and refresh statuses.
+   */
+  private refreshTeammates(): void {
+    this.orchestrator.refresh().then((added) => {
+      if (added.length === 0) return;
+
+      const registry = this.orchestrator.getRegistry();
+
+      // Update adapter roster so prompts include the new teammates
+      if ("roster" in this.adapter) {
+        (this.adapter as any).roster = this.orchestrator.listTeammates().map((name) => {
+          const t = registry.get(name)!;
+          return { name: t.name, role: t.role, ownership: t.ownership };
+        });
+      }
+
+      // Announce
+      for (const name of added) {
+        const config = registry.get(name);
+        const role = config?.role ?? "teammate";
+        this.feedLine(concat(
+          tp.success(`  ✦ New teammate joined: `),
+          tp.bold(name),
+          tp.muted(` — ${role}`),
+        ));
+      }
+      this.refreshView();
+    }).catch(() => {});
   }
 
   private startRecallWatch(): void {
