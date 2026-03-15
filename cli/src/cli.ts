@@ -635,7 +635,6 @@ class TeammatesREPL {
           pen.fg(t.text).bg(bg)(line + " ".repeat(lPad)),
         ));
       }
-      this.chatView.appendToFeed("");
       this.app.refresh();
       return;
     }
@@ -687,9 +686,9 @@ class TeammatesREPL {
       width: width - 2,
       indent: "  ",
       theme: {
-        text: { fg: t.text },
+        text: { fg: t.textMuted },
         bold: { fg: t.text, bold: true },
-        italic: { fg: t.text, italic: true },
+        italic: { fg: t.textMuted, italic: true },
         boldItalic: { fg: t.text, bold: true, italic: true },
         code: { fg: t.warning },
         h1: { fg: t.accent, bold: true },
