@@ -144,13 +144,8 @@ export class ChatView extends Control {
   private _separatorChar: string;
   private _dropdownHighlightStyle: TextStyle;
   private _dropdownStyle: TextStyle;
-  private _dropdownLabelStyle: TextStyle;
   private _footerStyle: TextStyle;
   private _maxInputH: number;
-
-  // ── Layout cache ───────────────────────────────────────────────
-  private _lastWidth: number = 0;
-  private _lastHeight: number = 0;
   private _feedScrollOffset: number = 0;
 
   // ── Scrollbar state ───────────────────────────────────────────
@@ -160,7 +155,6 @@ export class ChatView extends Control {
   private _feedH: number = 0;
   private _thumbPos: number = 0;
   private _thumbSize: number = 0;
-  private _totalContentH: number = 0;
   private _maxScroll: number = 0;
   private _scrollbarVisible: boolean = false;
   /** True while the user is dragging the scrollbar thumb. */

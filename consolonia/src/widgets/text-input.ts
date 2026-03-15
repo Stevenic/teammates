@@ -51,7 +51,6 @@ export class TextInput extends Control {
   private _promptStyle: TextStyle;
   private _colorize: InputColorizer | null;
   private _deleteSize: DeleteSizer | null;
-  private _scrollOffset: number = 0;
 
   /** Command history entries (most recent last). */
   private _history: string[];

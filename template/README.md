@@ -1,5 +1,7 @@
 # <Project Name> AI Teammates
 
+<!-- template-version: 2 -->
+
 <One sentence describing the team composition and what they cover.>
 
 ## Roster

@@ -1,5 +1,7 @@
 # Teammate Collaboration Protocol
 
+<!-- template-version: 2 -->
+
 ## Common Ethics
 
 All teammates share these baseline ethics:

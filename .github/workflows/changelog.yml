@@ -1,0 +1,92 @@
+name: Release Changelog
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package to generate changelog for
+        required: true
+        type: choice
+        options:
+          - recall
+          - cli
+          - consolonia
+      from:
+        description: 'Start tag/ref (e.g., v0.1.0). Leave empty for all history.'
+        required: false
+        type: string
+      to:
+        description: 'End ref (default: HEAD)'
+        required: false
+        type: string
+        default: HEAD
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PACKAGE="${{ inputs.package }}"
+          FROM="${{ inputs.from }}"
+          TO="${{ inputs.to }}"
+
+          if [ -n "$FROM" ]; then
+            RANGE="${FROM}..${TO}"
+          else
+            RANGE="${TO}"
+          fi
+
+          echo "## Changelog for @teammates/${PACKAGE}"
+          echo ""
+          echo "### Changes (${RANGE})"
+          echo ""
+
+          # Get commits touching the package directory
+          git log "${RANGE}" --pretty=format:"- %s (%h)" -- "${PACKAGE}/" | head -100
+
+          echo ""
+          echo ""
+          echo "### Contributors"
+          echo ""
+          git log "${RANGE}" --pretty=format:"%an" -- "${PACKAGE}/" | sort -u | while read -r name; do
+            echo "- ${name}"
+          done
+
+      - name: Output changelog
+        run: |
+          PACKAGE="${{ inputs.package }}"
+          FROM="${{ inputs.from }}"
+          TO="${{ inputs.to }}"
+
+          if [ -n "$FROM" ]; then
+            RANGE="${FROM}..${TO}"
+          else
+            RANGE="${TO}"
+          fi
+
+          {
+            echo "## Changelog for @teammates/${PACKAGE}"
+            echo ""
+            echo "### Changes (${RANGE})"
+            echo ""
+            git log "${RANGE}" --pretty=format:"- %s (%h)" -- "${PACKAGE}/" | head -100
+            echo ""
+            echo ""
+            echo "### Contributors"
+            echo ""
+            git log "${RANGE}" --pretty=format:"%an" -- "${PACKAGE}/" | sort -u | while read -r name; do
+              echo "- ${name}"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

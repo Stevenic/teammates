@@ -1,5 +1,7 @@
 # Cross-Team Notes
 
+<!-- template-version: 2 -->
+
 Shared lessons that affect multiple teammates. Record here instead of duplicating across individual WISDOM.md files.
 
 This file also serves as a **shared index** — teammates can add pointers to private docs in their folder that other teammates might find useful.

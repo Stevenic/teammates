@@ -41,7 +41,7 @@ Updated: 2026-03-15 (session 2)
 
 ### P3 — Future / Nice-to-have
 
-10. **Release changelog automation** — Auto-generate changelogs from conventional commits or PR labels on release.
-11. **PR preview / check annotations** — Add TypeScript error annotations to PRs via `tsc` output parsing.
-12. **Monorepo-aware change detection** — Only build/test packages that actually changed (using `paths:` filters or tools like Turborepo/nx).
+10. ~~**Release changelog automation**~~ ✅ Done — Created `.github/workflows/changelog.yml` with manual dispatch, per-package changelog generation from git history, outputs to GitHub Actions step summary.
+11. ~~**PR check annotations**~~ ✅ Done — Added problem matchers (`.github/matchers/tsc.json`, `.github/matchers/biome-lint.json`) for TypeScript and Biome. Registered in CI quality job so errors appear inline on PR diffs.
+12. ~~**Monorepo-aware change detection**~~ ✅ Done — Added `paths-ignore` to CI triggers: doc-only changes (`.md`, `.teammates/`, `template/`, `LICENSE`, `.gitignore`) skip CI entirely.
 13. **Add test coverage reporting** — If Beacon adds coverage tooling, integrate coverage upload to CI (e.g., Codecov).

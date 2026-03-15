@@ -1,5 +1,7 @@
 # New Teammate Template
 
+<!-- template-version: 2 -->
+
 Copy the SOUL.md and WISDOM.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
 
 ---

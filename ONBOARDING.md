@@ -112,7 +112,7 @@ Before finishing, check:
 
 ## Tips
 
-- **The `template/example/` folder** has a worked example of a filled-in teammate. Use it as a reference for tone and detail level.
+- **The `template/example/` folder** has a complete worked example of a filled-in teammate (SOUL.md, WISDOM.md, daily logs, typed memories, weekly and monthly summaries). Use it as a reference for tone, detail level, and file structure.
 - **WISDOM.md starts empty.** Wisdom entries emerge after the first compaction of typed memories. Don't pre-populate it.
 - **Not every SOUL.md section needs to be exhaustive.** Fill in what's known now. Teammates grow more detailed as the project evolves.
 - **If the agent can't create directories**, ask the user to create the folder structure manually, then have the agent fill in the file contents.
@@ -121,6 +121,7 @@ Before finishing, check:
 - **Daily logs start empty.** The `memory/` folders are created during onboarding but daily log files are created naturally as teammates work.
 - **Souls evolve.** Teammates should update their own SOUL.md as they learn more about their domain. If a teammate changes their SOUL.md, they should tell the user what changed and why.
 - **Boundaries are strict.** Teammates must never modify files outside their ownership, even for small or obvious fixes. If a task touches another teammate's domain, they should hand off that portion with a clear description. This prevents stepping on toes and keeps ownership clean.
+- **Template versions.** Template files contain a `<!-- template-version: N -->` comment. When copying templates to a project, preserve this marker. It helps detect drift between the upstream framework and a project's local copies.
 - **Memory search is optional.** For projects that accumulate many memory files, suggest installing `@teammates/recall` for semantic search. It's not required — teammates work fine by reading files directly.
 - **Typed memories replace MEMORIES.md.** The old monolithic MEMORIES.md is replaced by individual files in `memory/` with typed frontmatter. See TEMPLATE.md for the full format and examples.
 - **Episodic compaction keeps memory lean.** The `/compact` command compacts completed weeks' daily logs into `memory/weekly/` summaries (kept 52 weeks) and old weekly summaries into `memory/monthly/` summaries (kept permanently). It also extracts durable facts as typed memories and distills typed memories into WISDOM.md. Run it periodically to keep the memory directory manageable.

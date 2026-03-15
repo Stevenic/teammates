@@ -1,0 +1,21 @@
+{
+  "problemMatcher": [
+    {
+      "owner": "biome",
+      "severity": "error",
+      "pattern": [
+        {
+          "regexp": "^(.+):(\\d+):(\\d+)\\s+(lint\\/\\S+)\\s+━+$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "code": 4
+        },
+        {
+          "regexp": "^\\s+(.+)$",
+          "message": 1
+        }
+      ]
+    }
+  ]
+}

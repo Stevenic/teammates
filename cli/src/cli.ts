@@ -539,7 +539,6 @@ class TeammatesREPL {
   private lastResult: TaskResult | null = null;
   private lastResults: Map<string, TaskResult> = new Map();
   private conversationHistory: { role: string; text: string }[] = [];
-  private dispatching = false;
 
   private storeResult(result: TaskResult): void {
     this.lastResult = result;
@@ -570,6 +569,7 @@ class TeammatesREPL {
   private agentDrainLocks: Map<string, Promise<void>> = new Map();
   /** Stored pasted text keyed by paste number, expanded on Enter. */
   private pastedTexts: Map<number, string> = new Map();
+  private dispatching = false;
   private pasteCounter = 0;
   private wordwheelItems: DropdownItem[] = [];
   private wordwheelIndex = -1; // -1 = no selection, 0+ = highlighted row
