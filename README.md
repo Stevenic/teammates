@@ -1,3 +1,5 @@
+[![CI](https://github.com/Stevenic/teammates/actions/workflows/ci.yml/badge.svg)](https://github.com/Stevenic/teammates/actions/workflows/ci.yml)
+
 # teammates
 
 A framework for defining persistent AI personas with memory, file ownership, and cross-team protocols. Works with any agentic coding tool.

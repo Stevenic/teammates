@@ -24,7 +24,19 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Cache node_modules
+        id: cache-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            cli/node_modules
+            consolonia/node_modules
+            recall/node_modules
+          key: modules-22-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
+        if: steps.cache-modules.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Lint
@@ -52,7 +64,19 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
+      - name: Cache node_modules
+        id: cache-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            cli/node_modules
+            consolonia/node_modules
+            recall/node_modules
+          key: modules-${{ matrix.node-version }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install dependencies
+        if: steps.cache-modules.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Build independent packages
