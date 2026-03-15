@@ -53,7 +53,11 @@ export class MutableOutput extends Writable {
     this._muted = false;
   }
 
-  _write(chunk: Buffer | string, _encoding: string, callback: () => void): void {
+  _write(
+    chunk: Buffer | string,
+    _encoding: string,
+    callback: () => void,
+  ): void {
     if (!this._muted) {
       process.stdout.write(chunk);
     }

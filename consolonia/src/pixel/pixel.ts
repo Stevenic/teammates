@@ -2,18 +2,18 @@
  * A Pixel represents a single terminal cell: foreground (character + style) over background.
  */
 
-import { TRANSPARENT } from "./color.js";
-import { EMPTY_SYMBOL } from "./symbol.js";
 import {
-  type PixelForeground,
-  EMPTY_FOREGROUND,
-  blendForeground,
-} from "./foreground.js";
-import {
-  type PixelBackground,
-  EMPTY_BACKGROUND,
   blendBackground,
+  EMPTY_BACKGROUND,
+  type PixelBackground,
 } from "./background.js";
+import { TRANSPARENT } from "./color.js";
+import {
+  blendForeground,
+  EMPTY_FOREGROUND,
+  type PixelForeground,
+} from "./foreground.js";
+import { EMPTY_SYMBOL } from "./symbol.js";
 
 /** A single terminal cell combining foreground and background. */
 export interface Pixel {

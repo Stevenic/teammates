@@ -110,12 +110,16 @@ teammates/
     src/                # TypeScript source (REPL, orchestrator, adapters)
     package.json        # @teammates/cli package
     README.md           # CLI documentation
+  consolonia/           # Optional: terminal UI rendering
+    src/                # TypeScript source
+    package.json        # @teammates/consolonia package
   recall/               # Optional: local semantic memory search
     src/                # TypeScript source
     package.json        # @teammates/recall package
     README.md           # Recall documentation
   docs/                 # Vision and design documents
     teammates-vision.md # Architecture and Microsoft Teams roadmap
+    teammates-memory.md # Memory system design and comparison
   template/
     .gitignore          # Keeps USER.md out of version control
     README.md           # Roster template with placeholders

@@ -2,15 +2,15 @@
  * Tests for Phase 6: Layout Engine (Control, Box, Row, Column, Stack).
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { Control } from "../layout/control.js";
-import { Box } from "../layout/box.js";
-import { Row } from "../layout/row.js";
-import { Column } from "../layout/column.js";
-import { Stack } from "../layout/stack.js";
-import type { Size, Rect, Constraint } from "../layout/types.js";
+import { describe, expect, it, vi } from "vitest";
 import type { DrawingContext } from "../drawing/context.js";
 import { keyEvent } from "../input/events.js";
+import { Box } from "../layout/box.js";
+import { Column } from "../layout/column.js";
+import { Control } from "../layout/control.js";
+import { Row } from "../layout/row.js";
+import { Stack } from "../layout/stack.js";
+import type { Constraint, Rect, Size } from "../layout/types.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -44,8 +44,14 @@ class TestControl extends Control {
 
   override measure(constraint: Constraint): Size {
     const size: Size = {
-      width: Math.max(constraint.minWidth, Math.min(this.fixedWidth, constraint.maxWidth)),
-      height: Math.max(constraint.minHeight, Math.min(this.fixedHeight, constraint.maxHeight)),
+      width: Math.max(
+        constraint.minWidth,
+        Math.min(this.fixedWidth, constraint.maxWidth),
+      ),
+      height: Math.max(
+        constraint.minHeight,
+        Math.min(this.fixedHeight, constraint.maxHeight),
+      ),
     };
     this.desiredSize = size;
     return size;
@@ -385,7 +391,12 @@ describe("Control", () => {
         render(_ctx: DrawingContext): void {}
       }
       const ctrl = new DefaultControl();
-      const size = ctrl.measure({ minWidth: 5, minHeight: 3, maxWidth: 100, maxHeight: 100 });
+      const size = ctrl.measure({
+        minWidth: 5,
+        minHeight: 3,
+        maxWidth: 100,
+        maxHeight: 100,
+      });
       expect(size).toEqual({ width: 5, height: 3 });
     });
   });
@@ -485,10 +496,10 @@ describe("Box", () => {
       box.measure(UNCONSTRAINED);
       box.arrange({ x: 0, y: 0, width: 16, height: 9 });
 
-      expect(child.bounds.x).toBe(4);   // paddingLeft
-      expect(child.bounds.y).toBe(1);   // paddingTop
-      expect(child.bounds.width).toBe(10);  // 16 - 4 - 2
-      expect(child.bounds.height).toBe(5);  // 9 - 1 - 3
+      expect(child.bounds.x).toBe(4); // paddingLeft
+      expect(child.bounds.y).toBe(1); // paddingTop
+      expect(child.bounds.width).toBe(10); // 16 - 4 - 2
+      expect(child.bounds.height).toBe(5); // 9 - 1 - 3
     });
 
     it("sets own bounds", () => {
@@ -547,8 +558,8 @@ describe("Row", () => {
 
       const size = row.measure(UNCONSTRAINED);
 
-      expect(size.width).toBe(45);  // 10 + 20 + 15
-      expect(size.height).toBe(8);  // max(5, 8, 3)
+      expect(size.width).toBe(45); // 10 + 20 + 15
+      expect(size.height).toBe(8); // max(5, 8, 3)
     });
 
     it("no children returns zero", () => {
@@ -668,8 +679,8 @@ describe("Column", () => {
 
       const size = col.measure(UNCONSTRAINED);
 
-      expect(size.width).toBe(20);   // max(10, 20, 15)
-      expect(size.height).toBe(16);  // 5 + 8 + 3
+      expect(size.width).toBe(20); // max(10, 20, 15)
+      expect(size.height).toBe(16); // 5 + 8 + 3
     });
 
     it("no children returns zero", () => {
@@ -787,8 +798,8 @@ describe("Stack", () => {
 
       const size = stack.measure(UNCONSTRAINED);
 
-      expect(size.width).toBe(20);  // max(10, 20, 15)
-      expect(size.height).toBe(8);  // max(5, 8, 3)
+      expect(size.width).toBe(20); // max(10, 20, 15)
+      expect(size.height).toBe(8); // max(5, 8, 3)
     });
 
     it("no children returns zero", () => {

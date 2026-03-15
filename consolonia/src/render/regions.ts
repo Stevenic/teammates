@@ -6,7 +6,7 @@
  * so the renderer can consume the current set while new rects accumulate.
  */
 
-import type { Rect } from '../layout/types.js';
+import type { Rect } from "../layout/types.js";
 
 // ── Snapshot ────────────────────────────────────────────────────────
 
@@ -29,12 +29,7 @@ export class DirtySnapshot {
    */
   contains(x: number, y: number): boolean {
     for (const r of this._rects) {
-      if (
-        x >= r.x &&
-        x < r.x + r.width &&
-        y >= r.y &&
-        y < r.y + r.height
-      ) {
+      if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height) {
         return true;
       }
     }
@@ -86,12 +81,7 @@ export class DirtyRegions {
    */
   contains(x: number, y: number): boolean {
     for (const r of this._rects) {
-      if (
-        x >= r.x &&
-        x < r.x + r.width &&
-        y >= r.y &&
-        y < r.y + r.height
-      ) {
+      if (x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height) {
         return true;
       }
     }

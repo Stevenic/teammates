@@ -3,7 +3,10 @@
  */
 
 /** Sandbox level controlling what a teammate can do */
-export type SandboxLevel = "read-only" | "workspace-write" | "danger-full-access";
+export type SandboxLevel =
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access";
 
 /** A teammate's loaded configuration */
 export interface TeammateConfig {

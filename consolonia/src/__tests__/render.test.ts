@@ -1,12 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Writable } from "node:stream";
-
+import { beforeEach, describe, expect, it } from "vitest";
+import { AnsiOutput } from "../ansi/output.js";
+import { PixelBuffer } from "../pixel/buffer.js";
+import type { Pixel } from "../pixel/pixel.js";
 import { DirtyRegions, DirtySnapshot } from "../render/regions.js";
 import { RenderTarget } from "../render/render-target.js";
-import { PixelBuffer } from "../pixel/buffer.js";
-import { AnsiOutput } from "../ansi/output.js";
-import type { Pixel } from "../pixel/pixel.js";
-import type { Rect } from "../layout/types.js";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -23,8 +21,18 @@ function mockStream(): Writable & { output: string } {
 
 function makePixel(
   char: string,
-  fg: { r: number; g: number; b: number; a: number } = { r: 255, g: 255, b: 255, a: 255 },
-  bg: { r: number; g: number; b: number; a: number } = { r: 0, g: 0, b: 0, a: 255 },
+  fg: { r: number; g: number; b: number; a: number } = {
+    r: 255,
+    g: 255,
+    b: 255,
+    a: 255,
+  },
+  bg: { r: number; g: number; b: number; a: number } = {
+    r: 0,
+    g: 0,
+    b: 0,
+    a: 255,
+  },
 ): Pixel {
   return {
     foreground: {

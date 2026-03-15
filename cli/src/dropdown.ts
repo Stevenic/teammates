@@ -9,7 +9,7 @@
  */
 
 import type { Interface as ReadlineInterface } from "node:readline";
-import { esc, truncateAnsi, stripAnsi } from "@teammates/consolonia";
+import { esc, stripAnsi, truncateAnsi } from "@teammates/consolonia";
 
 export class Dropdown {
   private lines: string[] = [];
@@ -54,7 +54,7 @@ export class Dropdown {
         const cols = this.out.columns || 120;
         let buf = "";
         for (const line of this.lines) {
-          buf += "\n" + truncateAnsi(line, cols - 1);
+          buf += `\n${truncateAnsi(line, cols - 1)}`;
         }
         this.out.write(buf);
 

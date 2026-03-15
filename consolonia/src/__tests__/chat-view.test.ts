@@ -2,12 +2,12 @@
  * Unit tests for the ChatView widget.
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { ChatView } from "../widgets/chat-view.js";
-import { PixelBuffer } from "../pixel/buffer.js";
+import { describe, expect, it, vi } from "vitest";
 import { DrawingContext } from "../drawing/context.js";
 import { keyEvent, mouseEvent } from "../input/events.js";
 import type { Constraint } from "../layout/types.js";
+import { PixelBuffer } from "../pixel/buffer.js";
+import { ChatView } from "../widgets/chat-view.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -228,7 +228,11 @@ describe("ChatView", () => {
       const chat = new ChatView();
       chat.showDropdown([
         { label: "/help", description: "Show help", completion: "/help " },
-        { label: "/status", description: "Show status", completion: "/status " },
+        {
+          label: "/status",
+          description: "Show status",
+          completion: "/status ",
+        },
       ]);
       expect(chat.dropdownItems).toHaveLength(2);
       expect(chat.dropdownIndex).toBe(0);
@@ -347,7 +351,9 @@ describe("ChatView", () => {
       expect(helpRow).toBeGreaterThanOrEqual(0);
       expect(statusRow).toBeGreaterThanOrEqual(0);
       // Dropdown should be after input (last 2 rows)
-      expect(helpRow).toBeGreaterThan(rows.findIndex((r) => r.includes("❯") || r.includes("> ")));
+      expect(helpRow).toBeGreaterThan(
+        rows.findIndex((r) => r.includes("❯") || r.includes("> ")),
+      );
     });
   });
 
@@ -419,7 +425,8 @@ describe("ChatView", () => {
   describe("dropdown after external showDropdown + re-render", () => {
     it("dropdown persists across multiple render passes", () => {
       const chat = new ChatView({ banner: "B", prompt: "> " });
-      const W = 50, H = 15;
+      const W = 50,
+        H = 15;
 
       // First render — no dropdown
       let { buffer, ctx } = layoutAndRender(chat, W, H);
@@ -442,7 +449,8 @@ describe("ChatView", () => {
 
     it("dropdown appears when set during change event handler", () => {
       const chat = new ChatView({ banner: "B", prompt: "> " });
-      const W = 50, H = 15;
+      const W = 50,
+        H = 15;
 
       // Wire up a change handler that shows dropdown (like the CLI does)
       chat.on("change", (text: string) => {
@@ -464,7 +472,10 @@ describe("ChatView", () => {
       ({ buffer } = layoutAndRender(chat, W, H));
       let hasDropdown = false;
       for (let y = 0; y < H; y++) {
-        if (rowText(buffer, y, 0, 30).includes("/help")) { hasDropdown = true; break; }
+        if (rowText(buffer, y, 0, 30).includes("/help")) {
+          hasDropdown = true;
+          break;
+        }
       }
       expect(hasDropdown).toBe(false);
 
@@ -490,7 +501,8 @@ describe("ChatView", () => {
 
     it("dropdown survives re-render after invalidation", () => {
       const chat = new ChatView({ prompt: "> " });
-      const W = 40, H = 10;
+      const W = 40,
+        H = 10;
 
       // Show dropdown
       chat.showDropdown([

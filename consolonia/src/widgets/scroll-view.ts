@@ -6,10 +6,10 @@
  * when the child does not consume the events.
  */
 
-import { Control } from "../layout/control.js";
-import type { Size, Constraint, Rect } from "../layout/types.js";
 import type { DrawingContext } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
+import { Control } from "../layout/control.js";
+import type { Constraint, Rect, Size } from "../layout/types.js";
 
 export interface ScrollViewOptions {
   child?: Control;
@@ -114,7 +114,7 @@ export class ScrollView extends Control {
     }
 
     // Let the child measure with unconstrained height
-    const childConstraint: Constraint = {
+    const _childConstraint: Constraint = {
       minWidth: constraint.minWidth,
       minHeight: 0,
       maxWidth: constraint.maxWidth,

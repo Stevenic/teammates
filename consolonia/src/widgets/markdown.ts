@@ -19,20 +19,11 @@
 
 import { marked, type Token, type Tokens } from "marked";
 import type { TextStyle } from "../drawing/context.js";
-import type { Color } from "../pixel/color.js";
+import { CYAN, GRAY, GREEN, WHITE, YELLOW } from "../pixel/color.js";
 import {
-  WHITE,
-  CYAN,
-  GREEN,
-  YELLOW,
-  GRAY,
-  BLUE,
-} from "../pixel/color.js";
-import {
-  highlightLine,
   DEFAULT_SYNTAX_THEME,
+  highlightLine,
   type SyntaxTheme,
-  type SyntaxToken,
 } from "./syntax.js";
 
 // ── Style types ──────────────────────────────────────────────────
@@ -138,7 +129,10 @@ export function renderMarkdown(
 ): Line[] {
   const width = options.width ?? 80;
   const theme: MarkdownTheme = { ...DEFAULT_THEME, ...options.theme };
-  const synTheme: SyntaxTheme = { ...DEFAULT_SYNTAX_THEME, ...options.syntaxTheme };
+  const synTheme: SyntaxTheme = {
+    ...DEFAULT_SYNTAX_THEME,
+    ...options.syntaxTheme,
+  };
   const indent = options.indent ?? "";
 
   const tokens = marked.lexer(source);
@@ -173,28 +167,63 @@ function renderTokens(
         renderHeading(token as Tokens.Heading, lines, theme, width, indent);
         break;
       case "paragraph":
-        renderParagraph(token as Tokens.Paragraph, lines, theme, width, indent, ctx);
+        renderParagraph(
+          token as Tokens.Paragraph,
+          lines,
+          theme,
+          width,
+          indent,
+          ctx,
+        );
         break;
       case "text": {
         // Block-level text (e.g. inside list items)
         const t = token as Tokens.Text;
         if ("tokens" in t && t.tokens) {
           const segs = inlineTokensToSegments(t.tokens, theme, ctx);
-          wordWrapSegments(segs, width - indent.length, indent, theme).forEach((l) => lines.push(l));
+          wordWrapSegments(segs, width - indent.length, indent, theme).forEach(
+            (l) => lines.push(l),
+          );
         } else {
-          const segs = [{ text: t.text, style: resolveInlineStyle(theme, ctx) }];
-          wordWrapSegments(segs, width - indent.length, indent, theme).forEach((l) => lines.push(l));
+          const segs = [
+            { text: t.text, style: resolveInlineStyle(theme, ctx) },
+          ];
+          wordWrapSegments(segs, width - indent.length, indent, theme).forEach(
+            (l) => lines.push(l),
+          );
         }
         break;
       }
       case "code":
-        renderCodeBlock(token as Tokens.Code, lines, theme, synTheme, width, indent);
+        renderCodeBlock(
+          token as Tokens.Code,
+          lines,
+          theme,
+          synTheme,
+          width,
+          indent,
+        );
         break;
       case "blockquote":
-        renderBlockquote(token as Tokens.Blockquote, lines, theme, synTheme, width, indent);
+        renderBlockquote(
+          token as Tokens.Blockquote,
+          lines,
+          theme,
+          synTheme,
+          width,
+          indent,
+        );
         break;
       case "list":
-        renderList(token as Tokens.List, lines, theme, synTheme, width, indent, ctx);
+        renderList(
+          token as Tokens.List,
+          lines,
+          theme,
+          synTheme,
+          width,
+          indent,
+          ctx,
+        );
         break;
       case "table":
         renderTable(token as Tokens.Table, lines, theme, width, indent);
@@ -208,12 +237,18 @@ function renderTokens(
         break;
       case "html":
         // Render raw HTML as plain text
-        lines.push([{ text: indent, style: theme.text }, { text: (token as Tokens.HTML).text.trim(), style: theme.text }]);
+        lines.push([
+          { text: indent, style: theme.text },
+          { text: (token as Tokens.HTML).text.trim(), style: theme.text },
+        ]);
         break;
       default:
         // Unknown token — render raw text if available
         if ("text" in token && typeof (token as any).text === "string") {
-          lines.push([{ text: indent, style: theme.text }, { text: (token as any).text, style: theme.text }]);
+          lines.push([
+            { text: indent, style: theme.text },
+            { text: (token as any).text, style: theme.text },
+          ]);
         }
         break;
     }
@@ -233,15 +268,24 @@ function renderHeading(
     token.depth === 1 ? theme.h1 : token.depth === 2 ? theme.h2 : theme.h3;
   const text = plainText(token.tokens);
 
-  lines.push([{ text: indent, style: theme.text }, { text, style }]);
+  lines.push([
+    { text: indent, style: theme.text },
+    { text, style },
+  ]);
 
   // Underline for h1 and h2
   if (token.depth === 1) {
     const rule = "═".repeat(Math.min(text.length, width - indent.length));
-    lines.push([{ text: indent, style: theme.text }, { text: rule, style }]);
+    lines.push([
+      { text: indent, style: theme.text },
+      { text: rule, style },
+    ]);
   } else if (token.depth === 2) {
     const rule = "─".repeat(Math.min(text.length, width - indent.length));
-    lines.push([{ text: indent, style: theme.text }, { text: rule, style }]);
+    lines.push([
+      { text: indent, style: theme.text },
+      { text: rule, style },
+    ]);
   }
 
   // Blank line after heading
@@ -314,7 +358,7 @@ function renderCodeBlock(
   const topFill = Math.max(0, boxW - 2 - labelText.length); // -2 for ┌┐
   lines.push([
     { text: indent, style: theme.text },
-    { text: "┌" + labelText + "─".repeat(topFill) + "┐", style: chrome },
+    { text: `┌${labelText}${"─".repeat(topFill)}┐`, style: chrome },
   ]);
 
   // Code lines: │ content          │
@@ -325,14 +369,15 @@ function renderCodeBlock(
     ];
 
     // Truncate if too wide
-    const displayLine = cl.length > innerW
-      ? cl.slice(0, innerW - 1) + "…"
-      : cl;
+    const displayLine = cl.length > innerW ? `${cl.slice(0, innerW - 1)}…` : cl;
 
     if (lang) {
       const tokens = highlightLine(lang, displayLine);
       for (const tok of tokens) {
-        lineSegs.push({ text: tok.text, style: synTheme[tok.type] ?? theme.codeBlock });
+        lineSegs.push({
+          text: tok.text,
+          style: synTheme[tok.type] ?? theme.codeBlock,
+        });
       }
     } else {
       lineSegs.push({ text: displayLine, style: theme.codeBlock });
@@ -340,7 +385,7 @@ function renderCodeBlock(
 
     // Right padding + border
     const rightPad = Math.max(0, innerW - displayLine.length);
-    lineSegs.push({ text: " ".repeat(rightPad) + " │", style: chrome });
+    lineSegs.push({ text: `${" ".repeat(rightPad)} │`, style: chrome });
 
     lines.push(lineSegs);
   }
@@ -348,7 +393,7 @@ function renderCodeBlock(
   // Bottom border: └──────────────────┘
   lines.push([
     { text: indent, style: theme.text },
-    { text: "└" + "─".repeat(Math.max(0, boxW - 2)) + "┘", style: chrome },
+    { text: `└${"─".repeat(Math.max(0, boxW - 2))}┘`, style: chrome },
   ]);
 
   lines.push([{ text: indent, style: theme.text }]);
@@ -364,14 +409,25 @@ function renderBlockquote(
   width: number,
   indent: string,
 ): void {
-  const quoteIndent = indent + "│ ";
+  const quoteIndent = `${indent}│ `;
   const innerLines: Line[] = [];
-  renderTokens(token.tokens, innerLines, theme, synTheme, width, quoteIndent, {});
+  renderTokens(
+    token.tokens,
+    innerLines,
+    theme,
+    synTheme,
+    width,
+    quoteIndent,
+    {},
+  );
 
   // Apply blockquote style to all segments
   for (const line of innerLines) {
     for (const seg of line) {
-      if (seg.text.startsWith(quoteIndent) || seg.text === quoteIndent.trimEnd()) {
+      if (
+        seg.text.startsWith(quoteIndent) ||
+        seg.text === quoteIndent.trimEnd()
+      ) {
         seg.style = theme.blockquote;
       }
     }
@@ -393,10 +449,10 @@ function renderList(
   for (let i = 0; i < token.items.length; i++) {
     const item = token.items[i];
     const marker = token.ordered ? `${(token.start || 1) + i}. ` : "• ";
-    const contIndent = indent + "  "; // 2-char continuation indent
+    const contIndent = `${indent}  `; // 2-char continuation indent
 
     // Task list checkbox
-    let prefix: Seg[] = [{ text: indent, style: theme.text }];
+    const prefix: Seg[] = [{ text: indent, style: theme.text }];
     if (item.task) {
       const check = item.checked ? "☑ " : "☐ ";
       prefix.push({ text: check, style: theme.checkbox });
@@ -428,7 +484,15 @@ function renderList(
         }
         firstLine = false;
       } else if (sub.type === "list") {
-        renderList(sub as Tokens.List, lines, theme, synTheme, width, contIndent, ctx);
+        renderList(
+          sub as Tokens.List,
+          lines,
+          theme,
+          synTheme,
+          width,
+          contIndent,
+          ctx,
+        );
       } else {
         const subLines: Line[] = [];
         renderTokens([sub], subLines, theme, synTheme, width, contIndent, ctx);
@@ -458,7 +522,9 @@ function renderTable(
   const numCols = token.header.length;
 
   // Compute column widths from content
-  const colWidths: number[] = token.header.map((h) => plainText(h.tokens).length);
+  const colWidths: number[] = token.header.map(
+    (h) => plainText(h.tokens).length,
+  );
   for (const row of token.rows) {
     for (let c = 0; c < numCols; c++) {
       if (row[c]) {
@@ -481,7 +547,10 @@ function renderTable(
 
   // Helper to build a data row
   const dataRow = (cells: Tokens.TableCell[], style: TextStyle): Line => {
-    const segs: Seg[] = [{ text: indent, style: theme.text }, { text: "│", style: border }];
+    const segs: Seg[] = [
+      { text: indent, style: theme.text },
+      { text: "│", style: border },
+    ];
     for (let c = 0; c < numCols; c++) {
       const cellText = cells[c] ? plainText(cells[c].tokens) : "";
       const align = token.header[c]?.align;
@@ -597,7 +666,10 @@ function inlineTokensToSegments(
       }
       case "image": {
         const img = t as Tokens.Image;
-        segs.push({ text: `[image: ${img.text || img.href}]`, style: theme.linkUrl });
+        segs.push({
+          text: `[image: ${img.text || img.href}]`,
+          style: theme.linkUrl,
+        });
         break;
       }
       case "br":
@@ -605,12 +677,18 @@ function inlineTokensToSegments(
         segs.push({ text: "\n", style: theme.text });
         break;
       case "escape":
-        segs.push({ text: (t as Tokens.Escape).text, style: resolveInlineStyle(theme, ctx) });
+        segs.push({
+          text: (t as Tokens.Escape).text,
+          style: resolveInlineStyle(theme, ctx),
+        });
         break;
       default:
         // Fallback: render as plain text
         if ("text" in t && typeof (t as any).text === "string") {
-          segs.push({ text: (t as any).text, style: resolveInlineStyle(theme, ctx) });
+          segs.push({
+            text: (t as any).text,
+            style: resolveInlineStyle(theme, ctx),
+          });
         }
         break;
     }
@@ -679,7 +757,7 @@ function wordWrapSegments(
     if (col >= maxWidth) {
       // Walk back through lineSegs to find the last space
       let broke = false;
-      let backtrack = 0;
+      let _backtrack = 0;
       for (let s = lineSegs.length - 1; s >= 1; s--) {
         const seg = lineSegs[s];
         const spaceIdx = seg.text.lastIndexOf(" ");
@@ -687,7 +765,10 @@ function wordWrapSegments(
           // Split this segment at the space
           const overflow: Seg[] = [];
           if (spaceIdx + 1 < seg.text.length) {
-            overflow.push({ text: seg.text.slice(spaceIdx + 1), style: seg.style });
+            overflow.push({
+              text: seg.text.slice(spaceIdx + 1),
+              style: seg.style,
+            });
           }
           // Collect all segments after s
           for (let a = s + 1; a < lineSegs.length; a++) {
@@ -708,7 +789,7 @@ function wordWrapSegments(
           broke = true;
           break;
         }
-        backtrack += seg.text.length;
+        _backtrack += seg.text.length;
       }
       if (!broke) {
         // No space found — hard break at maxWidth
@@ -776,7 +857,7 @@ function padCell(
   align: "left" | "center" | "right" | null,
 ): string {
   const inner = width - 2; // 1 char padding each side
-  const truncated = text.length > inner ? text.slice(0, inner - 1) + "…" : text;
+  const truncated = text.length > inner ? `${text.slice(0, inner - 1)}…` : text;
   const pad = inner - truncated.length;
 
   let content: string;
@@ -795,5 +876,5 @@ function padCell(
       break;
   }
 
-  return " " + content + " ";
+  return ` ${content} `;
 }

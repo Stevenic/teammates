@@ -69,7 +69,7 @@ export class PromptBox {
    * Call before rl.prompt().
    */
   drawTopBorder(): void {
-    this.out.write(this.buildBorder() + "\n");
+    this.out.write(`${this.buildBorder()}\n`);
     this.active = true;
   }
 
@@ -103,19 +103,19 @@ export class PromptBox {
       let linesBelow = 0;
 
       // Bottom border
-      buf += "\n" + this.buildBorder();
+      buf += `\n${this.buildBorder()}`;
       linesBelow++;
 
       // Status line
       const status = this.getStatusLine();
       if (status) {
-        buf += "\n" + truncateAnsi(status, cols - 1);
+        buf += `\n${truncateAnsi(status, cols - 1)}`;
         linesBelow++;
       }
 
       // Dropdown lines
       for (const line of this.dropdownLines) {
-        buf += "\n" + truncateAnsi(line, cols - 1);
+        buf += `\n${truncateAnsi(line, cols - 1)}`;
         linesBelow++;
       }
 
@@ -145,8 +145,8 @@ export class PromptBox {
       // Strategy: scroll past any reflowed junk by writing blank lines,
       // then draw a fresh prompt area. The old top border in scrollback
       // may look wrong — that's acceptable, same as any terminal app.
-      this.out.write("\n\n" + esc.eraseLine);
-      this.out.write(this.buildBorder() + "\n");
+      this.out.write(`\n\n${esc.eraseLine}`);
+      this.out.write(`${this.buildBorder()}\n`);
       this.rl.prompt();
     });
   }

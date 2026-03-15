@@ -5,9 +5,9 @@
  * the available width, children are proportionally scaled down.
  */
 
-import type { Size, Rect, Constraint } from './types.js';
-import type { DrawingContext } from '../drawing/context.js';
-import { Control, clampSize } from './control.js';
+import type { DrawingContext } from "../drawing/context.js";
+import { Control, clampSize } from "./control.js";
+import type { Constraint, Rect, Size } from "./types.js";
 
 export interface RowOptions {
   children?: Control[];
@@ -31,7 +31,7 @@ export class Row extends Control {
   // ── Layout ────────────────────────────────────────────────────────
 
   override measure(constraint: Constraint): Size {
-    const visible = this.children.filter(c => c.visible);
+    const visible = this.children.filter((c) => c.visible);
     if (visible.length === 0) {
       const size = clampSize({ width: 0, height: 0 }, constraint);
       this.desiredSize = size;
@@ -67,7 +67,7 @@ export class Row extends Control {
   override arrange(rect: Rect): void {
     this.bounds = rect;
 
-    const visible = this.children.filter(c => c.visible);
+    const visible = this.children.filter((c) => c.visible);
     if (visible.length === 0) return;
 
     const totalGap = this.gap * (visible.length - 1);

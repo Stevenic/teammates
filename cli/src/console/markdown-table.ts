@@ -12,7 +12,6 @@
  */
 
 import chalk from "chalk";
-import { stripAnsi } from "@teammates/consolonia";
 
 // ── Box-drawing characters ──────────────────────────────────────
 
@@ -132,14 +131,12 @@ function renderTable(table: ParsedTable): string {
   }
 
   const hLine = (left: string, mid: string, right: string) =>
-    left +
-    widths.map((w) => BOX.horizontal.repeat(w)).join(mid) +
-    right;
+    left + widths.map((w) => BOX.horizontal.repeat(w)).join(mid) + right;
 
-  const dataLine = (cells: string[]) =>
+  const _dataLine = (cells: string[]) =>
     BOX.vertical +
     cells
-      .map((cell, i) => " " + padCell(cell, widths[i] - 2, alignments[i]) + " ")
+      .map((cell, i) => ` ${padCell(cell, widths[i] - 2, alignments[i])} `)
       .join(BOX.vertical) +
     BOX.vertical;
 
@@ -151,10 +148,12 @@ function renderTable(table: ParsedTable): string {
   // Header row
   out.push(
     chalk.gray(BOX.vertical) +
-    headers
-      .map((h, i) => " " + chalk.bold(padCell(h, widths[i] - 2, alignments[i])) + " ")
-      .join(chalk.gray(BOX.vertical)) +
-    chalk.gray(BOX.vertical)
+      headers
+        .map(
+          (h, i) => ` ${chalk.bold(padCell(h, widths[i] - 2, alignments[i]))} `,
+        )
+        .join(chalk.gray(BOX.vertical)) +
+      chalk.gray(BOX.vertical),
   );
 
   // Header separator
@@ -164,10 +163,10 @@ function renderTable(table: ParsedTable): string {
   for (const row of rows) {
     out.push(
       chalk.gray(BOX.vertical) +
-      row
-        .map((cell, i) => " " + padCell(cell, widths[i] - 2, alignments[i]) + " ")
-        .join(chalk.gray(BOX.vertical)) +
-      chalk.gray(BOX.vertical)
+        row
+          .map((cell, i) => ` ${padCell(cell, widths[i] - 2, alignments[i])} `)
+          .join(chalk.gray(BOX.vertical)) +
+        chalk.gray(BOX.vertical),
     );
   }
 

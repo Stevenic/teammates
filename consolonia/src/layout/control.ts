@@ -11,9 +11,9 @@
  *  - Lightweight inline event emitter (no Node.js dependency)
  */
 
-import type { Size, Rect, Constraint } from './types.js';
-import type { DrawingContext } from '../drawing/context.js';
-import type { InputEvent } from '../input/events.js';
+import type { DrawingContext } from "../drawing/context.js";
+import type { InputEvent } from "../input/events.js";
+import type { Constraint, Rect, Size } from "./types.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -109,9 +109,9 @@ export abstract class Control {
    */
   handleInput(event: InputEvent): boolean {
     // Tab focus cycling at root or any level
-    if (event.type === 'key') {
+    if (event.type === "key") {
       const ke = event.event;
-      if (ke.key === 'tab' || ke.key === 'Tab') {
+      if (ke.key === "tab" || ke.key === "Tab") {
         if (ke.shift) {
           this.focusPrev();
         } else {
@@ -145,14 +145,14 @@ export abstract class Control {
   onFocus(): void {
     this.focused = true;
     this.invalidate();
-    this.emit('focus');
+    this.emit("focus");
   }
 
   /** Called when this control loses focus. */
   onBlur(): void {
     this.focused = false;
     this.invalidate();
-    this.emit('blur');
+    this.emit("blur");
   }
 
   // ── Focus management ──────────────────────────────────────────────
@@ -163,7 +163,7 @@ export abstract class Control {
     const list = collectFocusable(r);
     if (list.length === 0) return;
 
-    const currentIndex = list.findIndex(c => c.focused);
+    const currentIndex = list.findIndex((c) => c.focused);
     // Blur current
     if (currentIndex >= 0) list[currentIndex].onBlur();
 
@@ -177,11 +177,10 @@ export abstract class Control {
     const list = collectFocusable(r);
     if (list.length === 0) return;
 
-    const currentIndex = list.findIndex(c => c.focused);
+    const currentIndex = list.findIndex((c) => c.focused);
     if (currentIndex >= 0) list[currentIndex].onBlur();
 
-    const prevIndex =
-      currentIndex <= 0 ? list.length - 1 : currentIndex - 1;
+    const prevIndex = currentIndex <= 0 ? list.length - 1 : currentIndex - 1;
     list[prevIndex].onFocus();
   }
 

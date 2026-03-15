@@ -9,100 +9,94 @@
 // ── Pixel types ─────────────────────────────────────────────────────
 
 export {
+  background,
+  blendBackground,
+  EMPTY_BACKGROUND,
+  type PixelBackground,
+} from "./pixel/background.js";
+
+export {
+  BOX_CHARS,
+  BOX_NONE,
+  type BoxPattern,
+  boxChar,
+  DOWN,
+  LEFT,
+  mergeBoxPatterns,
+  RIGHT,
+  UP,
+} from "./pixel/box-pattern.js";
+export { PixelBuffer } from "./pixel/buffer.js";
+export {
+  // Standard ANSI colors
+  BLACK,
+  // Bright ANSI colors
+  BLACK_BRIGHT,
+  BLUE,
+  BLUE_BRIGHT,
   type Color,
+  CYAN,
+  CYAN_BRIGHT,
   color,
   colorBlend,
   colorBrighten,
   colorShade,
-  TRANSPARENT,
-  // Standard ANSI colors
-  BLACK,
-  RED,
-  GREEN,
-  YELLOW,
-  BLUE,
-  MAGENTA,
-  CYAN,
-  WHITE,
-  // Bright ANSI colors
-  BLACK_BRIGHT,
-  RED_BRIGHT,
-  GREEN_BRIGHT,
-  YELLOW_BRIGHT,
-  BLUE_BRIGHT,
-  MAGENTA_BRIGHT,
-  CYAN_BRIGHT,
-  WHITE_BRIGHT,
+  DARK_GRAY,
   // Aliases
   GRAY,
+  GREEN,
+  GREEN_BRIGHT,
   GREY,
-  DARK_GRAY,
   LIGHT_GRAY,
+  MAGENTA,
+  MAGENTA_BRIGHT,
+  RED,
+  RED_BRIGHT,
+  TRANSPARENT,
+  WHITE,
+  WHITE_BRIGHT,
+  YELLOW,
+  YELLOW_BRIGHT,
 } from "./pixel/color.js";
-
 export {
-  type BoxPattern,
-  UP,
-  RIGHT,
-  DOWN,
-  LEFT,
-  BOX_NONE,
-  BOX_CHARS,
-  boxChar,
-  mergeBoxPatterns,
-} from "./pixel/box-pattern.js";
-
-export {
-  type Symbol,
-  charWidth,
-  sym,
-  EMPTY_SYMBOL,
-} from "./pixel/symbol.js";
-
-export {
-  type PixelForeground,
-  foreground,
   blendForeground,
   EMPTY_FOREGROUND,
+  foreground,
+  type PixelForeground,
 } from "./pixel/foreground.js";
 
 export {
-  type PixelBackground,
-  background,
-  blendBackground,
-  EMPTY_BACKGROUND,
-} from "./pixel/background.js";
-
-export {
-  type Pixel,
-  pixel,
   blendPixel,
   PIXEL_EMPTY,
   PIXEL_SPACE,
+  type Pixel,
+  pixel,
 } from "./pixel/pixel.js";
-
-export { PixelBuffer } from "./pixel/buffer.js";
+export {
+  charWidth,
+  EMPTY_SYMBOL,
+  type Symbol,
+  sym,
+} from "./pixel/symbol.js";
 
 // ── Layout types ────────────────────────────────────────────────────
 
-export {
-  type Size,
-  type Point,
-  type Rect,
-  type Constraint,
+export type {
+  Constraint,
+  Point,
+  Rect,
+  Size,
 } from "./layout/types.js";
 
 // ── ANSI output ─────────────────────────────────────────────────────
 
 export * as esc from "./ansi/esc.js";
-
+export { AnsiOutput } from "./ansi/output.js";
 export {
   stripAnsi,
-  visibleLength,
   truncateAnsi,
+  visibleLength,
 } from "./ansi/strip.js";
-
-export { AnsiOutput } from "./ansi/output.js";
 
 // ── Render pipeline ─────────────────────────────────────────────────
 
@@ -111,87 +105,98 @@ export { RenderTarget } from "./render/render-target.js";
 
 // ── Input system ────────────────────────────────────────────────────
 
+export { EscapeMatcher } from "./input/escape-matcher.js";
 export type {
+  InputEvent,
   KeyEvent,
   MouseEvent,
   PasteEvent,
-  InputEvent,
 } from "./input/events.js";
-
 export {
   keyEvent,
   mouseEvent,
   pasteEvent,
   resizeEvent,
 } from "./input/events.js";
-
-export { enableRawMode, disableRawMode } from "./input/raw-mode.js";
-export { MatchResult, type IMatcher } from "./input/matcher.js";
-export { EscapeMatcher } from "./input/escape-matcher.js";
-export { PasteMatcher } from "./input/paste-matcher.js";
+export { type IMatcher, MatchResult } from "./input/matcher.js";
 export { MouseMatcher } from "./input/mouse-matcher.js";
+export { PasteMatcher } from "./input/paste-matcher.js";
+export { createInputProcessor, InputProcessor } from "./input/processor.js";
+export { disableRawMode, enableRawMode } from "./input/raw-mode.js";
 export { TextMatcher } from "./input/text-matcher.js";
-export { InputProcessor, createInputProcessor } from "./input/processor.js";
 
 // ── Drawing context ─────────────────────────────────────────────────
 
 export { ClipStack } from "./drawing/clip.js";
-export { DrawingContext, type TextStyle, type BoxStyle } from "./drawing/context.js";
+export {
+  type BoxStyle,
+  DrawingContext,
+  type TextStyle,
+} from "./drawing/context.js";
 
 // ── Layout engine ───────────────────────────────────────────────────
 
-export { Control } from "./layout/control.js";
 export { Box, type BoxOptions } from "./layout/box.js";
-export { Row, type RowOptions } from "./layout/row.js";
 export { Column, type ColumnOptions } from "./layout/column.js";
+export { Control } from "./layout/control.js";
+export { Row, type RowOptions } from "./layout/row.js";
 export { Stack, type StackOptions } from "./layout/stack.js";
 
 // ── Widgets ─────────────────────────────────────────────────────────
 
-export { Text, type TextOptions } from "./widgets/text.js";
 export { Border, type BorderOptions } from "./widgets/border.js";
-export { Panel, type PanelOptions } from "./widgets/panel.js";
-export { TextInput, type TextInputOptions, type InputColorizer, type DeleteSizer } from "./widgets/text-input.js";
-export { ScrollView, type ScrollViewOptions } from "./widgets/scroll-view.js";
-export { StyledText, type StyledTextOptions, type StyledLine } from "./widgets/styled-text.js";
 export {
   ChatView,
   type ChatViewOptions,
   type DropdownItem,
   type FeedActionItem,
 } from "./widgets/chat-view.js";
+export { Panel, type PanelOptions } from "./widgets/panel.js";
+export { ScrollView, type ScrollViewOptions } from "./widgets/scroll-view.js";
+export {
+  type StyledLine,
+  StyledText,
+  type StyledTextOptions,
+} from "./widgets/styled-text.js";
+export { Text, type TextOptions } from "./widgets/text.js";
+export {
+  type DeleteSizer,
+  type InputColorizer,
+  TextInput,
+  type TextInputOptions,
+} from "./widgets/text-input.js";
 
 // ── Markdown ─────────────────────────────────────────────────────────
 
 export {
-  renderMarkdown,
   type MarkdownOptions,
   type MarkdownTheme,
+  renderMarkdown,
 } from "./widgets/markdown.js";
 
 // ── Syntax highlighting ──────────────────────────────────────────────
 
 export {
-  registerHighlighter,
+  DEFAULT_SYNTAX_THEME,
   getHighlighter,
   highlightLine,
-  DEFAULT_SYNTAX_THEME,
+  registerHighlighter,
   type SyntaxHighlighter,
+  type SyntaxTheme,
   type SyntaxToken,
   type SyntaxTokenType,
-  type SyntaxTheme,
 } from "./widgets/syntax.js";
 
 // ── Styled text (chalk-like API) ─────────────────────────────────────
 
 export {
-  pen,
   concat,
-  spanText,
-  spanLength,
   isStyledSpan,
-  type StyledSpan,
+  pen,
   type StyledSegment,
+  type StyledSpan,
+  spanLength,
+  spanText,
 } from "./styled.js";
 
 // ── App shell ────────────────────────────────────────────────────────

@@ -54,12 +54,12 @@ export class Wordwheel {
     this.dropdown = options.dropdown;
     this.getItems = options.getItems;
 
-    this.formatHighlighted = options.formatHighlighted ?? ((item) =>
-      `▸ ${item.label.padEnd(14)}${item.description}`
-    );
-    this.formatNormal = options.formatNormal ?? ((item) =>
-      `  ${item.label.padEnd(14)}${item.description}`
-    );
+    this.formatHighlighted =
+      options.formatHighlighted ??
+      ((item) => `▸ ${item.label.padEnd(14)}${item.description}`);
+    this.formatNormal =
+      options.formatNormal ??
+      ((item) => `  ${item.label.padEnd(14)}${item.description}`);
   }
 
   /** Recompute items based on current readline state. */
@@ -81,7 +81,7 @@ export class Wordwheel {
   /** Render the current items to the dropdown. */
   render(): void {
     const lines = this.items.map((item, i) =>
-      i === this.index ? this.formatHighlighted(item) : this.formatNormal(item)
+      i === this.index ? this.formatHighlighted(item) : this.formatNormal(item),
     );
     this.dropdown.render(lines);
   }

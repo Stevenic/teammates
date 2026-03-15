@@ -6,8 +6,8 @@
  */
 
 import type { AgentAdapter } from "../adapter.js";
-import type { TeammateConfig, TaskResult } from "../types.js";
 import { buildTeammatePrompt } from "../adapter.js";
+import type { TaskResult, TeammateConfig } from "../types.js";
 
 let nextId = 1;
 
@@ -19,9 +19,9 @@ export class EchoAdapter implements AgentAdapter {
   }
 
   async executeTask(
-    sessionId: string,
+    _sessionId: string,
     teammate: TeammateConfig,
-    prompt: string
+    prompt: string,
   ): Promise<TaskResult> {
     const fullPrompt = buildTeammatePrompt(teammate, prompt);
 

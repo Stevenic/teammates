@@ -7,10 +7,10 @@
  * have actually changed *and* fall inside the current dirty regions.
  */
 
-import type { Pixel } from '../pixel/pixel.js';
-import type { PixelBuffer } from '../pixel/buffer.js';
-import type { AnsiOutput } from '../ansi/output.js';
-import { DirtyRegions } from './regions.js';
+import type { AnsiOutput } from "../ansi/output.js";
+import type { PixelBuffer } from "../pixel/buffer.js";
+import type { Pixel } from "../pixel/pixel.js";
+import { DirtyRegions } from "./regions.js";
 
 export class RenderTarget {
   private readonly _buffer: PixelBuffer;

@@ -18,11 +18,10 @@
 import { EventEmitter } from "node:events";
 import {
   createInputProcessor,
+  esc,
   type InputEvent,
   type KeyEvent,
   type PasteEvent,
-  esc,
-  stripAnsi,
   visibleLength,
 } from "@teammates/consolonia";
 
@@ -80,9 +79,9 @@ export class PromptInput extends EventEmitter {
   private _beforeSubmit: ((currentValue: string) => string | undefined) | null;
   private _colorize: ((value: string) => string) | null;
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
-  private _promptRows = 1;  // screen rows occupied by prompt + value
-  private _cursorRow = 0;   // cursor's row within prompt (0-based)
-  private _drawnCols = 0;   // terminal width when we last drew the prompt area
+  private _promptRows = 1; // screen rows occupied by prompt + value
+  private _cursorRow = 0; // cursor's row within prompt (0-based)
+  private _drawnCols = 0; // terminal width when we last drew the prompt area
   private _statusLine: string | null = null; // optional line above top border
 
   constructor(options: PromptInputOptions = {}) {
@@ -106,16 +105,24 @@ export class PromptInput extends EventEmitter {
   // ── Public API ─────────────────────────────────────────────────
 
   /** Current line text. */
-  get line(): string { return this._value; }
+  get line(): string {
+    return this._value;
+  }
 
   /** Current cursor position. */
-  get cursor(): number { return this._cursor; }
+  get cursor(): number {
+    return this._cursor;
+  }
 
   /** Whether the input is active (accepting keystrokes). */
-  get active(): boolean { return this._active; }
+  get active(): boolean {
+    return this._active;
+  }
 
   /** Command history. */
-  get history(): string[] { return this._history; }
+  get history(): string[] {
+    return this._history;
+  }
 
   /** Set prompt text. */
   set prompt(text: string) {
@@ -123,7 +130,9 @@ export class PromptInput extends EventEmitter {
     this._promptLen = visibleLength(text);
   }
 
-  get prompt(): string { return this._prompt; }
+  get prompt(): string {
+    return this._prompt;
+  }
 
   /** Set the line text and move cursor to end. */
   setLine(text: string): void {
@@ -200,7 +209,7 @@ export class PromptInput extends EventEmitter {
     if (down > 0) process.stdout.write(esc.moveDown(down));
 
     // Erase bottom border + dropdown (starts on next line)
-    process.stdout.write("\n\r" + esc.eraseDown);
+    process.stdout.write(`\n\r${esc.eraseDown}`);
     this._linesBelow = 0;
   }
 
@@ -215,7 +224,7 @@ export class PromptInput extends EventEmitter {
 
     // Move up from cursor row to top border (+ status line if present)
     const up = this._cursorRow + 1 + (this._statusLine ? 1 : 0);
-    process.stdout.write(esc.moveUp(up) + "\r" + esc.eraseDown);
+    process.stdout.write(`${esc.moveUp(up)}\r${esc.eraseDown}`);
     this._linesBelow = 0;
   }
 
@@ -233,7 +242,7 @@ export class PromptInput extends EventEmitter {
     if (text === null && hadStatus) {
       // Remove status line — move up to it, erase, redraw prompt area
       const up = this._cursorRow + 1 + 1; // cursor → prompt start → top border → status
-      process.stdout.write(esc.moveUp(up) + "\r" + esc.eraseDown);
+      process.stdout.write(`${esc.moveUp(up)}\r${esc.eraseDown}`);
       this._linesBelow = 0;
       this._drawTopBorder();
       this._drawPromptLine();
@@ -241,7 +250,7 @@ export class PromptInput extends EventEmitter {
     } else if (text !== null && !hadStatus) {
       // Add status line — move up to top border, erase, draw status + prompt area
       const up = this._cursorRow + 1; // cursor → prompt start → top border
-      process.stdout.write(esc.moveUp(up) + "\r" + esc.eraseDown);
+      process.stdout.write(`${esc.moveUp(up)}\r${esc.eraseDown}`);
       this._linesBelow = 0;
       this._drawStatusLine();
       this._drawTopBorder();
@@ -250,7 +259,9 @@ export class PromptInput extends EventEmitter {
     } else if (text !== null && hadStatus) {
       // Update status line in place — move up to status line, overwrite, move back
       const up = this._cursorRow + 1 + 1;
-      process.stdout.write(esc.moveUp(up) + "\r" + esc.eraseLine + text + esc.moveDown(up) + "\r");
+      process.stdout.write(
+        `${esc.moveUp(up)}\r${esc.eraseLine}${text}${esc.moveDown(up)}\r`,
+      );
     }
   }
 
@@ -358,8 +369,11 @@ export class PromptInput extends EventEmitter {
       const val = modified ?? this._value;
 
       // Add to history
-      if (val.length > 0 &&
-          (this._history.length === 0 || this._history[this._history.length - 1] !== val)) {
+      if (
+        val.length > 0 &&
+        (this._history.length === 0 ||
+          this._history[this._history.length - 1] !== val)
+      ) {
         this._history.push(val);
       }
 
@@ -389,7 +403,8 @@ export class PromptInput extends EventEmitter {
       if (key.ctrl) {
         // Ctrl+Backspace: delete word backward
         const newPos = this._wordBoundaryLeft(this._cursor);
-        this._value = this._value.slice(0, newPos) + this._value.slice(this._cursor);
+        this._value =
+          this._value.slice(0, newPos) + this._value.slice(this._cursor);
         this._cursor = newPos;
       } else if (this._cursor > 0) {
         this._value =
@@ -550,13 +565,13 @@ export class PromptInput extends EventEmitter {
 
   private _drawStatusLine(): void {
     if (this._statusLine) {
-      process.stdout.write(this._statusLine + "\n");
+      process.stdout.write(`${this._statusLine}\n`);
     }
   }
 
   private _drawTopBorder(): void {
     this._drawnCols = this._cols();
-    process.stdout.write(this._buildBorder() + "\n");
+    process.stdout.write(`${this._buildBorder()}\n`);
   }
 
   private _drawPromptLine(): void {
@@ -578,7 +593,10 @@ export class PromptInput extends EventEmitter {
     process.stdout.write(line);
 
     // Calculate geometry — +1 for the cursor block char
-    const totalChars = this._promptLen + this._value.length + (this._cursor >= this._value.length ? 1 : 0);
+    const totalChars =
+      this._promptLen +
+      this._value.length +
+      (this._cursor >= this._value.length ? 1 : 0);
     this._promptRows = totalChars <= cols ? 1 : Math.ceil(totalChars / cols);
 
     const cursorCharPos = this._promptLen + this._cursor;
@@ -616,12 +634,12 @@ export class PromptInput extends EventEmitter {
     if (moveToEnd > 0) buf += esc.moveDown(moveToEnd);
 
     // Bottom border
-    buf += "\n" + this._buildBorder();
+    buf += `\n${this._buildBorder()}`;
     let lines = 1;
 
     // Dropdown lines
     for (const line of this._dropdownLines) {
-      buf += "\n" + line.slice(0, cols);
+      buf += `\n${line.slice(0, cols)}`;
       lines++;
     }
 
@@ -630,7 +648,7 @@ export class PromptInput extends EventEmitter {
     // Move back to cursor row (system cursor hidden, just need row math)
     const moveBack = lines + moveToEnd;
     if (moveBack > 0) {
-      process.stdout.write(esc.moveUp(moveBack) + "\r");
+      process.stdout.write(`${esc.moveUp(moveBack)}\r`);
     }
 
     this._linesBelow = lines;
@@ -644,7 +662,7 @@ export class PromptInput extends EventEmitter {
     if (this._cursorRow > 0) {
       process.stdout.write(esc.moveUp(this._cursorRow));
     }
-    process.stdout.write("\r" + esc.eraseLine);
+    process.stdout.write(`\r${esc.eraseLine}`);
 
     // Redraw only the prompt line — borders and dropdown are unchanged
     this._drawPromptLine();
@@ -675,18 +693,20 @@ export class PromptInput extends EventEmitter {
       const promptChars = this._promptLen + this._value.length;
       const oldPromptRows = Math.max(1, rowsFor(promptChars, newCols));
       // Old bottom border was also oldCols chars:
-      const botBorderRows = rowsFor(oldCols, newCols);
+      const _botBorderRows = rowsFor(oldCols, newCols);
 
       // Cursor is currently on _cursorRow within the old prompt area.
       // Total rows above cursor: topBorderRows + _cursorRow
       // Total rows below cursor: (oldPromptRows - 1 - _cursorRow) + botBorderRows + dropdown
       const rowsAbove = topBorderRows + this._cursorRow;
-      const rowsBelowPrompt = oldPromptRows - 1 - this._cursorRow;
-      const dropdownRows = Math.max(0, this._linesBelow - 1); // _linesBelow includes bottom border
+      const _rowsBelowPrompt = oldPromptRows - 1 - this._cursorRow;
+      const _dropdownRows = Math.max(0, this._linesBelow - 1); // _linesBelow includes bottom border
 
       // Move up to top of the entire prompt area (including status line), erase, redraw
       const statusRows = this._statusLine ? 1 : 0;
-      process.stdout.write(esc.moveUp(rowsAbove + statusRows) + "\r" + esc.eraseDown);
+      process.stdout.write(
+        `${esc.moveUp(rowsAbove + statusRows)}\r${esc.eraseDown}`,
+      );
       this._linesBelow = 0;
 
       // Redraw at new width

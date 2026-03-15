@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { Orchestrator } from "./orchestrator.js";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentAdapter } from "./adapter.js";
-import type { TeammateConfig, TaskResult, OrchestratorEvent } from "./types.js";
+import { Orchestrator } from "./orchestrator.js";
+import type { OrchestratorEvent, TaskResult, TeammateConfig } from "./types.js";
 
-function makeTeammate(name: string, role = "Test role.", primary: string[] = []): TeammateConfig {
+function makeTeammate(
+  name: string,
+  role = "Test role.",
+  primary: string[] = [],
+): TeammateConfig {
   return {
     name,
     role,
@@ -19,17 +23,21 @@ function makeMockAdapter(results?: Map<string, TaskResult>): AgentAdapter {
   let sessionCounter = 0;
   return {
     name: "mock",
-    startSession: vi.fn(async (t: TeammateConfig) => `mock-${t.name}-${++sessionCounter}`),
-    executeTask: vi.fn(async (_sid: string, t: TeammateConfig, _prompt: string) => {
-      if (results?.has(t.name)) return results.get(t.name)!;
-      return {
-        teammate: t.name,
-        success: true,
-        summary: `${t.name} completed task`,
-        changedFiles: [],
-        handoffs: [],
-      };
-    }),
+    startSession: vi.fn(
+      async (t: TeammateConfig) => `mock-${t.name}-${++sessionCounter}`,
+    ),
+    executeTask: vi.fn(
+      async (_sid: string, t: TeammateConfig, _prompt: string) => {
+        if (results?.has(t.name)) return results.get(t.name)!;
+        return {
+          teammate: t.name,
+          success: true,
+          summary: `${t.name} completed task`,
+          changedFiles: [],
+          handoffs: [],
+        };
+      },
+    ),
     destroySession: vi.fn(async () => {}),
   };
 }
@@ -37,7 +45,7 @@ function makeMockAdapter(results?: Map<string, TaskResult>): AgentAdapter {
 function createOrchestrator(
   teammates: TeammateConfig[],
   adapter?: AgentAdapter,
-  onEvent?: (e: OrchestratorEvent) => void
+  onEvent?: (e: OrchestratorEvent) => void,
 ) {
   const mockAdapter = adapter ?? makeMockAdapter();
   const orch = new Orchestrator({
@@ -60,7 +68,10 @@ function createOrchestrator(
 describe("Orchestrator.route", () => {
   it("routes based on ownership keywords", () => {
     const { orch } = createOrchestrator([
-      makeTeammate("beacon", "Platform engineer.", ["recall/src/**", "cli/src/**"]),
+      makeTeammate("beacon", "Platform engineer.", [
+        "recall/src/**",
+        "cli/src/**",
+      ]),
       makeTeammate("scribe", "Documentation writer.", ["docs/**", "README.md"]),
     ]);
     expect(orch.route("fix the recall search")).toBe("beacon");
@@ -145,10 +156,13 @@ describe("Orchestrator.assign", () => {
     const { orch } = createOrchestrator(
       [makeTeammate("beacon")],
       undefined,
-      (e) => events.push(e)
+      (e) => events.push(e),
     );
     await orch.assign({ teammate: "beacon", task: "do stuff" });
-    expect(events.map((e) => e.type)).toEqual(["task_assigned", "task_completed"]);
+    expect(events.map((e) => e.type)).toEqual([
+      "task_assigned",
+      "task_completed",
+    ]);
   });
 
   it("reuses existing session", async () => {
@@ -174,7 +188,7 @@ describe("Orchestrator handoffs", () => {
     const adapter = makeMockAdapter(results);
     const { orch } = createOrchestrator(
       [makeTeammate("beacon"), makeTeammate("scribe")],
-      adapter
+      adapter,
     );
     const result = await orch.assign({ teammate: "beacon", task: "do stuff" });
     expect(result.handoffs).toHaveLength(1);
@@ -189,7 +203,7 @@ describe("Orchestrator.reset", () => {
     const adapter = makeMockAdapter();
     const { orch } = createOrchestrator(
       [makeTeammate("beacon"), makeTeammate("scribe")],
-      adapter
+      adapter,
     );
     await orch.assign({ teammate: "beacon", task: "task" });
     await orch.reset();
@@ -231,7 +245,9 @@ describe("Orchestrator.refresh", () => {
 
     // Mock loadAll to return existing teammates only
     const registry = orch.getRegistry();
-    vi.spyOn(registry, "loadAll").mockImplementation(async () => registry.all());
+    vi.spyOn(registry, "loadAll").mockImplementation(async () =>
+      registry.all(),
+    );
 
     const added = await orch.refresh();
     expect(added).toEqual([]);

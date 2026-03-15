@@ -14,13 +14,13 @@
  * arrives within the timeout, we emit an escape key event.
  */
 
-import { EventEmitter } from 'node:events';
-import { type IMatcher, MatchResult } from './matcher.js';
-import { type InputEvent } from './events.js';
-import { PasteMatcher } from './paste-matcher.js';
-import { MouseMatcher } from './mouse-matcher.js';
-import { EscapeMatcher } from './escape-matcher.js';
-import { TextMatcher } from './text-matcher.js';
+import { EventEmitter } from "node:events";
+import { EscapeMatcher } from "./escape-matcher.js";
+import type { InputEvent } from "./events.js";
+import { type IMatcher, MatchResult } from "./matcher.js";
+import { MouseMatcher } from "./mouse-matcher.js";
+import { PasteMatcher } from "./paste-matcher.js";
+import { TextMatcher } from "./text-matcher.js";
 
 /** Duration in ms to wait for a follow-up character after a lone ESC. */
 const ESC_TIMEOUT_MS = 50;
@@ -106,7 +106,7 @@ export class InputProcessor {
     }
 
     // Check if any matcher is still active (in Partial state).
-    const anyActive = this.active.some(a => a);
+    const anyActive = this.active.some((a) => a);
     if (!anyActive) {
       // No matcher claimed this sequence. Reset all for next input.
       this.resetAll();
@@ -151,7 +151,7 @@ export class InputProcessor {
   }
 
   private emit(event: InputEvent): void {
-    this.emitter.emit('input', event);
+    this.emitter.emit("input", event);
   }
 }
 

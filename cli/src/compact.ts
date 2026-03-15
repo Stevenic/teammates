@@ -10,8 +10,8 @@
  *   weekly summaries (>52 weeks) → monthly summary (kept permanently)
  */
 
-import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 export interface CompactionResult {
   teammate: string;
@@ -26,10 +26,14 @@ export interface CompactionResult {
  * Returns { year, week } where week is 1-53.
  */
 function getISOWeek(date: Date): { year: number; week: number } {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const d = new Date(
+    Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()),
+  );
   d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  const week = Math.ceil(
+    ((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
+  );
   return { year: d.getUTCFullYear(), week };
 }
 
@@ -43,10 +47,12 @@ function formatWeek(year: number, week: number): string {
 /**
  * Group daily logs by ISO week.
  */
-function groupDailiesByWeek<T extends { date: string }>(dailies: T[]): Map<string, T[]> {
+function groupDailiesByWeek<T extends { date: string }>(
+  dailies: T[],
+): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const daily of dailies) {
-    const d = new Date(daily.date + "T00:00:00Z");
+    const d = new Date(`${daily.date}T00:00:00Z`);
     const { year, week } = getISOWeek(d);
     const key = formatWeek(year, week);
     const group = groups.get(key) ?? ([] as T[]);
@@ -59,7 +65,9 @@ function groupDailiesByWeek<T extends { date: string }>(dailies: T[]): Map<strin
 /**
  * Group weekly summaries by month (YYYY-MM).
  */
-function groupWeekliesByMonth<T extends { week: string }>(weeklies: T[]): Map<string, T[]> {
+function groupWeekliesByMonth<T extends { week: string }>(
+  weeklies: T[],
+): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const weekly of weeklies) {
     // Parse YYYY-Wnn to get approximate month from the Thursday of that week
@@ -86,7 +94,10 @@ function groupWeekliesByMonth<T extends { week: string }>(weeklies: T[]): Map<st
  * Build a weekly summary from daily logs.
  * This is a structural concatenation — the agent can refine it afterward.
  */
-function buildWeeklySummary(weekKey: string, dailies: { date: string; content: string }[]): string {
+function buildWeeklySummary(
+  weekKey: string,
+  dailies: { date: string; content: string }[],
+): string {
   // Sort chronologically
   const sorted = [...dailies].sort((a, b) => a.date.localeCompare(b.date));
   const firstDate = sorted[0].date;
@@ -115,7 +126,10 @@ function buildWeeklySummary(weekKey: string, dailies: { date: string; content: s
 /**
  * Build a monthly summary from weekly summaries.
  */
-function buildMonthlySummary(monthKey: string, weeklies: { week: string; content: string }[]): string {
+function buildMonthlySummary(
+  monthKey: string,
+  weeklies: { week: string; content: string }[],
+): string {
   const sorted = [...weeklies].sort((a, b) => a.week.localeCompare(b.week));
   const firstWeek = sorted[0].week;
   const lastWeek = sorted[sorted.length - 1].week;
@@ -295,7 +309,10 @@ export async function compactWeeklies(teammateDir: string): Promise<{
  * 1. Compact completed weeks' dailies → weekly summaries
  * 2. Compact weeklies older than 52 weeks → monthly summaries
  */
-export async function compactEpisodic(teammateDir: string, teammateName: string): Promise<CompactionResult> {
+export async function compactEpisodic(
+  teammateDir: string,
+  teammateName: string,
+): Promise<CompactionResult> {
   const dailyResult = await compactDailies(teammateDir);
   const weeklyResult = await compactWeeklies(teammateDir);
 

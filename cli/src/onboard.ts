@@ -7,8 +7,8 @@
  * analyze the codebase and create teammate-specific folders.
  */
 
-import { readFile, readdir, copyFile, mkdir, stat } from "node:fs/promises";
-import { resolve, join, dirname } from "node:path";
+import { copyFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -19,8 +19,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  */
 function getTemplateDir(): string {
   const candidates = [
-    resolve(__dirname, "../template"),       // dist/ → cli/template
-    resolve(__dirname, "../../template"),     // src/ → cli/template (dev)
+    resolve(__dirname, "../template"), // dist/ → cli/template
+    resolve(__dirname, "../../template"), // src/ → cli/template (dev)
   ];
   return candidates[0]; // both resolve to the same cli/template
 }
@@ -30,7 +30,9 @@ function getTemplateDir(): string {
  * Skips files that already exist (idempotent).
  * Returns the list of files that were copied.
  */
-export async function copyTemplateFiles(teammatesDir: string): Promise<string[]> {
+export async function copyTemplateFiles(
+  teammatesDir: string,
+): Promise<string[]> {
   const templateDir = getTemplateDir();
   const copied: string[] = [];
 
@@ -53,7 +55,9 @@ export async function copyTemplateFiles(teammatesDir: string): Promise<string[]>
       try {
         await copyFile(src, dest);
         copied.push(file);
-      } catch { /* template file missing, skip */ }
+      } catch {
+        /* template file missing, skip */
+      }
     }
   }
 
@@ -81,7 +85,9 @@ export async function copyTemplateFiles(teammatesDir: string): Promise<string[]>
         await copyFile(join(templateExampleDir, file), join(exampleDir, file));
         copied.push(`example/${file}`);
       }
-    } catch { /* template example dir missing, skip */ }
+    } catch {
+      /* template example dir missing, skip */
+    }
   }
 
   return copied;
@@ -92,9 +98,9 @@ export async function copyTemplateFiles(teammatesDir: string): Promise<string[]>
  */
 export async function getOnboardingPrompt(projectDir: string): Promise<string> {
   const candidates = [
-    join(projectDir, "ONBOARDING.md"),                // user's project
-    resolve(__dirname, "../../ONBOARDING.md"),         // monorepo: cli/dist/ → root
-    resolve(__dirname, "../../../ONBOARDING.md"),      // extra nesting fallback
+    join(projectDir, "ONBOARDING.md"), // user's project
+    resolve(__dirname, "../../ONBOARDING.md"), // monorepo: cli/dist/ → root
+    resolve(__dirname, "../../../ONBOARDING.md"), // extra nesting fallback
   ];
 
   for (const path of candidates) {
@@ -103,7 +109,9 @@ export async function getOnboardingPrompt(projectDir: string): Promise<string> {
       if (content.includes("## Step 1")) {
         return wrapPrompt(content, projectDir);
       }
-    } catch { /* not found, try next */ }
+    } catch {
+      /* not found, try next */
+    }
   }
 
   return wrapPrompt(BUILTIN_ONBOARDING, projectDir);

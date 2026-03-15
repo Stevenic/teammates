@@ -26,28 +26,28 @@
  *   pen.gray("muted")           → [{ text: "muted", style: { fg: GRAY } }]
  */
 
-import type { Color } from "./pixel/color.js";
 import type { TextStyle } from "./drawing/context.js";
+import type { Color } from "./pixel/color.js";
 import {
   BLACK,
-  RED,
-  GREEN,
-  YELLOW,
-  BLUE,
-  MAGENTA,
-  CYAN,
-  WHITE,
   BLACK_BRIGHT,
-  RED_BRIGHT,
-  GREEN_BRIGHT,
-  YELLOW_BRIGHT,
+  BLUE,
   BLUE_BRIGHT,
-  MAGENTA_BRIGHT,
+  CYAN,
   CYAN_BRIGHT,
-  WHITE_BRIGHT,
-  GRAY,
   DARK_GRAY,
+  GRAY,
+  GREEN,
+  GREEN_BRIGHT,
   LIGHT_GRAY,
+  MAGENTA,
+  MAGENTA_BRIGHT,
+  RED,
+  RED_BRIGHT,
+  WHITE,
+  WHITE_BRIGHT,
+  YELLOW,
+  YELLOW_BRIGHT,
 } from "./pixel/color.js";
 
 // ── Segment type ─────────────────────────────────────────────────

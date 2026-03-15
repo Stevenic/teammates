@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { EchoAdapter } from "./echo.js";
+import { describe, expect, it } from "vitest";
 import type { TeammateConfig } from "../types.js";
+import { EchoAdapter } from "./echo.js";
 
 const teammate: TeammateConfig = {
   name: "beacon",
@@ -29,7 +29,11 @@ describe("EchoAdapter", () => {
   it("returns success with prompt length in summary", async () => {
     const adapter = new EchoAdapter();
     const sessionId = await adapter.startSession(teammate);
-    const result = await adapter.executeTask(sessionId, teammate, "do the thing");
+    const result = await adapter.executeTask(
+      sessionId,
+      teammate,
+      "do the thing",
+    );
     expect(result.success).toBe(true);
     expect(result.teammate).toBe("beacon");
     expect(result.summary).toContain("[echo]");

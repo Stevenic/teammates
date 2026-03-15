@@ -1,8 +1,8 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { LocalDocumentIndex } from "vectra";
 import { LocalEmbeddings } from "./embeddings.js";
 import { Indexer } from "./indexer.js";
-import * as path from "node:path";
-import * as fs from "node:fs/promises";
 
 export interface SearchOptions {
   /** Path to the .teammates directory */
@@ -59,10 +59,13 @@ function classifyUri(uri: string): string {
  */
 export async function search(
   query: string,
-  options: SearchOptions
+  options: SearchOptions,
 ): Promise<SearchResult[]> {
   const embeddings = new LocalEmbeddings(options.model);
-  const indexer = new Indexer({ teammatesDir: options.teammatesDir, model: options.model });
+  const indexer = new Indexer({
+    teammatesDir: options.teammatesDir,
+    model: options.model,
+  });
   const maxResults = options.maxResults ?? 5;
   const maxChunks = options.maxChunks ?? 3;
   const maxTokens = options.maxTokens ?? 500;
@@ -91,7 +94,12 @@ export async function search(
 
   // ── Pass 1: Recency (recent weekly summaries, always included) ───
   for (const teammate of teammates) {
-    const weeklyDir = path.join(options.teammatesDir, teammate, "memory", "weekly");
+    const weeklyDir = path.join(
+      options.teammatesDir,
+      teammate,
+      "memory",
+      "weekly",
+    );
     try {
       const entries = await fs.readdir(weeklyDir);
       const weeklyFiles = entries

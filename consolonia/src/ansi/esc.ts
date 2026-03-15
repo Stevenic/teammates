@@ -8,17 +8,17 @@ const OSC = "\x1b]";
 
 // ── Text style ──────────────────────────────────────────────────────
 
-export const reset       = `${ESC}0m`;
-export const bold        = `${ESC}1m`;
-export const dim         = `${ESC}2m`;
-export const italic      = `${ESC}3m`;
-export const underline   = `${ESC}4m`;
+export const reset = `${ESC}0m`;
+export const bold = `${ESC}1m`;
+export const dim = `${ESC}2m`;
+export const italic = `${ESC}3m`;
+export const underline = `${ESC}4m`;
 export const strikethrough = `${ESC}9m`;
 
-export const boldOff          = `${ESC}22m`;
-export const dimOff           = `${ESC}22m`;
-export const italicOff        = `${ESC}23m`;
-export const underlineOff     = `${ESC}24m`;
+export const boldOff = `${ESC}22m`;
+export const dimOff = `${ESC}22m`;
+export const italicOff = `${ESC}23m`;
+export const underlineOff = `${ESC}24m`;
 export const strikethroughOff = `${ESC}29m`;
 
 // ── RGB truecolor ───────────────────────────────────────────────────

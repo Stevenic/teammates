@@ -5,9 +5,9 @@
  * (first child = bottom, last child = top).
  */
 
-import type { Size, Rect, Constraint } from './types.js';
-import type { DrawingContext } from '../drawing/context.js';
-import { Control, clampSize } from './control.js';
+import type { DrawingContext } from "../drawing/context.js";
+import { Control, clampSize } from "./control.js";
+import type { Constraint, Rect, Size } from "./types.js";
 
 export interface StackOptions {
   children?: Control[];
@@ -26,7 +26,7 @@ export class Stack extends Control {
   // ── Layout ────────────────────────────────────────────────────────
 
   override measure(constraint: Constraint): Size {
-    const visible = this.children.filter(c => c.visible);
+    const visible = this.children.filter((c) => c.visible);
     let maxWidth = 0;
     let maxHeight = 0;
 

@@ -11,7 +11,7 @@ export function enableRawMode(): void {
     process.stdin.setRawMode(true);
   }
   process.stdin.resume();
-  process.stdin.setEncoding('utf8');
+  process.stdin.setEncoding("utf8");
 }
 
 /**

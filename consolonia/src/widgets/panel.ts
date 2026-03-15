@@ -5,10 +5,10 @@
  * the border and child, producing a filled, bordered container.
  */
 
-import { Border, type BorderOptions } from "./border.js";
 import type { DrawingContext } from "../drawing/context.js";
 import type { Color } from "../pixel/color.js";
 import { TRANSPARENT } from "../pixel/color.js";
+import { Border, type BorderOptions } from "./border.js";
 
 export interface PanelOptions extends BorderOptions {
   background?: Color;

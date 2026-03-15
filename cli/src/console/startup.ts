@@ -67,7 +67,7 @@ export async function playStartup(info: StartupInfo): Promise<void> {
 
   // Phase 1: reveal full "teammates" title letter by letter, left-aligned
   // Reserve two lines for the title area
-  write(indent + "\n" + indent + "\n");
+  write(`${indent}\n${indent}\n`);
   write("\x1b[2A"); // move back up
 
   let builtTop = "";
@@ -84,8 +84,8 @@ export async function playStartup(info: StartupInfo): Promise<void> {
     builtTop += g[0];
     builtBot += g[1];
 
-    write("\r" + indent + chalk.cyan(builtTop));
-    write("\n\r" + indent + chalk.cyan(builtBot));
+    write(`\r${indent}${chalk.cyan(builtTop)}`);
+    write(`\n\r${indent}${chalk.cyan(builtBot)}`);
     write("\x1b[1A");
 
     await sleep(60);
@@ -96,7 +96,7 @@ export async function playStartup(info: StartupInfo): Promise<void> {
 
   // Roll out version to the right of the logo on the bottom row
   const versionTag = chalk.gray(` v${info.version}`);
-  write("\n\r" + indent + chalk.cyan(builtBot) + versionTag);
+  write(`\n\r${indent}${chalk.cyan(builtBot)}${versionTag}`);
   write("\x1b[1A"); // back to top line
 
   await sleep(2000);
@@ -114,7 +114,9 @@ export async function playStartup(info: StartupInfo): Promise<void> {
   // Build info lines to sit to the right of TM
   const rightLine1 =
     chalk.white(info.adapterName) +
-    chalk.gray(` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`) +
+    chalk.gray(
+      ` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`,
+    ) +
     chalk.gray(` · v${info.version}`);
   const rightLine2 = chalk.gray(info.cwd);
   const rightLine3 = info.recallInstalled
@@ -122,13 +124,13 @@ export async function playStartup(info: StartupInfo): Promise<void> {
     : chalk.yellow("○ recall") + chalk.gray(" not installed");
 
   // TM row 1 + first stat
-  write(indent + chalk.cyan(tmTop) + gap + rightLine1 + "\n");
+  write(`${indent + chalk.cyan(tmTop) + gap + rightLine1}\n`);
   await sleep(40);
   // TM row 2 + second stat
-  write(indent + chalk.cyan(tmBot) + gap + rightLine2 + "\n");
+  write(`${indent + chalk.cyan(tmBot) + gap + rightLine2}\n`);
   await sleep(40);
   // Blank TM area + third stat
-  write(indent + " ".repeat(tmWidth) + gap + rightLine3 + "\n");
+  write(`${indent + " ".repeat(tmWidth) + gap + rightLine3}\n`);
 
   await sleep(80);
 
@@ -169,8 +171,10 @@ export async function playStartup(info: StartupInfo): Promise<void> {
   ];
 
   for (let i = 0; i < col1.length; i++) {
-    const c1 = chalk.cyan(col1[i][0].padEnd(12)) + chalk.gray(col1[i][1].padEnd(22));
-    const c2 = chalk.cyan(col2[i][0].padEnd(12)) + chalk.gray(col2[i][1].padEnd(22));
+    const c1 =
+      chalk.cyan(col1[i][0].padEnd(12)) + chalk.gray(col1[i][1].padEnd(22));
+    const c2 =
+      chalk.cyan(col2[i][0].padEnd(12)) + chalk.gray(col2[i][1].padEnd(22));
     const c3 = chalk.cyan(col3[i][0].padEnd(12)) + chalk.gray(col3[i][1]);
     console.log(`  ${c1}${c2}${c3}`);
     await sleep(30);

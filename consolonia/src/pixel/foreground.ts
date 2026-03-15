@@ -2,9 +2,9 @@
  * Pixel foreground: the character, its color, and text style attributes.
  */
 
+import { type BoxPattern, boxChar, mergeBoxPatterns } from "./box-pattern.js";
 import { type Color, colorBlend, TRANSPARENT } from "./color.js";
-import { type Symbol, EMPTY_SYMBOL } from "./symbol.js";
-import { mergeBoxPatterns, boxChar, type BoxPattern } from "./box-pattern.js";
+import { EMPTY_SYMBOL, type Symbol } from "./symbol.js";
 
 /** Foreground of a single pixel cell. */
 export interface PixelForeground {
@@ -53,11 +53,15 @@ export function blendForeground(
 
   // Both have box patterns: merge them
   if (aboveSym.pattern !== 0 && belowSym.pattern !== 0) {
-    const merged: BoxPattern = mergeBoxPatterns(aboveSym.pattern, belowSym.pattern);
+    const merged: BoxPattern = mergeBoxPatterns(
+      aboveSym.pattern,
+      belowSym.pattern,
+    );
     const mergedChar = boxChar(merged);
     return {
       symbol: { text: mergedChar, width: 1, pattern: merged },
-      color: above.color.a > 0 ? colorBlend(below.color, above.color) : below.color,
+      color:
+        above.color.a > 0 ? colorBlend(below.color, above.color) : below.color,
       bold: above.bold || below.bold,
       italic: above.italic || below.italic,
       underline: above.underline || below.underline,
@@ -73,12 +77,14 @@ export function blendForeground(
   // Above has content — it wins, colors are blended
   const blendedColor = colorBlend(below.color, above.color);
   return {
-    symbol: aboveSym.text === " " && aboveSym.pattern === 0 ? belowSym : aboveSym,
+    symbol:
+      aboveSym.text === " " && aboveSym.pattern === 0 ? belowSym : aboveSym,
     color: blendedColor,
     bold: aboveSym.text !== " " ? above.bold : below.bold,
     italic: aboveSym.text !== " " ? above.italic : below.italic,
     underline: aboveSym.text !== " " ? above.underline : below.underline,
-    strikethrough: aboveSym.text !== " " ? above.strikethrough : below.strikethrough,
+    strikethrough:
+      aboveSym.text !== " " ? above.strikethrough : below.strikethrough,
   };
 }
 

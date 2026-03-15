@@ -2,9 +2,9 @@
  * PixelBuffer: a 2D grid of Pixel cells representing a terminal surface.
  */
 
+import type { Rect } from "../layout/types.js";
 import type { Pixel } from "./pixel.js";
 import { PIXEL_SPACE } from "./pixel.js";
-import type { Rect } from "../layout/types.js";
 
 /**
  * A 2D pixel buffer backed by a flat array.

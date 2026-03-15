@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Registry } from "./registry.js";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { Registry } from "./registry.js";
 
 let tempDir: string;
 
@@ -17,7 +17,10 @@ afterEach(async () => {
 async function createTeammate(
   name: string,
   soul: string,
-  options?: { wisdom?: string; dailyLogs?: { date: string; content: string }[] }
+  options?: {
+    wisdom?: string;
+    dailyLogs?: { date: string; content: string }[];
+  },
 ) {
   const dir = join(tempDir, name);
   await mkdir(dir, { recursive: true });
@@ -123,7 +126,7 @@ describe("Registry role parsing", () => {
   it("parses role from ## Identity paragraph", async () => {
     await createTeammate(
       "beacon",
-      "# Beacon\n\n## Identity\n\nBeacon owns the recall package. It does stuff."
+      "# Beacon\n\n## Identity\n\nBeacon owns the recall package. It does stuff.",
     );
     const registry = new Registry(tempDir);
     const config = await registry.loadTeammate("beacon");
@@ -131,7 +134,10 @@ describe("Registry role parsing", () => {
   });
 
   it("parses role from **Persona:** line", async () => {
-    await createTeammate("beacon", "# Beacon\n\n**Persona:** The platform engineer.");
+    await createTeammate(
+      "beacon",
+      "# Beacon\n\n**Persona:** The platform engineer.",
+    );
     const registry = new Registry(tempDir);
     const config = await registry.loadTeammate("beacon");
     expect(config?.role).toBe("The platform engineer.");
@@ -170,7 +176,10 @@ describe("Registry ownership parsing", () => {
     await createTeammate("beacon", soul);
     const registry = new Registry(tempDir);
     const config = await registry.loadTeammate("beacon");
-    expect(config?.ownership.primary).toEqual(["recall/src/**", "recall/package.json"]);
+    expect(config?.ownership.primary).toEqual([
+      "recall/src/**",
+      "recall/package.json",
+    ]);
     expect(config?.ownership.secondary).toEqual([".teammates/.index/**"]);
   });
 

@@ -2,13 +2,12 @@
  * Tests for the pen (styled text) API and StyledText widget.
  */
 
-import { describe, it, expect } from "vitest";
-import { pen, concat, spanText, spanLength, isStyledSpan } from "../styled.js";
-import { StyledText } from "../widgets/styled-text.js";
-import { PixelBuffer } from "../pixel/buffer.js";
+import { describe, expect, it } from "vitest";
 import { DrawingContext } from "../drawing/context.js";
-import { CYAN, RED, WHITE, GRAY } from "../pixel/color.js";
-import type { Constraint } from "../layout/types.js";
+import { PixelBuffer } from "../pixel/buffer.js";
+import { CYAN, GRAY, RED, WHITE } from "../pixel/color.js";
+import { concat, isStyledSpan, pen, spanLength, spanText } from "../styled.js";
+import { StyledText } from "../widgets/styled-text.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -23,8 +22,18 @@ function fgColor(buffer: PixelBuffer, x: number, y: number) {
 function layoutAndRender(widget: StyledText, width = 40, height = 10) {
   const buffer = new PixelBuffer(width, height);
   const ctx = new DrawingContext(buffer);
-  widget.measure({ minWidth: 0, minHeight: 0, maxWidth: width, maxHeight: height });
-  widget.arrange({ x: 0, y: 0, width, height: widget.desiredSize.height || height });
+  widget.measure({
+    minWidth: 0,
+    minHeight: 0,
+    maxWidth: width,
+    maxHeight: height,
+  });
+  widget.arrange({
+    x: 0,
+    y: 0,
+    width,
+    height: widget.desiredSize.height || height,
+  });
   widget.render(ctx);
   return { buffer, ctx };
 }
@@ -102,7 +111,12 @@ describe("concat", () => {
 describe("StyledText", () => {
   it("renders plain string lines", () => {
     const widget = new StyledText({ lines: ["hello"] });
-    const size = widget.measure({ minWidth: 0, minHeight: 0, maxWidth: 40, maxHeight: 10 });
+    const size = widget.measure({
+      minWidth: 0,
+      minHeight: 0,
+      maxWidth: 40,
+      maxHeight: 10,
+    });
     expect(size.height).toBe(1);
     expect(size.width).toBe(5);
 
@@ -134,7 +148,12 @@ describe("StyledText", () => {
 
   it("measures multiple lines", () => {
     const widget = new StyledText({ lines: ["line1", "line2", "line3"] });
-    const size = widget.measure({ minWidth: 0, minHeight: 0, maxWidth: 40, maxHeight: 10 });
+    const size = widget.measure({
+      minWidth: 0,
+      minHeight: 0,
+      maxWidth: 40,
+      maxHeight: 10,
+    });
     expect(size.height).toBe(3);
   });
 
@@ -143,7 +162,12 @@ describe("StyledText", () => {
       lines: ["abcdefghij"],
       wrap: true,
     });
-    const size = widget.measure({ minWidth: 0, minHeight: 0, maxWidth: 5, maxHeight: 10 });
+    const size = widget.measure({
+      minWidth: 0,
+      minHeight: 0,
+      maxWidth: 5,
+      maxHeight: 10,
+    });
     expect(size.height).toBe(2); // "abcde" + "fghij"
   });
 });

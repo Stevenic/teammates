@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import * as path from "node:path";
+import { type FSWatcher, watch as fsWatch } from "node:fs";
 import * as fs from "node:fs/promises";
-import { watch as fsWatch, type FSWatcher } from "node:fs";
+import * as path from "node:path";
 import { Indexer } from "./indexer.js";
 import { search } from "./search.js";
 
@@ -52,7 +52,12 @@ function parseArgs(argv: string[]): Args {
 
   let i = 0;
   // Skip node and script path
-  while (i < argv.length && (argv[i].includes("node") || argv[i].includes("teammates-recall") || argv[i].endsWith(".js"))) {
+  while (
+    i < argv.length &&
+    (argv[i].includes("node") ||
+      argv[i].includes("teammates-recall") ||
+      argv[i].endsWith(".js"))
+  ) {
     i++;
   }
 
@@ -61,9 +66,17 @@ function parseArgs(argv: string[]): Args {
   }
 
   // For search, next non-flag arg is the query; for add, it's the file path
-  if (args.command === "search" && i < argv.length && !argv[i].startsWith("-")) {
+  if (
+    args.command === "search" &&
+    i < argv.length &&
+    !argv[i].startsWith("-")
+  ) {
     args.query = argv[i++];
-  } else if (args.command === "add" && i < argv.length && !argv[i].startsWith("-")) {
+  } else if (
+    args.command === "add" &&
+    i < argv.length &&
+    !argv[i].startsWith("-")
+  ) {
     args.file = argv[i++];
   }
 
@@ -179,7 +192,13 @@ async function cmdAdd(args: Args): Promise<void> {
   await indexer.upsertFile(args.teammate, args.file);
 
   if (args.json) {
-    console.log(JSON.stringify({ teammate: args.teammate, file: args.file, status: "ok" }));
+    console.log(
+      JSON.stringify({
+        teammate: args.teammate,
+        file: args.file,
+        status: "ok",
+      }),
+    );
   } else {
     console.log(`Added ${args.file} to ${args.teammate}'s index`);
   }
@@ -209,7 +228,9 @@ async function cmdSearch(args: Args): Promise<void> {
       return;
     }
     for (const result of results) {
-      console.log(`--- ${result.teammate} | ${result.uri} (score: ${result.score.toFixed(3)}) ---`);
+      console.log(
+        `--- ${result.teammate} | ${result.uri} (score: ${result.score.toFixed(3)}) ---`,
+      );
       console.log(result.text);
       console.log();
     }
@@ -274,7 +295,9 @@ async function cmdWatch(args: Args): Promise<void> {
         try {
           const count = await indexer.syncTeammate(t);
           if (args.json) {
-            console.log(JSON.stringify({ event: "sync", teammate: t, files: count }));
+            console.log(
+              JSON.stringify({ event: "sync", teammate: t, files: count }),
+            );
           } else {
             console.error(`  synced ${t}: ${count} files`);
           }
@@ -294,12 +317,16 @@ async function cmdWatch(args: Args): Promise<void> {
   for (const teammate of teammates) {
     const teammateDir = path.join(teammatesDir, teammate);
     try {
-      const watcher = fsWatch(teammateDir, { recursive: true }, (eventType, filename) => {
-        if (!filename) return;
-        // Only care about .md files, skip .index/
-        if (!filename.endsWith(".md") || filename.includes(".index")) return;
-        scheduleSync(teammate);
-      });
+      const watcher = fsWatch(
+        teammateDir,
+        { recursive: true },
+        (_eventType, filename) => {
+          if (!filename) return;
+          // Only care about .md files, skip .index/
+          if (!filename.endsWith(".md") || filename.includes(".index")) return;
+          scheduleSync(teammate);
+        },
+      );
       watchers.push(watcher);
     } catch {
       console.error(`  warning: could not watch ${teammate}/`);

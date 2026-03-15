@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { buildTeammatePrompt, formatHandoffContext } from "./adapter.js";
 import type { TeammateConfig } from "./types.js";
 
@@ -53,7 +53,7 @@ describe("buildTeammatePrompt", () => {
   it("includes wisdom when present", () => {
     const prompt = buildTeammatePrompt(
       makeConfig({ wisdom: "Some important wisdom" }),
-      "task"
+      "task",
     );
     expect(prompt).toContain("## Your Wisdom");
     expect(prompt).toContain("Some important wisdom");
@@ -80,8 +80,16 @@ describe("buildTeammatePrompt", () => {
 
   it("includes roster excluding self", () => {
     const roster = [
-      { name: "beacon", role: "Platform engineer.", ownership: { primary: [], secondary: [] } },
-      { name: "scribe", role: "Documentation writer.", ownership: { primary: ["docs/**"], secondary: [] } },
+      {
+        name: "beacon",
+        role: "Platform engineer.",
+        ownership: { primary: [], secondary: [] },
+      },
+      {
+        name: "scribe",
+        role: "Documentation writer.",
+        ownership: { primary: ["docs/**"], secondary: [] },
+      },
     ];
     const prompt = buildTeammatePrompt(makeConfig(), "task", { roster });
     expect(prompt).toContain("## Your Team");

@@ -8,19 +8,52 @@
  * Works on both Windows (C:\...) and macOS/Linux (/...) terminals.
  */
 
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
 
 const IMAGE_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico", ".tiff", ".tif",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".bmp",
+  ".ico",
+  ".tiff",
+  ".tif",
 ]);
 
-const KNOWN_EXTENSIONS = new Set([
+const _KNOWN_EXTENSIONS = new Set([
   ...IMAGE_EXTENSIONS,
-  ".pdf", ".txt", ".md", ".json", ".csv", ".xml", ".yaml", ".yml",
-  ".ts", ".js", ".py", ".go", ".rs", ".java", ".c", ".cpp", ".h",
-  ".html", ".css", ".sql", ".sh", ".bat", ".ps1",
-  ".log", ".env", ".toml", ".ini", ".cfg",
+  ".pdf",
+  ".txt",
+  ".md",
+  ".json",
+  ".csv",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".ts",
+  ".js",
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".c",
+  ".cpp",
+  ".h",
+  ".html",
+  ".css",
+  ".sql",
+  ".sh",
+  ".bat",
+  ".ps1",
+  ".log",
+  ".env",
+  ".toml",
+  ".ini",
+  ".cfg",
 ]);
 
 export interface FileAttachment {
@@ -105,7 +138,7 @@ export class FileDropHandler {
     if (singlePath) {
       const attachment = this.addFile(singlePath);
       const tag = this.formatTag(attachment);
-      return { text: tag + " ", filesDetected: true };
+      return { text: `${tag} `, filesDetected: true };
     }
 
     // Check for file paths mixed with text — look for path-like tokens
@@ -114,14 +147,16 @@ export class FileDropHandler {
 
     // Match Windows paths: C:\... or "C:\..."
     // Match Unix paths: /home/... or "/home/..."
-    const pathPattern = /(?:"([A-Za-z]:\\[^"]+)"|'([A-Za-z]:\\[^']+)'|([A-Za-z]:\\[^\s]+)|"(\/[^"]+)"|'(\/[^']+)'|(\/[^\s]+\.\w{1,5}))/g;
+    const pathPattern =
+      /(?:"([A-Za-z]:\\[^"]+)"|'([A-Za-z]:\\[^']+)'|([A-Za-z]:\\[^\s]+)|"(\/[^"]+)"|'(\/[^']+)'|(\/[^\s]+\.\w{1,5}))/g;
 
     let match;
     const replacements: { from: string; to: string }[] = [];
 
     while ((match = pathPattern.exec(input)) !== null) {
       const rawMatch = match[0];
-      const path = match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? match[6];
+      const path =
+        match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5] ?? match[6];
       const resolved = this.detectFilePath(path);
       if (resolved) {
         const attachment = this.addFile(resolved);
@@ -154,7 +189,7 @@ export class FileDropHandler {
           return attachment.path;
         }
         return _match;
-      }
+      },
     );
 
     return { text: expanded, attachments: used };

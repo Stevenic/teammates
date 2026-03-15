@@ -79,8 +79,12 @@ export class AnsiOutput {
 
     const fgColor = pixel.foreground.color;
     const bgColor = pixel.background.color;
-    const { bold: isBold, italic: isItalic, underline: isUnderline, strikethrough: isStrike } =
-      pixel.foreground;
+    const {
+      bold: isBold,
+      italic: isItalic,
+      underline: isUnderline,
+      strikethrough: isStrike,
+    } = pixel.foreground;
 
     // ── Style toggles (emit only on change) ─────────────────────
     if (isBold !== this.lastBold) {
@@ -104,7 +108,11 @@ export class AnsiOutput {
     if (fgColor.a > 0 && !colorsEqual(fgColor, this.lastFgColor)) {
       this.write(esc.fg(fgColor.r, fgColor.g, fgColor.b));
       this.lastFgColor = fgColor;
-    } else if (fgColor.a === 0 && this.lastFgColor !== NO_COLOR && this.lastFgColor.a !== 0) {
+    } else if (
+      fgColor.a === 0 &&
+      this.lastFgColor !== NO_COLOR &&
+      this.lastFgColor.a !== 0
+    ) {
       this.write(esc.fgDefault);
       this.lastFgColor = NO_COLOR;
     }
@@ -113,7 +121,11 @@ export class AnsiOutput {
     if (bgColor.a > 0 && !colorsEqual(bgColor, this.lastBgColor)) {
       this.write(esc.bg(bgColor.r, bgColor.g, bgColor.b));
       this.lastBgColor = bgColor;
-    } else if (bgColor.a === 0 && this.lastBgColor !== NO_COLOR && this.lastBgColor.a !== 0) {
+    } else if (
+      bgColor.a === 0 &&
+      this.lastBgColor !== NO_COLOR &&
+      this.lastBgColor.a !== 0
+    ) {
       this.write(esc.bgDefault);
       this.lastBgColor = NO_COLOR;
     }
@@ -153,19 +165,27 @@ export class AnsiOutput {
         this.write(style.italic ? esc.italic : esc.italicOff);
         this.lastItalic = style.italic;
       }
-      if (style.underline !== undefined && style.underline !== this.lastUnderline) {
+      if (
+        style.underline !== undefined &&
+        style.underline !== this.lastUnderline
+      ) {
         this.write(style.underline ? esc.underline : esc.underlineOff);
         this.lastUnderline = style.underline;
       }
-      if (style.strikethrough !== undefined && style.strikethrough !== this.lastStrikethrough) {
-        this.write(style.strikethrough ? esc.strikethrough : esc.strikethroughOff);
+      if (
+        style.strikethrough !== undefined &&
+        style.strikethrough !== this.lastStrikethrough
+      ) {
+        this.write(
+          style.strikethrough ? esc.strikethrough : esc.strikethroughOff,
+        );
         this.lastStrikethrough = style.strikethrough;
       }
-      if (style.fgColor && (!colorsEqual(style.fgColor, this.lastFgColor))) {
+      if (style.fgColor && !colorsEqual(style.fgColor, this.lastFgColor)) {
         this.write(esc.fg(style.fgColor.r, style.fgColor.g, style.fgColor.b));
         this.lastFgColor = style.fgColor;
       }
-      if (style.bgColor && (!colorsEqual(style.bgColor, this.lastBgColor))) {
+      if (style.bgColor && !colorsEqual(style.bgColor, this.lastBgColor)) {
         this.write(esc.bg(style.bgColor.r, style.bgColor.g, style.bgColor.b));
         this.lastBgColor = style.bgColor;
       }

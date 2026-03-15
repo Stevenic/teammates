@@ -6,8 +6,13 @@
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join, basename } from "node:path";
-import type { TeammateConfig, DailyLog, WeeklyLog, OwnershipRules } from "./types.js";
+import { basename, join } from "node:path";
+import type {
+  DailyLog,
+  OwnershipRules,
+  TeammateConfig,
+  WeeklyLog,
+} from "./types.js";
 
 export class Registry {
   private teammatesDir: string;
@@ -21,7 +26,7 @@ export class Registry {
   async loadAll(): Promise<Map<string, TeammateConfig>> {
     const entries = await readdir(this.teammatesDir, { withFileTypes: true });
     const dirs = entries.filter(
-      (e) => e.isDirectory() && !e.name.startsWith(".")
+      (e) => e.isDirectory() && !e.name.startsWith("."),
     );
 
     for (const dir of dirs) {
@@ -154,7 +159,7 @@ function parseRole(soul: string): string {
   if (identityMatch) {
     // Return just the first sentence
     const firstSentence = identityMatch[1].split(/\.\s/)[0];
-    return firstSentence.endsWith(".") ? firstSentence : firstSentence + ".";
+    return firstSentence.endsWith(".") ? firstSentence : `${firstSentence}.`;
   }
 
   // Fallback: first non-heading, non-empty line
@@ -163,7 +168,7 @@ function parseRole(soul: string): string {
     const trimmed = line.trim();
     if (trimmed && !trimmed.startsWith("#") && !trimmed.startsWith("---")) {
       const firstSentence = trimmed.split(/\.\s/)[0];
-      return firstSentence.endsWith(".") ? firstSentence : firstSentence + ".";
+      return firstSentence.endsWith(".") ? firstSentence : `${firstSentence}.`;
     }
   }
 
@@ -174,16 +179,12 @@ function parseRole(soul: string): string {
 function parseOwnership(soul: string): OwnershipRules {
   const rules: OwnershipRules = { primary: [], secondary: [] };
 
-  const primaryMatch = soul.match(
-    /### Primary[\s\S]*?(?=###|## |$)/
-  );
+  const primaryMatch = soul.match(/### Primary[\s\S]*?(?=###|## |$)/);
   if (primaryMatch) {
     rules.primary = extractPatterns(primaryMatch[0]);
   }
 
-  const secondaryMatch = soul.match(
-    /### Secondary[\s\S]*?(?=###|## |$)/
-  );
+  const secondaryMatch = soul.match(/### Secondary[\s\S]*?(?=###|## |$)/);
   if (secondaryMatch) {
     rules.secondary = extractPatterns(secondaryMatch[0]);
   }

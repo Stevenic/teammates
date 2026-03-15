@@ -15,14 +15,23 @@
  *   4. Captures output for result parsing (changed files, handoff envelopes)
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { writeFile, readFile, unlink, mkdir } from "node:fs/promises";
+import { type ChildProcess, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-import type { AgentAdapter, RosterEntry, InstalledService } from "../adapter.js";
+import type {
+  AgentAdapter,
+  InstalledService,
+  RosterEntry,
+} from "../adapter.js";
 import { buildTeammatePrompt } from "../adapter.js";
-import type { TeammateConfig, TaskResult, HandoffEnvelope, SandboxLevel } from "../types.js";
+import type {
+  HandoffEnvelope,
+  SandboxLevel,
+  TaskResult,
+  TeammateConfig,
+} from "../types.js";
 
 // ─── Agent presets ──────────────────────────────────────────────────
 
@@ -32,7 +41,11 @@ export interface AgentPreset {
   /** Binary / command to spawn */
   command: string;
   /** Build CLI args. `promptFile` is a temp file path, `prompt` is the raw text. */
-  buildArgs(ctx: { promptFile: string; prompt: string }, teammate: TeammateConfig, options: CliProxyOptions): string[];
+  buildArgs(
+    ctx: { promptFile: string; prompt: string },
+    teammate: TeammateConfig,
+    options: CliProxyOptions,
+  ): string[];
   /** Extra env vars to set (e.g. FORCE_COLOR) */
   env?: Record<string, string>;
   /** Whether the agent may prompt the user for input (connects stdin) */
@@ -64,7 +77,8 @@ export const PRESETS: Record<string, AgentPreset> = {
     buildArgs(_ctx, teammate, options) {
       const args = ["exec", "-"];
       if (teammate.cwd) args.push("-C", teammate.cwd);
-      const sandbox = teammate.sandbox ?? options.defaultSandbox ?? "workspace-write";
+      const sandbox =
+        teammate.sandbox ?? options.defaultSandbox ?? "workspace-write";
       args.push("-s", sandbox);
       args.push("--full-auto");
       args.push("--ephemeral");
@@ -81,10 +95,15 @@ export const PRESETS: Record<string, AgentPreset> = {
         if (!line.trim()) continue;
         try {
           const event = JSON.parse(line);
-          if (event.type === "item.completed" && event.item?.type === "agent_message") {
+          if (
+            event.type === "item.completed" &&
+            event.item?.type === "agent_message"
+          ) {
             lastMessage = event.item.text;
           }
-        } catch { /* skip non-JSON lines */ }
+        } catch {
+          /* skip non-JSON lines */
+        }
       }
       return lastMessage || raw;
     },
@@ -93,7 +112,7 @@ export const PRESETS: Record<string, AgentPreset> = {
   aider: {
     name: "aider",
     command: "aider",
-    buildArgs({ promptFile }, teammate, options) {
+    buildArgs({ promptFile }, _teammate, options) {
       const args = ["--message-file", promptFile, "--yes", "--no-git"];
       if (options.model) args.push("--model", options.model);
       return args;
@@ -145,7 +164,7 @@ export class CliProxyAdapter implements AgentAdapter {
 
     if (!this.preset) {
       throw new Error(
-        `Unknown agent preset: ${options.preset}. Available: ${Object.keys(PRESETS).join(", ")}`
+        `Unknown agent preset: ${options.preset}. Available: ${Object.keys(PRESETS).join(", ")}`,
       );
     }
     this.name = this.preset.name;
@@ -163,7 +182,12 @@ export class CliProxyAdapter implements AgentAdapter {
       const gitignorePath = join(tmpBase, "..", ".gitignore");
       const existing = await readFile(gitignorePath, "utf-8").catch(() => "");
       if (!existing.includes(".tmp/")) {
-        await writeFile(gitignorePath, existing + (existing.endsWith("\n") || !existing ? "" : "\n") + ".tmp/\n").catch(() => {});
+        await writeFile(
+          gitignorePath,
+          existing +
+            (existing.endsWith("\n") || !existing ? "" : "\n") +
+            ".tmp/\n",
+        ).catch(() => {});
       }
     }
     const sessionFile = join(this.sessionsDir, `${teammate.name}.md`);
@@ -174,9 +198,9 @@ export class CliProxyAdapter implements AgentAdapter {
   }
 
   async executeTask(
-    sessionId: string,
+    _sessionId: string,
     teammate: TeammateConfig,
-    prompt: string
+    prompt: string,
   ): Promise<TaskResult> {
     // If the teammate has no soul (e.g. the raw agent), skip identity/memory
     // wrapping but include handoff instructions so it can delegate to teammates
@@ -193,28 +217,42 @@ export class CliProxyAdapter implements AgentAdapter {
       const others = this.roster.filter((r) => r.name !== teammate.name);
       if (others.length > 0) {
         parts.push("\n\n---\n");
-        parts.push("If part of this task belongs to a specialist, you can hand it off.");
+        parts.push(
+          "If part of this task belongs to a specialist, you can hand it off.",
+        );
         parts.push("Your teammates:");
         for (const t of others) {
-          const owns = t.ownership.primary.length > 0
-            ? ` — owns: ${t.ownership.primary.join(", ")}`
-            : "";
+          const owns =
+            t.ownership.primary.length > 0
+              ? ` — owns: ${t.ownership.primary.join(", ")}`
+              : "";
           parts.push(`- @${t.name}: ${t.role}${owns}`);
         }
-        parts.push("\nTo hand off, include a fenced handoff block in your response:");
+        parts.push(
+          "\nTo hand off, include a fenced handoff block in your response:",
+        );
         parts.push("```handoff\n@<teammate>\n<task details>\n```");
       }
       fullPrompt = parts.join("\n");
     }
 
     // Write prompt to temp file to avoid shell escaping issues
-    const promptFile = join(tmpdir(), `teammates-${this.name}-${randomUUID()}.md`);
+    const promptFile = join(
+      tmpdir(),
+      `teammates-${this.name}-${randomUUID()}.md`,
+    );
     await writeFile(promptFile, fullPrompt, "utf-8");
     this.pendingTempFiles.add(promptFile);
 
     try {
-      const rawOutput = await this.spawnAndProxy(teammate, promptFile, fullPrompt);
-      const output = this.preset.parseOutput ? this.preset.parseOutput(rawOutput) : rawOutput;
+      const rawOutput = await this.spawnAndProxy(
+        teammate,
+        promptFile,
+        fullPrompt,
+      );
+      const output = this.preset.parseOutput
+        ? this.preset.parseOutput(rawOutput)
+        : rawOutput;
       const teammateNames = this.roster.map((r) => r.name);
       return parseResult(teammate.name, output, teammateNames, prompt);
     } finally {
@@ -230,9 +268,10 @@ export class CliProxyAdapter implements AgentAdapter {
       "Teammates:",
     ];
     for (const t of roster) {
-      const owns = t.ownership.primary.length > 0
-        ? ` — owns: ${t.ownership.primary.join(", ")}`
-        : "";
+      const owns =
+        t.ownership.primary.length > 0
+          ? ` — owns: ${t.ownership.primary.join(", ")}`
+          : "";
       lines.push(`- ${t.name}: ${t.role}${owns}`);
     }
     lines.push("", `Task: ${task}`);
@@ -245,14 +284,22 @@ export class CliProxyAdapter implements AgentAdapter {
       const command = this.options.commandPath ?? this.preset.command;
       const args = this.preset.buildArgs(
         { promptFile, prompt },
-        { name: "_router", role: "", soul: "", wisdom: "", dailyLogs: [], weeklyLogs: [], ownership: { primary: [], secondary: [] } },
-        { ...this.options, model: this.options.model ?? "haiku" }
+        {
+          name: "_router",
+          role: "",
+          soul: "",
+          wisdom: "",
+          dailyLogs: [],
+          weeklyLogs: [],
+          ownership: { primary: [], secondary: [] },
+        },
+        { ...this.options, model: this.options.model ?? "haiku" },
       );
       const env = { ...process.env, ...this.preset.env };
 
       const output = await new Promise<string>((resolve, reject) => {
         const routeStdin = this.preset.stdinPrompt ?? false;
-        const needsShell = this.preset.shell ?? (process.platform === "win32");
+        const needsShell = this.preset.shell ?? process.platform === "win32";
         const spawnCmd = needsShell ? [command, ...args].join(" ") : command;
         const spawnArgs = needsShell ? [] : args;
         const child = spawn(spawnCmd, spawnArgs, {
@@ -290,7 +337,10 @@ export class CliProxyAdapter implements AgentAdapter {
       const trimmed = output.trim().toLowerCase();
       // Check each name — the agent should have returned just one
       for (const name of rosterNames) {
-        if (trimmed === name.toLowerCase() || trimmed.endsWith(name.toLowerCase())) {
+        if (
+          trimmed === name.toLowerCase() ||
+          trimmed.endsWith(name.toLowerCase())
+        ) {
           return name;
         }
       }
@@ -308,7 +358,7 @@ export class CliProxyAdapter implements AgentAdapter {
     }
   }
 
-  async destroySession(sessionId: string): Promise<void> {
+  async destroySession(_sessionId: string): Promise<void> {
     // Clean up any leaked temp prompt files
     for (const file of this.pendingTempFiles) {
       await unlink(file).catch(() => {});
@@ -325,10 +375,18 @@ export class CliProxyAdapter implements AgentAdapter {
   /**
    * Spawn the agent, stream its output live, and capture it.
    */
-  private spawnAndProxy(teammate: TeammateConfig, promptFile: string, fullPrompt: string): Promise<string> {
+  private spawnAndProxy(
+    teammate: TeammateConfig,
+    promptFile: string,
+    fullPrompt: string,
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       const args = [
-        ...this.preset.buildArgs({ promptFile, prompt: fullPrompt }, teammate, this.options),
+        ...this.preset.buildArgs(
+          { promptFile, prompt: fullPrompt },
+          teammate,
+          this.options,
+        ),
         ...(this.options.extraFlags ?? []),
       ];
 
@@ -341,13 +399,13 @@ export class CliProxyAdapter implements AgentAdapter {
       // On Windows, npm-installed CLIs are .cmd wrappers that require shell.
       // When using shell mode, pass command+args as a single string to avoid
       // Node DEP0190 deprecation warning about unescaped args with shell: true.
-      const needsShell = this.preset.shell ?? (process.platform === "win32");
+      const needsShell = this.preset.shell ?? process.platform === "win32";
       const spawnCmd = needsShell ? [command, ...args].join(" ") : command;
       const spawnArgs = needsShell ? [] : args;
       const child: ChildProcess = spawn(spawnCmd, spawnArgs, {
         cwd: teammate.cwd ?? process.cwd(),
         env,
-        stdio: [(interactive || useStdin) ? "pipe" : "ignore", "pipe", "pipe"],
+        stdio: [interactive || useStdin ? "pipe" : "ignore", "pipe", "pipe"],
         shell: needsShell,
       });
 
@@ -404,11 +462,13 @@ export class CliProxyAdapter implements AgentAdapter {
         }
       };
 
-      child.on("close", (code) => {
+      child.on("close", (_code) => {
         cleanup();
         const output = Buffer.concat(captured).toString("utf-8");
         if (killed) {
-          resolve(output + `\n\n[TIMEOUT] Agent process killed after ${timeout}ms`);
+          resolve(
+            `${output}\n\n[TIMEOUT] Agent process killed after ${timeout}ms`,
+          );
         } else {
           resolve(output);
         }
@@ -424,7 +484,12 @@ export class CliProxyAdapter implements AgentAdapter {
 
 // ─── Output parsing (shared across all agents) ─────────────────────
 
-function parseResult(teammateName: string, output: string, teammateNames: string[] = [], originalTask?: string): TaskResult {
+function parseResult(
+  teammateName: string,
+  output: string,
+  teammateNames: string[] = [],
+  _originalTask?: string,
+): TaskResult {
   // Parse the TO: / # Subject protocol
   const parsed = parseMessageProtocol(output, teammateName, teammateNames);
   if (parsed) return parsed;
@@ -451,7 +516,11 @@ function parseResult(teammateName: string, output: string, teammateNames: string
  * The ```handoff block is the primary handoff signal and works reliably
  * regardless of where it appears in the output.
  */
-function parseMessageProtocol(output: string, teammateName: string, _teammateNames: string[]): TaskResult | null {
+function parseMessageProtocol(
+  output: string,
+  teammateName: string,
+  _teammateNames: string[],
+): TaskResult | null {
   const lines = output.split("\n");
 
   // Find # Subject heading
@@ -477,9 +546,10 @@ function parseMessageProtocol(output: string, teammateName: string, _teammateNam
   // If no heading and no handoffs, can't parse
   if (subjectLineIdx < 0 && handoffs.length === 0) return null;
 
-  const subject = subjectLineIdx >= 0
-    ? lines[subjectLineIdx].replace(/^#\s+/, "").trim()
-    : "";
+  const subject =
+    subjectLineIdx >= 0
+      ? lines[subjectLineIdx].replace(/^#\s+/, "").trim()
+      : "";
 
   return {
     teammate: teammateName,
@@ -523,7 +593,7 @@ function parseChangedFiles(output: string): string[] {
 
   // "Created/Modified/Updated/Wrote/Edited <path>" patterns
   for (const match of output.matchAll(
-    /(?:Created|Modified|Updated|Wrote|Edited)\s+(?:file:\s*)?[`"]?([^\s`"]+\.\w+)[`"]?/gi
+    /(?:Created|Modified|Updated|Wrote|Edited)\s+(?:file:\s*)?[`"]?([^\s`"]+\.\w+)[`"]?/gi,
   )) {
     files.add(match[1]);
   }

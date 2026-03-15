@@ -5,9 +5,9 @@
  * but produces no visual output of its own.
  */
 
-import type { Size, Rect, Constraint } from './types.js';
-import type { DrawingContext } from '../drawing/context.js';
-import { Control, clampSize } from './control.js';
+import type { DrawingContext } from "../drawing/context.js";
+import { Control, clampSize } from "./control.js";
+import type { Constraint, Rect, Size } from "./types.js";
 
 export interface BoxOptions {
   child?: Control;
@@ -74,7 +74,7 @@ export class Box extends Control {
     };
 
     let childSize: Size = { width: 0, height: 0 };
-    if (this.child && this.child.visible) {
+    if (this.child?.visible) {
       childSize = this.child.measure(innerConstraint);
     }
 
@@ -92,7 +92,7 @@ export class Box extends Control {
   override arrange(rect: Rect): void {
     this.bounds = rect;
 
-    if (this.child && this.child.visible) {
+    if (this.child?.visible) {
       const innerRect: Rect = {
         x: this.paddingLeft,
         y: this.paddingTop,
@@ -106,7 +106,7 @@ export class Box extends Control {
   // ── Render ────────────────────────────────────────────────────────
 
   render(ctx: DrawingContext): void {
-    if (this.child && this.child.visible) {
+    if (this.child?.visible) {
       const child = this.child;
       ctx.pushClip({
         x: child.bounds.x,

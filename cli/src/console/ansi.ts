@@ -2,11 +2,16 @@
  * ANSI helpers — re-exports from consolonia plus CLI-specific extras.
  */
 
-import { esc, stripAnsi, visibleLength, truncateAnsi } from "@teammates/consolonia";
+import {
+  esc,
+  stripAnsi,
+  truncateAnsi,
+  visibleLength,
+} from "@teammates/consolonia";
 
 // ── Re-exports from consolonia ──────────────────────────────────
 
-export { stripAnsi, visibleLength, truncateAnsi };
+export { stripAnsi, truncateAnsi, visibleLength };
 
 export const cursorUp = (n = 1): string => esc.moveUp(n);
 export const cursorDown = (n = 1): string => esc.moveDown(n);

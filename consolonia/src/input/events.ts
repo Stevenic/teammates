@@ -20,8 +20,8 @@ export interface MouseEvent {
   x: number;
   /** 0-based row. */
   y: number;
-  button: 'left' | 'middle' | 'right' | 'none';
-  type: 'press' | 'release' | 'move' | 'wheelup' | 'wheeldown';
+  button: "left" | "middle" | "right" | "none";
+  type: "press" | "release" | "move" | "wheelup" | "wheeldown";
   shift: boolean;
   ctrl: boolean;
   alt: boolean;
@@ -34,39 +34,39 @@ export interface PasteEvent {
 
 /** Discriminated union of all input events. */
 export type InputEvent =
-  | { type: 'key'; event: KeyEvent }
-  | { type: 'mouse'; event: MouseEvent }
-  | { type: 'paste'; event: PasteEvent }
-  | { type: 'resize'; width: number; height: number };
+  | { type: "key"; event: KeyEvent }
+  | { type: "mouse"; event: MouseEvent }
+  | { type: "paste"; event: PasteEvent }
+  | { type: "resize"; width: number; height: number };
 
 // ── Factory helpers ─────────────────────────────────────────────────
 
 export function keyEvent(
   key: string,
-  char: string = '',
+  char: string = "",
   shift: boolean = false,
   ctrl: boolean = false,
   alt: boolean = false,
 ): InputEvent {
-  return { type: 'key', event: { key, char, shift, ctrl, alt } };
+  return { type: "key", event: { key, char, shift, ctrl, alt } };
 }
 
 export function mouseEvent(
   x: number,
   y: number,
-  button: MouseEvent['button'],
-  type: MouseEvent['type'],
+  button: MouseEvent["button"],
+  type: MouseEvent["type"],
   shift: boolean = false,
   ctrl: boolean = false,
   alt: boolean = false,
 ): InputEvent {
-  return { type: 'mouse', event: { x, y, button, type, shift, ctrl, alt } };
+  return { type: "mouse", event: { x, y, button, type, shift, ctrl, alt } };
 }
 
 export function pasteEvent(text: string): InputEvent {
-  return { type: 'paste', event: { text } };
+  return { type: "paste", event: { text } };
 }
 
 export function resizeEvent(width: number, height: number): InputEvent {
-  return { type: 'resize', width, height };
+  return { type: "resize", width, height };
 }

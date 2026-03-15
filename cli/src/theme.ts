@@ -9,7 +9,7 @@
  * all variables with live examples.
  */
 
-import { color, type Color } from "@teammates/consolonia";
+import { type Color, color } from "@teammates/consolonia";
 
 // ── Theme interface ──────────────────────────────────────────────
 
@@ -63,29 +63,29 @@ export interface Theme {
 
 export const DEFAULT_THEME: Theme = {
   // Brand / accent — derived from #3A96DD
-  accent:       color(58, 150, 221),    // #3A96DD — the base blue
-  accentBright: color(85, 187, 255),    // #55BBFF — lighter for highlights
-  accentDim:    color(40, 100, 150),    // #286496 — muted for borders
+  accent: color(58, 150, 221), // #3A96DD — the base blue
+  accentBright: color(85, 187, 255), // #55BBFF — lighter for highlights
+  accentDim: color(40, 100, 150), // #286496 — muted for borders
 
   // Foreground
-  text:         color(230, 230, 230),   // #E6E6E6 — near-white primary text
-  textMuted:    color(150, 150, 150),   // #969696 — gray for descriptions
-  textDim:      color(100, 100, 100),   // #646464 — dim for separators
+  text: color(230, 230, 230), // #E6E6E6 — near-white primary text
+  textMuted: color(150, 150, 150), // #969696 — gray for descriptions
+  textDim: color(100, 100, 100), // #646464 — dim for separators
 
   // Status
-  success:      color(80, 200, 120),    // #50C878 — green
-  warning:      color(230, 180, 50),    // #E6B432 — amber
-  error:        color(230, 70, 70),     // #E64646 — red
-  info:         color(58, 150, 221),    // #3A96DD — same as accent
+  success: color(80, 200, 120), // #50C878 — green
+  warning: color(230, 180, 50), // #E6B432 — amber
+  error: color(230, 70, 70), // #E64646 — red
+  info: color(58, 150, 221), // #3A96DD — same as accent
 
   // Interactive
-  prompt:       color(150, 150, 150),   // #969696 — gray prompt
-  input:        color(230, 230, 230),   // #E6E6E6 — near-white
-  cursorFg:     color(0, 0, 0),         // #000000 — black on light cursor
-  cursorBg:     color(230, 230, 230),   // #E6E6E6 — light block cursor
-  separator:    color(100, 100, 100),   // #646464 — dim rule lines
-  progress:     color(58, 150, 221),    // #3A96DD — blue italic
-  dropdown:     color(58, 150, 221),    // #3A96DD — accent for items
+  prompt: color(150, 150, 150), // #969696 — gray prompt
+  input: color(230, 230, 230), // #E6E6E6 — near-white
+  cursorFg: color(0, 0, 0), // #000000 — black on light cursor
+  cursorBg: color(230, 230, 230), // #E6E6E6 — light block cursor
+  separator: color(100, 100, 100), // #646464 — dim rule lines
+  progress: color(58, 150, 221), // #3A96DD — blue italic
+  dropdown: color(58, 150, 221), // #3A96DD — accent for items
   dropdownHighlight: color(85, 187, 255), // #55BBFF — bright for selected
 };
 

@@ -6,15 +6,15 @@
  * Everything between the markers is emitted as a single PasteEvent.
  */
 
-import { MatchResult, type IMatcher } from './matcher.js';
-import { pasteEvent, type InputEvent } from './events.js';
+import { type InputEvent, pasteEvent } from "./events.js";
+import { type IMatcher, MatchResult } from "./matcher.js";
 
 /** The start marker as an array of characters. */
-const PASTE_START = '\x1b[200~'.split('');
+const PASTE_START = "\x1b[200~".split("");
 /** The end marker as an array of characters. */
-const PASTE_END = '\x1b[201~'.split('');
+const PASTE_END = "\x1b[201~".split("");
 
-const enum State {
+enum State {
   /** Waiting for the first character of the start marker. */
   Idle,
   /** Matching characters of the start marker. */
@@ -32,7 +32,7 @@ export class PasteMatcher implements IMatcher {
   /** How many characters of the end marker have been matched. */
   private endPos: number = 0;
   /** Accumulated paste text. */
-  private buffer: string = '';
+  private buffer: string = "";
   /** Completed event ready for flushing. */
   private result: InputEvent | null = null;
 
@@ -52,7 +52,7 @@ export class PasteMatcher implements IMatcher {
           if (this.startPos === PASTE_START.length) {
             // Full start marker matched — begin collecting.
             this.state = State.Collecting;
-            this.buffer = '';
+            this.buffer = "";
             this.endPos = 0;
           }
           return MatchResult.Partial;
@@ -71,14 +71,14 @@ export class PasteMatcher implements IMatcher {
         this.buffer += char;
         return MatchResult.Partial;
 
-      case State.MatchingEnd:
+      case State.MatchingEnd: {
         if (char === PASTE_END[this.endPos]) {
           this.endPos++;
           if (this.endPos === PASTE_END.length) {
             // Full end marker matched — paste is complete.
             this.state = State.Idle;
             this.result = pasteEvent(this.buffer);
-            this.buffer = '';
+            this.buffer = "";
             this.endPos = 0;
             return MatchResult.Complete;
           }
@@ -86,11 +86,12 @@ export class PasteMatcher implements IMatcher {
         }
         // End marker mismatch — the partially-matched end marker chars
         // are actually part of the paste text.
-        const partial = PASTE_END.slice(0, this.endPos).join('');
+        const partial = PASTE_END.slice(0, this.endPos).join("");
         this.buffer += partial + char;
         this.state = State.Collecting;
         this.endPos = 0;
         return MatchResult.Partial;
+      }
 
       default:
         return MatchResult.NoMatch;
@@ -107,7 +108,7 @@ export class PasteMatcher implements IMatcher {
     this.state = State.Idle;
     this.startPos = 0;
     this.endPos = 0;
-    this.buffer = '';
+    this.buffer = "";
     this.result = null;
   }
 }

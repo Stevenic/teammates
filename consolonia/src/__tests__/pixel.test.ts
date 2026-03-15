@@ -1,49 +1,4 @@
-import { describe, it, expect } from "vitest";
-
-// ── color.ts ────────────────────────────────────────────────────────
-import {
-  color,
-  colorBlend,
-  colorBrighten,
-  colorShade,
-  TRANSPARENT,
-  BLACK,
-  WHITE,
-  RED,
-  GREEN,
-  BLUE,
-  YELLOW,
-  CYAN,
-  MAGENTA,
-  GRAY,
-  DARK_GRAY,
-  LIGHT_GRAY,
-  type Color,
-} from "../pixel/color.js";
-
-// ── box-pattern.ts ──────────────────────────────────────────────────
-import {
-  UP,
-  RIGHT,
-  DOWN,
-  LEFT,
-  BOX_NONE,
-  BOX_CHARS,
-  boxChar,
-  mergeBoxPatterns,
-} from "../pixel/box-pattern.js";
-
-// ── symbol.ts ───────────────────────────────────────────────────────
-import { sym, charWidth, EMPTY_SYMBOL } from "../pixel/symbol.js";
-
-// ── foreground.ts ───────────────────────────────────────────────────
-import {
-  foreground,
-  blendForeground,
-  EMPTY_FOREGROUND,
-  type PixelForeground,
-} from "../pixel/foreground.js";
-
+import { describe, expect, it } from "vitest";
 // ── background.ts ───────────────────────────────────────────────────
 import {
   background,
@@ -51,16 +6,49 @@ import {
   EMPTY_BACKGROUND,
 } from "../pixel/background.js";
 
-// ── pixel.ts ────────────────────────────────────────────────────────
+// ── box-pattern.ts ──────────────────────────────────────────────────
 import {
-  pixel,
-  blendPixel,
-  PIXEL_EMPTY,
-  PIXEL_SPACE,
-} from "../pixel/pixel.js";
-
+  BOX_CHARS,
+  BOX_NONE,
+  boxChar,
+  DOWN,
+  LEFT,
+  mergeBoxPatterns,
+  RIGHT,
+  UP,
+} from "../pixel/box-pattern.js";
 // ── buffer.ts ───────────────────────────────────────────────────────
 import { PixelBuffer } from "../pixel/buffer.js";
+// ── color.ts ────────────────────────────────────────────────────────
+import {
+  BLACK,
+  BLUE,
+  CYAN,
+  color,
+  colorBlend,
+  colorBrighten,
+  colorShade,
+  DARK_GRAY,
+  GRAY,
+  GREEN,
+  LIGHT_GRAY,
+  MAGENTA,
+  RED,
+  TRANSPARENT,
+  WHITE,
+  YELLOW,
+} from "../pixel/color.js";
+// ── foreground.ts ───────────────────────────────────────────────────
+import {
+  blendForeground,
+  EMPTY_FOREGROUND,
+  foreground,
+} from "../pixel/foreground.js";
+
+// ── pixel.ts ────────────────────────────────────────────────────────
+import { blendPixel, PIXEL_EMPTY, PIXEL_SPACE, pixel } from "../pixel/pixel.js";
+// ── symbol.ts ───────────────────────────────────────────────────────
+import { charWidth, EMPTY_SYMBOL, sym } from "../pixel/symbol.js";
 
 // ═══════════════════════════════════════════════════════════════════
 //  COLOR
@@ -274,28 +262,28 @@ describe("box-pattern", () => {
     });
 
     it("UP (0x1) and UP+DOWN (0x5) are vertical bar", () => {
-      expect(BOX_CHARS[UP]).toBe("\u2502");           // │
-      expect(BOX_CHARS[UP | DOWN]).toBe("\u2502");    // │
+      expect(BOX_CHARS[UP]).toBe("\u2502"); // │
+      expect(BOX_CHARS[UP | DOWN]).toBe("\u2502"); // │
     });
 
     it("RIGHT (0x2), LEFT (0x8), and RIGHT+LEFT (0xA) are horizontal bar", () => {
-      expect(BOX_CHARS[RIGHT]).toBe("\u2500");           // ─
-      expect(BOX_CHARS[LEFT]).toBe("\u2500");             // ─
-      expect(BOX_CHARS[RIGHT | LEFT]).toBe("\u2500");    // ─
+      expect(BOX_CHARS[RIGHT]).toBe("\u2500"); // ─
+      expect(BOX_CHARS[LEFT]).toBe("\u2500"); // ─
+      expect(BOX_CHARS[RIGHT | LEFT]).toBe("\u2500"); // ─
     });
 
     it("corners are correct", () => {
-      expect(BOX_CHARS[UP | RIGHT]).toBe("\u2514");      // └
-      expect(BOX_CHARS[DOWN | RIGHT]).toBe("\u250C");    // ┌
-      expect(BOX_CHARS[UP | LEFT]).toBe("\u2518");       // ┘
-      expect(BOX_CHARS[DOWN | LEFT]).toBe("\u2510");     // ┐
+      expect(BOX_CHARS[UP | RIGHT]).toBe("\u2514"); // └
+      expect(BOX_CHARS[DOWN | RIGHT]).toBe("\u250C"); // ┌
+      expect(BOX_CHARS[UP | LEFT]).toBe("\u2518"); // ┘
+      expect(BOX_CHARS[DOWN | LEFT]).toBe("\u2510"); // ┐
     });
 
     it("T-junctions are correct", () => {
-      expect(BOX_CHARS[UP | DOWN | RIGHT]).toBe("\u251C");   // ├
-      expect(BOX_CHARS[UP | DOWN | LEFT]).toBe("\u2524");    // ┤
+      expect(BOX_CHARS[UP | DOWN | RIGHT]).toBe("\u251C"); // ├
+      expect(BOX_CHARS[UP | DOWN | LEFT]).toBe("\u2524"); // ┤
       expect(BOX_CHARS[DOWN | RIGHT | LEFT]).toBe("\u252C"); // ┬
-      expect(BOX_CHARS[UP | RIGHT | LEFT]).toBe("\u2534");   // ┴
+      expect(BOX_CHARS[UP | RIGHT | LEFT]).toBe("\u2534"); // ┴
     });
 
     it("all four directions is a cross", () => {
@@ -306,8 +294,8 @@ describe("box-pattern", () => {
   describe("boxChar()", () => {
     it("returns the correct character for each pattern", () => {
       expect(boxChar(0)).toBe(" ");
-      expect(boxChar(UP | DOWN)).toBe("\u2502");    // │
-      expect(boxChar(LEFT | RIGHT)).toBe("\u2500");  // ─
+      expect(boxChar(UP | DOWN)).toBe("\u2502"); // │
+      expect(boxChar(LEFT | RIGHT)).toBe("\u2500"); // ─
       expect(boxChar(UP | RIGHT | DOWN | LEFT)).toBe("\u253C"); // ┼
     });
 
@@ -342,7 +330,7 @@ describe("box-pattern", () => {
     });
 
     it("masks result to 4 bits", () => {
-      expect(mergeBoxPatterns(0xFF, 0x00)).toBe(0x0F);
+      expect(mergeBoxPatterns(0xff, 0x00)).toBe(0x0f);
     });
   });
 });
@@ -362,9 +350,9 @@ describe("symbol", () => {
 
     it("CJK Unified Ideographs are width 2", () => {
       // U+4E00 (first CJK Unified Ideograph)
-      expect(charWidth(0x4E00)).toBe(2);
+      expect(charWidth(0x4e00)).toBe(2);
       // U+9FFF (last CJK Unified Ideograph)
-      expect(charWidth(0x9FFF)).toBe(2);
+      expect(charWidth(0x9fff)).toBe(2);
     });
 
     it("Hiragana characters are width 2", () => {
@@ -374,17 +362,17 @@ describe("symbol", () => {
 
     it("Katakana characters are width 2", () => {
       // U+30A2 = ア
-      expect(charWidth(0x30A2)).toBe(2);
+      expect(charWidth(0x30a2)).toBe(2);
     });
 
     it("Hangul syllables are width 2", () => {
       // U+AC00 = 가
-      expect(charWidth(0xAC00)).toBe(2);
+      expect(charWidth(0xac00)).toBe(2);
     });
 
     it("Fullwidth forms are width 2", () => {
       // U+FF01 = ！ (fullwidth exclamation mark)
-      expect(charWidth(0xFF01)).toBe(2);
+      expect(charWidth(0xff01)).toBe(2);
     });
 
     it("CJK Extension B characters are width 2", () => {
@@ -393,12 +381,12 @@ describe("symbol", () => {
 
     it("Latin Extended characters are width 1", () => {
       // U+00E9 = é
-      expect(charWidth(0x00E9)).toBe(1);
+      expect(charWidth(0x00e9)).toBe(1);
     });
 
     it("Emoji (outside CJK ranges) default to width 1", () => {
       // U+1F600 = grinning face (not in covered CJK ranges)
-      expect(charWidth(0x1F600)).toBe(1);
+      expect(charWidth(0x1f600)).toBe(1);
     });
   });
 
@@ -517,30 +505,20 @@ describe("foreground", () => {
     });
 
     it("merges box patterns when both have them", () => {
-      const below = foreground(
-        sym(boxChar(LEFT | RIGHT), LEFT | RIGHT),
-        RED,
-      );
-      const above = foreground(
-        sym(boxChar(UP | DOWN), UP | DOWN),
-        BLUE,
-      );
+      const below = foreground(sym(boxChar(LEFT | RIGHT), LEFT | RIGHT), RED);
+      const above = foreground(sym(boxChar(UP | DOWN), UP | DOWN), BLUE);
       const result = blendForeground(above, below);
       expect(result.symbol.pattern).toBe(UP | RIGHT | DOWN | LEFT);
       expect(result.symbol.text).toBe("\u253C"); // ┼
     });
 
     it("merges style flags via OR when both have box patterns", () => {
-      const below = foreground(
-        sym(boxChar(LEFT | RIGHT), LEFT | RIGHT),
-        RED,
-        { bold: true },
-      );
-      const above = foreground(
-        sym(boxChar(UP | DOWN), UP | DOWN),
-        BLUE,
-        { italic: true },
-      );
+      const below = foreground(sym(boxChar(LEFT | RIGHT), LEFT | RIGHT), RED, {
+        bold: true,
+      });
+      const above = foreground(sym(boxChar(UP | DOWN), UP | DOWN), BLUE, {
+        italic: true,
+      });
       const result = blendForeground(above, below);
       expect(result.bold).toBe(true);
       expect(result.italic).toBe(true);
@@ -595,7 +573,10 @@ describe("background", () => {
     });
 
     it("transparent above returns below", () => {
-      const result = blendBackground(background(TRANSPARENT), background(GREEN));
+      const result = blendBackground(
+        background(TRANSPARENT),
+        background(GREEN),
+      );
       expect(result.color).toEqual(GREEN);
     });
 
@@ -656,10 +637,7 @@ describe("pixel", () => {
 
   describe("blendPixel()", () => {
     it("composites foreground and background independently", () => {
-      const below = pixel(
-        foreground(sym("A"), RED),
-        background(BLUE),
-      );
+      const below = pixel(foreground(sym("A"), RED), background(BLUE));
       const above = pixel(
         foreground(sym("B"), GREEN),
         background(color(255, 0, 0, 128)),
@@ -672,10 +650,7 @@ describe("pixel", () => {
     });
 
     it("transparent pixel over content returns content", () => {
-      const below = pixel(
-        foreground(sym("X"), WHITE),
-        background(RED),
-      );
+      const below = pixel(foreground(sym("X"), WHITE), background(RED));
       const result = blendPixel(PIXEL_EMPTY, below);
       // PIXEL_EMPTY fg is transparent space, so below shows through
       expect(result.foreground.symbol.text).toBe("X");
@@ -683,10 +658,7 @@ describe("pixel", () => {
     });
 
     it("content pixel over empty replaces empty", () => {
-      const above = pixel(
-        foreground(sym("Z"), BLUE),
-        background(GREEN),
-      );
+      const above = pixel(foreground(sym("Z"), BLUE), background(GREEN));
       const result = blendPixel(above, PIXEL_EMPTY);
       expect(result.foreground.symbol.text).toBe("Z");
       expect(result.background.color).toEqual(GREEN);

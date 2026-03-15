@@ -3,7 +3,7 @@
  * Inspired by Consolonia's InputProcessor matcher chain.
  */
 
-import type { InputEvent } from './events.js';
+import type { InputEvent } from "./events.js";
 
 /** Result of feeding a character to a matcher. */
 export enum MatchResult {

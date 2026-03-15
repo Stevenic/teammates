@@ -14,14 +14,13 @@
 
 import type { TextStyle } from "../drawing/context.js";
 import {
-  WHITE,
-  CYAN,
-  GREEN,
-  YELLOW,
   BLUE,
-  MAGENTA,
-  RED,
+  CYAN,
   GRAY,
+  GREEN,
+  MAGENTA,
+  WHITE,
+  YELLOW,
 } from "../pixel/color.js";
 
 // ── Token types ──────────────────────────────────────────────────
@@ -53,19 +52,19 @@ export interface SyntaxToken {
 export type SyntaxTheme = Record<SyntaxTokenType, TextStyle>;
 
 export const DEFAULT_SYNTAX_THEME: SyntaxTheme = {
-  keyword:     { fg: MAGENTA },
-  string:      { fg: GREEN },
-  number:      { fg: YELLOW },
-  comment:     { fg: GRAY, italic: true },
-  operator:    { fg: CYAN },
+  keyword: { fg: MAGENTA },
+  string: { fg: GREEN },
+  number: { fg: YELLOW },
+  comment: { fg: GRAY, italic: true },
+  operator: { fg: CYAN },
   punctuation: { fg: WHITE },
-  type:        { fg: CYAN },
-  function:    { fg: BLUE },
-  variable:    { fg: WHITE },
-  constant:    { fg: YELLOW, bold: true },
-  decorator:   { fg: YELLOW },
-  attribute:   { fg: CYAN },
-  text:        { fg: WHITE },
+  type: { fg: CYAN },
+  function: { fg: BLUE },
+  variable: { fg: WHITE },
+  constant: { fg: YELLOW, bold: true },
+  decorator: { fg: YELLOW },
+  attribute: { fg: CYAN },
+  text: { fg: WHITE },
 };
 
 // ── Highlighter interface ────────────────────────────────────────
@@ -166,23 +165,86 @@ function regexHighlighter(
 // ── Built-in: JavaScript / TypeScript ────────────────────────────
 
 const JS_KEYWORDS = [
-  "abstract", "as", "async", "await", "break", "case", "catch", "class",
-  "const", "continue", "debugger", "default", "delete", "do", "else",
-  "enum", "export", "extends", "finally", "for", "from", "function",
-  "get", "if", "implements", "import", "in", "instanceof", "interface",
-  "let", "new", "of", "package", "private", "protected", "public",
-  "readonly", "return", "set", "static", "super", "switch", "this",
-  "throw", "try", "type", "typeof", "var", "void", "while", "with",
+  "abstract",
+  "as",
+  "async",
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "finally",
+  "for",
+  "from",
+  "function",
+  "get",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "let",
+  "new",
+  "of",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "readonly",
+  "return",
+  "set",
+  "static",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "try",
+  "type",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
   "yield",
 ];
 
 const JS_CONSTANTS = ["true", "false", "null", "undefined", "NaN", "Infinity"];
 
 const JS_TYPES = [
-  "Array", "Boolean", "Date", "Error", "Function", "Map", "Number",
-  "Object", "Promise", "RegExp", "Set", "String", "Symbol", "WeakMap",
-  "WeakSet", "any", "boolean", "never", "number", "string", "unknown",
-  "void", "bigint",
+  "Array",
+  "Boolean",
+  "Date",
+  "Error",
+  "Function",
+  "Map",
+  "Number",
+  "Object",
+  "Promise",
+  "RegExp",
+  "Set",
+  "String",
+  "Symbol",
+  "WeakMap",
+  "WeakSet",
+  "any",
+  "boolean",
+  "never",
+  "number",
+  "string",
+  "unknown",
+  "void",
+  "bigint",
 ];
 
 const jsHighlighter = regexHighlighter(
@@ -206,17 +268,27 @@ const jsHighlighter = regexHighlighter(
     { type: "number", pattern: /^0[oO][0-7_]+n?/ },
     { type: "number", pattern: /^\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?n?/ },
     // Constants
-    { type: "constant", pattern: new RegExp(`^\\b(?:${JS_CONSTANTS.join("|")})\\b`) },
+    {
+      type: "constant",
+      pattern: new RegExp(`^\\b(?:${JS_CONSTANTS.join("|")})\\b`),
+    },
     // Types (capitalized or TS built-in)
     { type: "type", pattern: new RegExp(`^\\b(?:${JS_TYPES.join("|")})\\b`) },
     // Keywords
-    { type: "keyword", pattern: new RegExp(`^\\b(?:${JS_KEYWORDS.join("|")})\\b`) },
+    {
+      type: "keyword",
+      pattern: new RegExp(`^\\b(?:${JS_KEYWORDS.join("|")})\\b`),
+    },
     // Function calls
     { type: "function", pattern: /^\b[a-zA-Z_$]\w*(?=\s*\()/ },
     // Operators
-    { type: "operator", pattern: /^(?:=>|===|!==|==|!=|<=|>=|&&|\|\||<<|>>>|>>|\?\?|\?\.|[+\-*/%&|^~!<>=?:])/ },
+    {
+      type: "operator",
+      pattern:
+        /^(?:=>|===|!==|==|!=|<=|>=|&&|\|\||<<|>>>|>>|\?\?|\?\.|[+\-*/%&|^~!<>=?:])/,
+    },
     // Punctuation
-    { type: "punctuation", pattern: /^[{}()\[\];,.]/ },
+    { type: "punctuation", pattern: /^[{}()[\];,.]/ },
     // Identifiers
     { type: "variable", pattern: /^[a-zA-Z_$]\w*/ },
     // Whitespace
@@ -229,22 +301,78 @@ registerHighlighter(jsHighlighter);
 // ── Built-in: Python ─────────────────────────────────────────────
 
 const PY_KEYWORDS = [
-  "and", "as", "assert", "async", "await", "break", "class", "continue",
-  "def", "del", "elif", "else", "except", "finally", "for", "from",
-  "global", "if", "import", "in", "is", "lambda", "nonlocal", "not",
-  "or", "pass", "raise", "return", "try", "while", "with", "yield",
-  "match", "case",
+  "and",
+  "as",
+  "assert",
+  "async",
+  "await",
+  "break",
+  "class",
+  "continue",
+  "def",
+  "del",
+  "elif",
+  "else",
+  "except",
+  "finally",
+  "for",
+  "from",
+  "global",
+  "if",
+  "import",
+  "in",
+  "is",
+  "lambda",
+  "nonlocal",
+  "not",
+  "or",
+  "pass",
+  "raise",
+  "return",
+  "try",
+  "while",
+  "with",
+  "yield",
+  "match",
+  "case",
 ];
 
 const PY_CONSTANTS = ["True", "False", "None"];
 
 const PY_TYPES = [
-  "int", "float", "str", "bool", "list", "dict", "tuple", "set",
-  "frozenset", "bytes", "bytearray", "complex", "range", "type",
-  "object", "Exception", "ValueError", "TypeError", "KeyError",
-  "IndexError", "AttributeError", "ImportError", "RuntimeError",
-  "StopIteration", "Generator", "Callable", "Optional", "Union",
-  "Any", "List", "Dict", "Tuple", "Set",
+  "int",
+  "float",
+  "str",
+  "bool",
+  "list",
+  "dict",
+  "tuple",
+  "set",
+  "frozenset",
+  "bytes",
+  "bytearray",
+  "complex",
+  "range",
+  "type",
+  "object",
+  "Exception",
+  "ValueError",
+  "TypeError",
+  "KeyError",
+  "IndexError",
+  "AttributeError",
+  "ImportError",
+  "RuntimeError",
+  "StopIteration",
+  "Generator",
+  "Callable",
+  "Optional",
+  "Union",
+  "Any",
+  "List",
+  "Dict",
+  "Tuple",
+  "Set",
 ];
 
 const pyHighlighter = regexHighlighter(
@@ -273,19 +401,28 @@ const pyHighlighter = regexHighlighter(
     { type: "number", pattern: /^0[oO][0-7_]+/ },
     { type: "number", pattern: /^\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?j?/ },
     // Constants
-    { type: "constant", pattern: new RegExp(`^\\b(?:${PY_CONSTANTS.join("|")})\\b`) },
+    {
+      type: "constant",
+      pattern: new RegExp(`^\\b(?:${PY_CONSTANTS.join("|")})\\b`),
+    },
     // Types
     { type: "type", pattern: new RegExp(`^\\b(?:${PY_TYPES.join("|")})\\b`) },
     // Keywords
-    { type: "keyword", pattern: new RegExp(`^\\b(?:${PY_KEYWORDS.join("|")})\\b`) },
+    {
+      type: "keyword",
+      pattern: new RegExp(`^\\b(?:${PY_KEYWORDS.join("|")})\\b`),
+    },
     // Function calls
     { type: "function", pattern: /^\b[a-zA-Z_]\w*(?=\s*\()/ },
     // self/cls
     { type: "variable", pattern: /^\b(?:self|cls)\b/ },
     // Operators
-    { type: "operator", pattern: /^(?:->|:=|\*\*|\/\/|==|!=|<=|>=|<<|>>|[+\-*/%&|^~!<>=@])/ },
+    {
+      type: "operator",
+      pattern: /^(?:->|:=|\*\*|\/\/|==|!=|<=|>=|<<|>>|[+\-*/%&|^~!<>=@])/,
+    },
     // Punctuation
-    { type: "punctuation", pattern: /^[{}()\[\]:;,.]/ },
+    { type: "punctuation", pattern: /^[{}()[\]:;,.]/ },
     // Identifiers
     { type: "variable", pattern: /^[a-zA-Z_]\w*/ },
     // Whitespace
@@ -298,29 +435,128 @@ registerHighlighter(pyHighlighter);
 // ── Built-in: C# ────────────────────────────────────────────────
 
 const CS_KEYWORDS = [
-  "abstract", "as", "async", "await", "base", "bool", "break", "byte",
-  "case", "catch", "char", "checked", "class", "const", "continue",
-  "decimal", "default", "delegate", "do", "double", "else", "enum",
-  "event", "explicit", "extern", "finally", "fixed", "float", "for",
-  "foreach", "get", "goto", "if", "implicit", "in", "int", "interface",
-  "internal", "is", "lock", "long", "namespace", "new", "object",
-  "operator", "out", "override", "params", "partial", "private",
-  "protected", "public", "readonly", "record", "ref", "required",
-  "return", "sbyte", "sealed", "set", "short", "sizeof", "stackalloc",
-  "static", "string", "struct", "switch", "this", "throw", "try",
-  "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using",
-  "var", "virtual", "void", "volatile", "when", "where", "while",
-  "yield", "init", "global", "dynamic", "value", "nameof",
+  "abstract",
+  "as",
+  "async",
+  "await",
+  "base",
+  "bool",
+  "break",
+  "byte",
+  "case",
+  "catch",
+  "char",
+  "checked",
+  "class",
+  "const",
+  "continue",
+  "decimal",
+  "default",
+  "delegate",
+  "do",
+  "double",
+  "else",
+  "enum",
+  "event",
+  "explicit",
+  "extern",
+  "finally",
+  "fixed",
+  "float",
+  "for",
+  "foreach",
+  "get",
+  "goto",
+  "if",
+  "implicit",
+  "in",
+  "int",
+  "interface",
+  "internal",
+  "is",
+  "lock",
+  "long",
+  "namespace",
+  "new",
+  "object",
+  "operator",
+  "out",
+  "override",
+  "params",
+  "partial",
+  "private",
+  "protected",
+  "public",
+  "readonly",
+  "record",
+  "ref",
+  "required",
+  "return",
+  "sbyte",
+  "sealed",
+  "set",
+  "short",
+  "sizeof",
+  "stackalloc",
+  "static",
+  "string",
+  "struct",
+  "switch",
+  "this",
+  "throw",
+  "try",
+  "typeof",
+  "uint",
+  "ulong",
+  "unchecked",
+  "unsafe",
+  "ushort",
+  "using",
+  "var",
+  "virtual",
+  "void",
+  "volatile",
+  "when",
+  "where",
+  "while",
+  "yield",
+  "init",
+  "global",
+  "dynamic",
+  "value",
+  "nameof",
 ];
 
 const CS_CONSTANTS = ["true", "false", "null"];
 
 const CS_TYPES = [
-  "Task", "List", "Dictionary", "HashSet", "IEnumerable", "IList",
-  "ICollection", "IDictionary", "Action", "Func", "Nullable",
-  "String", "Int32", "Int64", "Boolean", "Double", "Float",
-  "Decimal", "Object", "Type", "Exception", "Console", "Math",
-  "Span", "Memory", "ReadOnlySpan", "ValueTask",
+  "Task",
+  "List",
+  "Dictionary",
+  "HashSet",
+  "IEnumerable",
+  "IList",
+  "ICollection",
+  "IDictionary",
+  "Action",
+  "Func",
+  "Nullable",
+  "String",
+  "Int32",
+  "Int64",
+  "Boolean",
+  "Double",
+  "Float",
+  "Decimal",
+  "Object",
+  "Type",
+  "Exception",
+  "Console",
+  "Math",
+  "Span",
+  "Memory",
+  "ReadOnlySpan",
+  "ValueTask",
 ];
 
 const csHighlighter = regexHighlighter(
@@ -341,22 +577,35 @@ const csHighlighter = regexHighlighter(
     // Numbers
     { type: "number", pattern: /^0[xX][0-9a-fA-F_]+[uUlLfFdDmM]?/ },
     { type: "number", pattern: /^0[bB][01_]+[uUlLfFdDmM]?/ },
-    { type: "number", pattern: /^\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?[uUlLfFdDmM]?/ },
+    {
+      type: "number",
+      pattern: /^\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?[uUlLfFdDmM]?/,
+    },
     // Constants
-    { type: "constant", pattern: new RegExp(`^\\b(?:${CS_CONSTANTS.join("|")})\\b`) },
+    {
+      type: "constant",
+      pattern: new RegExp(`^\\b(?:${CS_CONSTANTS.join("|")})\\b`),
+    },
     // Types (built-in + PascalCase)
     { type: "type", pattern: new RegExp(`^\\b(?:${CS_TYPES.join("|")})\\b`) },
     { type: "type", pattern: /^\b[A-Z][a-zA-Z0-9]*(?=\s*[<{(])/ },
     // Keywords
-    { type: "keyword", pattern: new RegExp(`^\\b(?:${CS_KEYWORDS.join("|")})\\b`) },
+    {
+      type: "keyword",
+      pattern: new RegExp(`^\\b(?:${CS_KEYWORDS.join("|")})\\b`),
+    },
     // Generic type parameters
     { type: "type", pattern: /^<[A-Z]\w*(?:\s*,\s*[A-Z]\w*)*>/ },
     // Method calls
     { type: "function", pattern: /^\b[a-zA-Z_]\w*(?=\s*[<(])/ },
     // Operators
-    { type: "operator", pattern: /^(?:=>|&&|\|\||\?\?|\?\.|\?\[|==|!=|<=|>=|<<|>>|[+\-*/%&|^~!<>=?:])/ },
+    {
+      type: "operator",
+      pattern:
+        /^(?:=>|&&|\|\||\?\?|\?\.|\?\[|==|!=|<=|>=|<<|>>|[+\-*/%&|^~!<>=?:])/,
+    },
     // Punctuation
-    { type: "punctuation", pattern: /^[{}()\[\];,.]/ },
+    { type: "punctuation", pattern: /^[{}()[\];,.]/ },
     // Identifiers
     { type: "variable", pattern: /^[a-zA-Z_@]\w*/ },
     // Whitespace
@@ -369,18 +618,68 @@ registerHighlighter(csHighlighter);
 // ── Built-in: Bash / Shell ───────────────────────────────────────
 
 const BASH_KEYWORDS = [
-  "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
-  "done", "case", "esac", "in", "function", "select", "time", "coproc",
-  "return", "exit", "break", "continue", "local", "declare", "typeset",
-  "export", "readonly", "unset", "shift", "source", "eval", "exec",
+  "if",
+  "then",
+  "else",
+  "elif",
+  "fi",
+  "for",
+  "while",
+  "until",
+  "do",
+  "done",
+  "case",
+  "esac",
+  "in",
+  "function",
+  "select",
+  "time",
+  "coproc",
+  "return",
+  "exit",
+  "break",
+  "continue",
+  "local",
+  "declare",
+  "typeset",
+  "export",
+  "readonly",
+  "unset",
+  "shift",
+  "source",
+  "eval",
+  "exec",
   "trap",
 ];
 
 const BASH_BUILTINS = [
-  "echo", "printf", "read", "cd", "pwd", "pushd", "popd", "dirs",
-  "set", "test", "true", "false", "command", "type", "which", "alias",
-  "unalias", "bg", "fg", "jobs", "wait", "kill", "history",
-  "getopts", "hash", "ulimit", "umask",
+  "echo",
+  "printf",
+  "read",
+  "cd",
+  "pwd",
+  "pushd",
+  "popd",
+  "dirs",
+  "set",
+  "test",
+  "true",
+  "false",
+  "command",
+  "type",
+  "which",
+  "alias",
+  "unalias",
+  "bg",
+  "fg",
+  "jobs",
+  "wait",
+  "kill",
+  "history",
+  "getopts",
+  "hash",
+  "ulimit",
+  "umask",
 ];
 
 const bashHighlighter = regexHighlighter(
@@ -404,14 +703,23 @@ const bashHighlighter = regexHighlighter(
     // Numbers
     { type: "number", pattern: /^\b\d+\b/ },
     // Builtins
-    { type: "function", pattern: new RegExp(`^\\b(?:${BASH_BUILTINS.join("|")})\\b`) },
+    {
+      type: "function",
+      pattern: new RegExp(`^\\b(?:${BASH_BUILTINS.join("|")})\\b`),
+    },
     // Keywords
-    { type: "keyword", pattern: new RegExp(`^\\b(?:${BASH_KEYWORDS.join("|")})\\b`) },
+    {
+      type: "keyword",
+      pattern: new RegExp(`^\\b(?:${BASH_KEYWORDS.join("|")})\\b`),
+    },
     // Operators and redirections
     { type: "operator", pattern: /^(?:&&|\|\||>>|<<|[<>|&;])/ },
-    { type: "operator", pattern: /^(?:==|!=|-eq|-ne|-lt|-gt|-le|-ge|-z|-n|-f|-d|-e|-r|-w|-x)/ },
+    {
+      type: "operator",
+      pattern: /^(?:==|!=|-eq|-ne|-lt|-gt|-le|-ge|-z|-n|-f|-d|-e|-r|-w|-x)/,
+    },
     // Punctuation
-    { type: "punctuation", pattern: /^[{}()\[\]]/ },
+    { type: "punctuation", pattern: /^[{}()[\]]/ },
     // Flags
     { type: "constant", pattern: /^--?[a-zA-Z][\w-]*/ },
     // Identifiers
@@ -441,7 +749,7 @@ const jsonHighlighter = regexHighlighter(
     // Constants
     { type: "constant", pattern: /^\b(?:true|false|null)\b/ },
     // Punctuation
-    { type: "punctuation", pattern: /^[{}()\[\]:,]/ },
+    { type: "punctuation", pattern: /^[{}()[\]:,]/ },
     // Whitespace
     { type: "text", pattern: /^\s+/ },
   ],
@@ -471,15 +779,19 @@ const yamlHighlighter = regexHighlighter(
     // Block scalar indicators
     { type: "operator", pattern: /^[|>][+-]?(?=\s|$)/ },
     // Constants
-    { type: "constant", pattern: /^\b(?:true|false|null|yes|no|on|off|True|False|Null|Yes|No|On|Off|TRUE|FALSE|NULL|YES|NO|ON|OFF)\b/ },
+    {
+      type: "constant",
+      pattern:
+        /^\b(?:true|false|null|yes|no|on|off|True|False|Null|Yes|No|On|Off|TRUE|FALSE|NULL|YES|NO|ON|OFF)\b/,
+    },
     // Numbers
     { type: "number", pattern: /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/ },
     { type: "number", pattern: /^0[xX][0-9a-fA-F]+/ },
     { type: "number", pattern: /^0[oO][0-7]+/ },
     // Punctuation
-    { type: "punctuation", pattern: /^[{}\[\]:,\-?]/ },
+    { type: "punctuation", pattern: /^[{}[\]:,\-?]/ },
     // Plain scalars (unquoted values)
-    { type: "variable", pattern: /^[^\s#:,\[\]{}]+/ },
+    { type: "variable", pattern: /^[^\s#:,[\]{}]+/ },
     // Whitespace
     { type: "text", pattern: /^\s+/ },
   ],

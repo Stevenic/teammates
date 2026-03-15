@@ -1,7 +1,7 @@
-import { LocalDocumentIndex } from "vectra";
-import { LocalEmbeddings } from "./embeddings.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { LocalDocumentIndex } from "vectra";
+import { LocalEmbeddings } from "./embeddings.js";
 
 export interface IndexerConfig {
   /** Path to the .teammates directory */
@@ -46,7 +46,7 @@ export class Indexer {
       const soulPath = path.join(
         this._config.teammatesDir,
         entry.name,
-        "SOUL.md"
+        "SOUL.md",
       );
       try {
         await fs.access(soulPath);

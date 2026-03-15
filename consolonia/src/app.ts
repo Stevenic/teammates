@@ -7,17 +7,17 @@
  */
 
 import type { Writable } from "node:stream";
-import type { InputEvent } from "./input/events.js";
-import type { Constraint, Rect } from "./layout/types.js";
-import { Control } from "./layout/control.js";
-import { PixelBuffer } from "./pixel/buffer.js";
+import * as esc from "./ansi/esc.js";
 import { AnsiOutput } from "./ansi/output.js";
+import { DrawingContext } from "./drawing/context.js";
+import type { InputEvent } from "./input/events.js";
+import { createInputProcessor } from "./input/processor.js";
+import { disableRawMode, enableRawMode } from "./input/raw-mode.js";
+import type { Control } from "./layout/control.js";
+import type { Constraint, Rect } from "./layout/types.js";
+import { PixelBuffer } from "./pixel/buffer.js";
 import { DirtyRegions } from "./render/regions.js";
 import { RenderTarget } from "./render/render-target.js";
-import { DrawingContext } from "./drawing/context.js";
-import { createInputProcessor } from "./input/processor.js";
-import { enableRawMode, disableRawMode } from "./input/raw-mode.js";
-import * as esc from "./ansi/esc.js";
 
 // ── Options ──────────────────────────────────────────────────────────
 

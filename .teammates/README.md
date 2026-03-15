@@ -8,8 +8,8 @@ Three teammates covering the teammates framework: Beacon owns the recall search 
 
 | Name | Persona | Primary Ownership | Last Active |
 |---|---|---|---|
-| **Beacon** | Teammates platform engineer | `recall/src/**`, `recall/package.json`, `recall/tsconfig.json`, `cli/src/**`, `cli/package.json`, `cli/tsconfig.json` | 2026-03-12 |
-| **Scribe** | Framework & onboarding architect | `template/**`, `ONBOARDING.md`, `README.md` | 2026-03-12 |
+| **Beacon** | Teammates platform engineer | `recall/src/**`, `cli/src/**`, `consolonia/src/**` + package configs | 2026-03-15 |
+| **Scribe** | Framework & onboarding architect | `template/**`, `ONBOARDING.md`, `README.md` | 2026-03-15 |
 | **Pipeline** | DevOps & CI/CD engineer | `.github/workflows/**`, `.github/**` | 2026-03-15 |
 
 ## Dependency Flow
@@ -17,6 +17,7 @@ Three teammates covering the teammates framework: Beacon owns the recall search 
 ```
 Templates (Scribe) → Onboarding (Scribe) → Recall (Beacon)
                                           → CLI (Beacon)
+                                          → Consolonia (Beacon)
                                           → CI/CD (Pipeline)
 ```
 
@@ -29,7 +30,7 @@ Scribe defines the framework structure (templates, onboarding instructions). Bea
 | Keywords | Teammate |
 |---|---|
 | recall, search, embeddings, vectra, indexer, vector, semantic | **Beacon** |
-| cli, orchestrator, adapter, REPL, handoff, agent, routing, queue | **Beacon** |
+| cli, orchestrator, adapter, REPL, handoff, agent, routing, queue, consolonia, terminal UI | **Beacon** |
 | template, onboarding, SOUL.md, WISDOM.md, protocol, framework, roster, markdown | **Scribe** |
 | ci, cd, pipeline, workflow, actions, release, publish, deploy, build automation | **Pipeline** |
 

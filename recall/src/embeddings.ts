@@ -17,11 +17,13 @@ export class LocalEmbeddings implements EmbeddingsModel {
   }
 
   async createEmbeddings(
-    inputs: string | string[]
+    inputs: string | string[],
   ): Promise<EmbeddingsResponse> {
     try {
       const extractor = await this._getExtractor();
-      const texts = (Array.isArray(inputs) ? inputs : [inputs]).filter((t) => t.trim().length > 0);
+      const texts = (Array.isArray(inputs) ? inputs : [inputs]).filter(
+        (t) => t.trim().length > 0,
+      );
       if (texts.length === 0) {
         return { status: "success", output: [] };
       }

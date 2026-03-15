@@ -43,7 +43,11 @@ export function truncateAnsi(str: string, maxWidth: number): string {
       if (i + 1 < str.length && str.charCodeAt(i + 1) === 0x5b) {
         // 0x5b = '['
         let j = i + 2;
-        while (j < str.length && str.charCodeAt(j) >= 0x20 && str.charCodeAt(j) <= 0x3f) {
+        while (
+          j < str.length &&
+          str.charCodeAt(j) >= 0x20 &&
+          str.charCodeAt(j) <= 0x3f
+        ) {
           j++;
         }
         if (j < str.length) {

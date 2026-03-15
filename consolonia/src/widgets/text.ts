@@ -5,9 +5,9 @@
  * multi-line content. Automatically invalidates on text or style changes.
  */
 
-import { Control } from "../layout/control.js";
-import type { Size, Constraint, Rect } from "../layout/types.js";
 import type { DrawingContext, TextStyle } from "../drawing/context.js";
+import { Control } from "../layout/control.js";
+import type { Constraint, Size } from "../layout/types.js";
 
 export interface TextOptions {
   text?: string;
@@ -189,7 +189,7 @@ function wrapLines(rawLines: string[], maxWidth: number): string[] {
       if (current.length === 0) {
         current = word;
       } else if (current.length + 1 + word.length <= maxWidth) {
-        current += " " + word;
+        current += ` ${word}`;
       } else {
         result.push(current);
         current = word;

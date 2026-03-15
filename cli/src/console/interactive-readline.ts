@@ -18,13 +18,16 @@
  *   await irl.start();
  */
 
-import { createInterface, type Interface as ReadlineInterface } from "node:readline";
-import { MutableOutput } from "./mutable-output.js";
-import { PasteHandler, type PasteResult } from "./paste-handler.js";
-import { Dropdown } from "./dropdown.js";
-import { Wordwheel, type WordwheelItem } from "./wordwheel.js";
+import {
+  createInterface,
+  type Interface as ReadlineInterface,
+} from "node:readline";
 import { esc } from "@teammates/consolonia";
+import { Dropdown } from "./dropdown.js";
 import type { FileAttachment } from "./file-drop.js";
+import { MutableOutput } from "./mutable-output.js";
+import { PasteHandler } from "./paste-handler.js";
+import { Wordwheel, type WordwheelItem } from "./wordwheel.js";
 
 export interface InteractiveReadlineOptions {
   /** Prompt string (may include ANSI color codes). */
@@ -32,7 +35,10 @@ export interface InteractiveReadlineOptions {
   /** Return completion items for the current line/cursor. */
   getItems?: (line: string, cursor: number) => WordwheelItem[];
   /** Called when a line is ready to dispatch. */
-  onLine: (input: string, attachments?: FileAttachment[]) => Promise<void> | void;
+  onLine: (
+    input: string,
+    attachments?: FileAttachment[],
+  ) => Promise<void> | void;
   /** Called when readline closes (Ctrl+D). */
   onClose?: () => void;
   /** Format a highlighted wordwheel item. */
@@ -54,7 +60,10 @@ export class InteractiveReadline {
 
   private dispatching = false;
   private prompt: string;
-  private onLine: (input: string, attachments?: FileAttachment[]) => Promise<void> | void;
+  private onLine: (
+    input: string,
+    attachments?: FileAttachment[],
+  ) => Promise<void> | void;
 
   constructor(options: InteractiveReadlineOptions) {
     this.prompt = options.prompt;

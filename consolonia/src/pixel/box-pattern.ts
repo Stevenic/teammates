@@ -12,10 +12,10 @@
  */
 
 /** Direction bit flags. */
-export const UP    = 0x1;
+export const UP = 0x1;
 export const RIGHT = 0x2;
-export const DOWN  = 0x4;
-export const LEFT  = 0x8;
+export const DOWN = 0x4;
+export const LEFT = 0x8;
 
 /** A box pattern is a 4-bit bitmask (0-15). */
 export type BoxPattern = number;
@@ -29,7 +29,7 @@ export const BOX_NONE: BoxPattern = 0;
  * Index 0 (no bits) maps to a space since there is no line to draw.
  */
 export const BOX_CHARS: readonly string[] = [
-  " ",  // 0b0000 = none
+  " ", // 0b0000 = none
   "\u2502", // 0b0001 = UP             │
   "\u2500", // 0b0010 = RIGHT          ─
   "\u2514", // 0b0011 = UP+RIGHT       └
@@ -51,7 +51,7 @@ export const BOX_CHARS: readonly string[] = [
  * Get the box-drawing character for a given pattern.
  */
 export function boxChar(pattern: BoxPattern): string {
-  return BOX_CHARS[pattern & 0xF]!;
+  return BOX_CHARS[pattern & 0xf]!;
 }
 
 /**
@@ -61,5 +61,5 @@ export function boxChar(pattern: BoxPattern): string {
  * yields a cross (┼).
  */
 export function mergeBoxPatterns(a: BoxPattern, b: BoxPattern): BoxPattern {
-  return (a | b) & 0xF;
+  return (a | b) & 0xf;
 }

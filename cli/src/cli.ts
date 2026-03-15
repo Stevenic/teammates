@@ -9,37 +9,56 @@
  *   teammates --dir <path>        Override .teammates/ location
  */
 
-import { createInterface } from "node:readline";
-import { resolve, join } from "node:path";
-import { stat, mkdir, readdir, rm, unlink } from "node:fs/promises";
-import { execSync, exec as execCb, spawn as cpSpawn, type ChildProcess } from "node:child_process";
+import {
+  type ChildProcess,
+  spawn as cpSpawn,
+  exec as execCb,
+  execSync,
+} from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
+import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
 const execAsync = promisify(execCb);
+
+import {
+  App,
+  ChatView,
+  type Color,
+  type Constraint,
+  Control,
+  concat,
+  type DrawingContext,
+  type DropdownItem,
+  esc,
+  pen,
+  type Rect,
+  renderMarkdown,
+  type Size,
+  type StyledLine,
+  type StyledSpan,
+  StyledText,
+  stripAnsi,
+} from "@teammates/consolonia";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
-import { Orchestrator } from "./orchestrator.js";
 import type { AgentAdapter } from "./adapter.js";
-import type { OrchestratorEvent, HandoffEnvelope, TaskResult } from "./types.js";
-import { EchoAdapter } from "./adapters/echo.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
-import {
-  esc, stripAnsi, App, ChatView, type DropdownItem,
-  pen, concat, type StyledSpan,
-  StyledText, type StyledLine,
-  Control, type DrawingContext, type Constraint, type Size, type Rect,
-  color,
-  CYAN, GREEN, YELLOW, RED, GRAY, WHITE, BLUE,
-  type Color,
-  renderMarkdown,
-} from "@teammates/consolonia";
-import { theme, colorToHex, type Theme } from "./theme.js";
-import { PromptInput } from "./console/prompt-input.js";
-import { renderMarkdownTables } from "./console/markdown-table.js";
-import { buildTitle } from "./console/startup.js";
-import { getOnboardingPrompt, copyTemplateFiles } from "./onboard.js";
+import { EchoAdapter } from "./adapters/echo.js";
 import { compactEpisodic } from "./compact.js";
+import { renderMarkdownTables } from "./console/markdown-table.js";
+import { PromptInput } from "./console/prompt-input.js";
+import { buildTitle } from "./console/startup.js";
+import { copyTemplateFiles, getOnboardingPrompt } from "./onboard.js";
+import { Orchestrator } from "./orchestrator.js";
+import { colorToHex, theme } from "./theme.js";
+import type {
+  HandoffEnvelope,
+  OrchestratorEvent,
+  TaskResult,
+} from "./types.js";
 
 // ─── Argument parsing ────────────────────────────────────────────────
 
@@ -47,7 +66,10 @@ const args = process.argv.slice(2);
 
 function getFlag(name: string): boolean {
   const idx = args.indexOf(`--${name}`);
-  if (idx >= 0) { args.splice(idx, 1); return true; }
+  if (idx >= 0) {
+    args.splice(idx, 1);
+    return true;
+  }
   return false;
 }
 
@@ -80,7 +102,9 @@ async function findTeammatesDir(): Promise<string | null> {
     try {
       const s = await stat(candidate);
       if (s.isDirectory()) return candidate;
-    } catch { /* keep looking */ }
+    } catch {
+      /* keep looking */
+    }
     const parent = resolve(dir, "..");
     if (parent === dir) break;
     dir = parent;
@@ -148,7 +172,7 @@ const SERVICE_REGISTRY: Record<string, ServiceEntry> = {
       "",
       "1. Verify `teammates-recall --help` works. If it does, great. If not, figure out the correct path to the binary (check recall/package.json bin field) and note it.",
       "2. Read .teammates/PROTOCOL.md and .teammates/CROSS-TEAM.md.",
-      "3. If recall is not already documented there, add a short section explaining that `teammates-recall` is now available for semantic memory search, with basic usage (e.g. `teammates-recall search \"query\"`).",
+      '3. If recall is not already documented there, add a short section explaining that `teammates-recall` is now available for semantic memory search, with basic usage (e.g. `teammates-recall search "query"`).',
       "4. Check each teammate's SOUL.md (under .teammates/*/SOUL.md). If a teammate's role involves memory or search, note in their SOUL.md that recall is installed and available.",
       "5. Do NOT modify code files — only update .teammates/ markdown files.",
     ].join("\n"),
@@ -173,17 +197,17 @@ interface SlashCommand {
 // every styled span picks up the current palette automatically.
 
 const tp = {
-  accent:    (s: string) => pen.fg(theme().accent)(s),
+  accent: (s: string) => pen.fg(theme().accent)(s),
   accentBright: (s: string) => pen.fg(theme().accentBright)(s),
   accentDim: (s: string) => pen.fg(theme().accentDim)(s),
-  text:      (s: string) => pen.fg(theme().text)(s),
-  muted:     (s: string) => pen.fg(theme().textMuted)(s),
-  dim:       (s: string) => pen.fg(theme().textDim)(s),
-  success:   (s: string) => pen.fg(theme().success)(s),
-  warning:   (s: string) => pen.fg(theme().warning)(s),
-  error:     (s: string) => pen.fg(theme().error)(s),
-  info:      (s: string) => pen.fg(theme().info)(s),
-  bold:      (s: string) => pen.bold.fg(theme().text)(s),
+  text: (s: string) => pen.fg(theme().text)(s),
+  muted: (s: string) => pen.fg(theme().textMuted)(s),
+  dim: (s: string) => pen.fg(theme().textDim)(s),
+  success: (s: string) => pen.fg(theme().success)(s),
+  warning: (s: string) => pen.fg(theme().warning)(s),
+  error: (s: string) => pen.fg(theme().error)(s),
+  info: (s: string) => pen.fg(theme().info)(s),
+  bold: (s: string) => pen.bold.fg(theme().text)(s),
 };
 
 // ─── Animated banner widget ─────────────────────────────────────────
@@ -209,7 +233,15 @@ interface BannerInfo {
 class AnimatedBanner extends Control {
   private _lines: StyledLine[] = [];
   private _info: BannerInfo;
-  private _phase: "idle" | "spelling" | "version" | "pause" | "compact" | "roster" | "commands" | "done" = "idle";
+  private _phase:
+    | "idle"
+    | "spelling"
+    | "version"
+    | "pause"
+    | "compact"
+    | "roster"
+    | "commands"
+    | "done" = "idle";
   private _inner: StyledText;
   private _timer: ReturnType<typeof setTimeout> | null = null;
   private _onDirty: (() => void) | null = null;
@@ -271,17 +303,33 @@ class AnimatedBanner extends Control {
     const lines: StyledLine[] = [];
 
     // TM logo row 1 + adapter info
-    lines.push(concat(
-      tp.accent(tmTop), tp.text(gap + info.adapterName),
-      tp.muted(` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`),
-      tp.muted(" · v0.1.0"),
-    ));
+    lines.push(
+      concat(
+        tp.accent(tmTop),
+        tp.text(gap + info.adapterName),
+        tp.muted(
+          ` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`,
+        ),
+        tp.muted(" · v0.1.0"),
+      ),
+    );
     // TM logo row 2 + cwd
     lines.push(concat(tp.accent(tmBot), tp.muted(gap + info.cwd)));
     // Recall status (indented to align with info above)
-    lines.push(info.recallInstalled
-      ? concat(tp.text(tmPad + gap), tp.success("● "), tp.success("recall"), tp.muted(" installed"))
-      : concat(tp.text(tmPad + gap), tp.warning("○ "), tp.warning("recall"), tp.muted(" not installed")),
+    lines.push(
+      info.recallInstalled
+        ? concat(
+            tp.text(tmPad + gap),
+            tp.success("● "),
+            tp.success("recall"),
+            tp.muted(" installed"),
+          )
+        : concat(
+            tp.text(tmPad + gap),
+            tp.warning("○ "),
+            tp.warning("recall"),
+            tp.muted(" not installed"),
+          ),
     );
 
     // blank
@@ -290,11 +338,13 @@ class AnimatedBanner extends Control {
 
     // Teammate roster
     for (const t of info.teammates) {
-      lines.push(concat(
-        tp.accent("  ● "),
-        tp.accent(`@${t.name}`.padEnd(14)),
-        tp.muted(t.role),
-      ));
+      lines.push(
+        concat(
+          tp.accent("  ● "),
+          tp.accent(`@${t.name}`.padEnd(14)),
+          tp.muted(t.role),
+        ),
+      );
     }
 
     // blank
@@ -318,11 +368,16 @@ class AnimatedBanner extends Control {
       ["/exit", "exit session"],
     ];
     for (let i = 0; i < col1.length; i++) {
-      lines.push(concat(
-        tp.accent("  " + col1[i][0].padEnd(12)), tp.muted(col1[i][1].padEnd(22)),
-        tp.accent(col2[i][0].padEnd(12)), tp.muted(col2[i][1].padEnd(22)),
-        tp.accent(col3[i][0].padEnd(12)), tp.muted(col3[i][1]),
-      ));
+      lines.push(
+        concat(
+          tp.accent(`  ${col1[i][0].padEnd(12)}`),
+          tp.muted(col1[i][1].padEnd(22)),
+          tp.accent(col2[i][0].padEnd(12)),
+          tp.muted(col2[i][1].padEnd(22)),
+          tp.accent(col3[i][0].padEnd(12)),
+          tp.muted(col3[i][1]),
+        ),
+      );
     }
 
     this._finalLines = lines;
@@ -484,6 +539,7 @@ class TeammatesREPL {
   private lastResult: TaskResult | null = null;
   private lastResults: Map<string, TaskResult> = new Map();
   private conversationHistory: { role: string; text: string }[] = [];
+  private dispatching = false;
 
   private storeResult(result: TaskResult): void {
     this.lastResult = result;
@@ -512,36 +568,51 @@ class TeammatesREPL {
   private agentActive: Map<string, QueueEntry> = new Map();
   /** Per-agent drain locks — prevents double-draining a single agent. */
   private agentDrainLocks: Map<string, Promise<void>> = new Map();
-  private queueDraining = false;
-  /** True while a task is being dispatched — prevents concurrent dispatches from pasted text. */
-  private dispatching = false;
   /** Stored pasted text keyed by paste number, expanded on Enter. */
   private pastedTexts: Map<number, string> = new Map();
   private pasteCounter = 0;
   private wordwheelItems: DropdownItem[] = [];
-  private wordwheelIndex = -1;        // -1 = no selection, 0+ = highlighted row
-  private escPending = false;         // true after first ESC, waiting for second
+  private wordwheelIndex = -1; // -1 = no selection, 0+ = highlighted row
+  private escPending = false; // true after first ESC, waiting for second
   private escTimer: ReturnType<typeof setTimeout> | null = null;
-  private ctrlcPending = false;      // true after first Ctrl+C, waiting for second
+  private ctrlcPending = false; // true after first Ctrl+C, waiting for second
   private ctrlcTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastCleanedOutput = "";    // last teammate output for clipboard copy
+  private lastCleanedOutput = ""; // last teammate output for clipboard copy
   private autoApproveHandoffs = false;
   /** Pending handoffs awaiting user approval. */
-  private pendingHandoffs: { id: string; envelope: HandoffEnvelope; approveIdx: number; rejectIdx: number }[] = [];
+  private pendingHandoffs: {
+    id: string;
+    envelope: HandoffEnvelope;
+    approveIdx: number;
+    rejectIdx: number;
+  }[] = [];
   /** Maps reply action IDs to their context (teammate + message). */
-  private _replyContexts: Map<string, { teammate: string; message: string }> = new Map();
+  private _replyContexts: Map<string, { teammate: string; message: string }> =
+    new Map();
   /** Quoted reply text to expand on next submit. */
   private _pendingQuotedReply: string | null = null;
   private defaultFooter: StyledSpan | null = null; // cached default footer content
 
   // ── Animated status tracker ─────────────────────────────────────
-  private activeTasks: Map<string, { teammate: string; task: string }> = new Map();
+  private activeTasks: Map<string, { teammate: string; task: string }> =
+    new Map();
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private statusFrame = 0;
   private statusRotateIndex = 0;
   private statusRotateTimer: ReturnType<typeof setInterval> | null = null;
 
-  private static readonly SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  private static readonly SPINNER = [
+    "⠋",
+    "⠙",
+    "⠹",
+    "⠸",
+    "⠼",
+    "⠴",
+    "⠦",
+    "⠧",
+    "⠇",
+    "⠏",
+  ];
 
   constructor(adapterName: string) {
     this.adapterName = adapterName;
@@ -574,7 +645,8 @@ class TeammatesREPL {
     // Rotate through teammates every 3 seconds
     this.statusRotateTimer = setInterval(() => {
       if (this.activeTasks.size > 1) {
-        this.statusRotateIndex = (this.statusRotateIndex + 1) % this.activeTasks.size;
+        this.statusRotateIndex =
+          (this.statusRotateIndex + 1) % this.activeTasks.size;
       }
     }, 3000);
   }
@@ -605,27 +677,39 @@ class TeammatesREPL {
     const idx = this.statusRotateIndex % entries.length;
     const { teammate, task } = entries[idx];
 
-    const spinChar = TeammatesREPL.SPINNER[this.statusFrame % TeammatesREPL.SPINNER.length];
-    const taskPreview = task.length > 50 ? task.slice(0, 47) + "..." : task;
-    const queueInfo = this.activeTasks.size > 1
-      ? ` (${idx + 1}/${this.activeTasks.size})`
-      : "";
+    const spinChar =
+      TeammatesREPL.SPINNER[this.statusFrame % TeammatesREPL.SPINNER.length];
+    const taskPreview = task.length > 50 ? `${task.slice(0, 47)}...` : task;
+    const queueInfo =
+      this.activeTasks.size > 1 ? ` (${idx + 1}/${this.activeTasks.size})` : "";
 
     if (this.chatView) {
       // Strip newlines and truncate task text for single-line display
       const cleanTask = task.replace(/[\r\n]+/g, " ").trim();
-      const maxLen = Math.max(20, (process.stdout.columns || 80) - teammate.length - 10);
-      const taskText = cleanTask.length > maxLen ? cleanTask.slice(0, maxLen - 1) + "…" : cleanTask;
-      const queueTag = this.activeTasks.size > 1 ? ` (${idx + 1}/${this.activeTasks.size})` : "";
+      const maxLen = Math.max(
+        20,
+        (process.stdout.columns || 80) - teammate.length - 10,
+      );
+      const taskText =
+        cleanTask.length > maxLen
+          ? `${cleanTask.slice(0, maxLen - 1)}…`
+          : cleanTask;
+      const queueTag =
+        this.activeTasks.size > 1
+          ? ` (${idx + 1}/${this.activeTasks.size})`
+          : "";
 
-      this.chatView.setProgress(concat(
-        tp.accent(`${spinChar} ${teammate}… `),
-        tp.muted(taskText + queueTag),
-      ));
+      this.chatView.setProgress(
+        concat(
+          tp.accent(`${spinChar} ${teammate}… `),
+          tp.muted(taskText + queueTag),
+        ),
+      );
       this.app.refresh();
     } else {
       // Mostly bright blue, periodically flicker to dark blue
-      const spinColor = this.statusFrame % 8 === 0 ? chalk.blue : chalk.blueBright;
+      const spinColor =
+        this.statusFrame % 8 === 0 ? chalk.blue : chalk.blueBright;
       const line =
         `  ${spinColor(spinChar)} ` +
         chalk.bold(teammate) +
@@ -649,7 +733,10 @@ class TeammatesREPL {
     let len = 0;
     for (const seg of spans) len += seg.text.length;
     const pad = Math.max(0, termW - len);
-    const padded = concat(spans, pen.fg(this._userBg).bg(this._userBg)(" ".repeat(pad)));
+    const padded = concat(
+      spans,
+      pen.fg(this._userBg).bg(this._userBg)(" ".repeat(pad)),
+    );
     this.chatView.appendStyledToFeed(padded);
   }
 
@@ -662,7 +749,9 @@ class TeammatesREPL {
       let breakAt = remaining.lastIndexOf(" ", maxWidth);
       if (breakAt <= 0) breakAt = maxWidth;
       lines.push(remaining.slice(0, breakAt));
-      remaining = remaining.slice(breakAt + (remaining[breakAt] === " " ? 1 : 0));
+      remaining = remaining.slice(
+        breakAt + (remaining[breakAt] === " " ? 1 : 0),
+      );
     }
     if (remaining) lines.push(remaining);
     return lines;
@@ -689,7 +778,10 @@ class TeammatesREPL {
           inQuote = false;
         }
         if (isQuote) {
-          rendered.push({ type: "quote", content: line.startsWith("> ") ? line.slice(2) : "" });
+          rendered.push({
+            type: "quote",
+            content: line.startsWith("> ") ? line.slice(2) : "",
+          });
         } else {
           rendered.push({ type: "text", content: line });
         }
@@ -701,17 +793,19 @@ class TeammatesREPL {
         if (first.type === "text") {
           const label = "user: ";
           const pad = Math.max(0, termW - label.length - first.content.length);
-          this.chatView.appendStyledToFeed(concat(
-            pen.fg(t.accent).bg(bg)(label),
-            pen.fg(t.text).bg(bg)(first.content + " ".repeat(pad)),
-          ));
+          this.chatView.appendStyledToFeed(
+            concat(
+              pen.fg(t.accent).bg(bg)(label),
+              pen.fg(t.text).bg(bg)(first.content + " ".repeat(pad)),
+            ),
+          );
         } else {
           // First line is a quote (unusual but handle it)
           const label = "user: ";
           const pad = Math.max(0, termW - label.length);
-          this.chatView.appendStyledToFeed(concat(
-            pen.fg(t.accent).bg(bg)(label + " ".repeat(pad)),
-          ));
+          this.chatView.appendStyledToFeed(
+            concat(pen.fg(t.accent).bg(bg)(label + " ".repeat(pad))),
+          );
           // Re-add to render as quote
           rendered.unshift(first);
         }
@@ -725,16 +819,18 @@ class TeammatesREPL {
           const wrapped = this.wrapLine(entry.content, wrapWidth);
           for (const wl of wrapped) {
             const pad = Math.max(0, termW - prefix.length - wl.length);
-            this.chatView.appendStyledToFeed(concat(
-              pen.fg(t.textDim).bg(bg)(prefix),
-              pen.fg(t.textMuted).bg(bg)(wl + " ".repeat(pad)),
-            ));
+            this.chatView.appendStyledToFeed(
+              concat(
+                pen.fg(t.textDim).bg(bg)(prefix),
+                pen.fg(t.textMuted).bg(bg)(wl + " ".repeat(pad)),
+              ),
+            );
           }
         } else {
           const lPad = Math.max(0, termW - entry.content.length);
-          this.chatView.appendStyledToFeed(concat(
-            pen.fg(t.text).bg(bg)(entry.content + " ".repeat(lPad)),
-          ));
+          this.chatView.appendStyledToFeed(
+            concat(pen.fg(t.text).bg(bg)(entry.content + " ".repeat(lPad))),
+          );
         }
       }
 
@@ -749,9 +845,11 @@ class TeammatesREPL {
     console.log();
     for (const line of lines) {
       // Truncate long lines
-      const display = line.length > maxWidth ? line.slice(0, maxWidth - 1) + "…" : line;
-      const padded = display + " ".repeat(Math.max(0, maxWidth - stripAnsi(display).length));
-      console.log("  " + chalk.bgGray.white(" " + padded + " "));
+      const display =
+        line.length > maxWidth ? `${line.slice(0, maxWidth - 1)}…` : line;
+      const padded =
+        display + " ".repeat(Math.max(0, maxWidth - stripAnsi(display).length));
+      console.log(`  ${chalk.bgGray.white(` ${padded} `)}`);
     }
     console.log();
   }
@@ -824,7 +922,9 @@ class TeammatesREPL {
 
   /** Render handoff blocks with approve/reject actions. */
   /** Helper to create a branded StyledSpan from segments. */
-  private makeSpan(...segs: { text: string; style: { fg?: Color } }[]): StyledSpan {
+  private makeSpan(
+    ...segs: { text: string; style: { fg?: Color } }[]
+  ): StyledSpan {
     const s = segs as unknown as StyledSpan;
     (s as any).__brand = "StyledSpan";
     return s;
@@ -839,7 +939,7 @@ class TeammatesREPL {
       if (current.length === 0) {
         current = word;
       } else if (current.length + 1 + word.length <= maxWidth) {
-        current += " " + word;
+        current += ` ${word}`;
       } else {
         lines.push(current);
         current = word;
@@ -849,7 +949,7 @@ class TeammatesREPL {
     return lines.length > 0 ? lines : [""];
   }
 
-  private renderHandoffs(from: string, handoffs: HandoffEnvelope[]): void {
+  private renderHandoffs(_from: string, handoffs: HandoffEnvelope[]): void {
     const t = theme();
     const names = this.orchestrator.listTeammates();
     const avail = (process.stdout.columns || 80) - 4; // -4 for "  │ " + " │"
@@ -866,27 +966,36 @@ class TeammatesREPL {
       this.feedLine();
       const label = ` handoff → @${h.to} `;
       const topFill = Math.max(0, boxW - 2 - label.length);
-      this.feedLine(this.makeSpan(
-        { text: "  ┌" + label + "─".repeat(topFill) + "┐", style: { fg: chrome } },
-      ));
+      this.feedLine(
+        this.makeSpan({
+          text: `  ┌${label}${"─".repeat(topFill)}┐`,
+          style: { fg: chrome },
+        }),
+      );
 
       // Task body — word-wrap each paragraph line
       for (const rawLine of h.task.split("\n")) {
-        const wrapped = rawLine.length === 0 ? [""] : this.wordWrap(rawLine, innerW);
+        const wrapped =
+          rawLine.length === 0 ? [""] : this.wordWrap(rawLine, innerW);
         for (const wl of wrapped) {
           const pad = Math.max(0, innerW - wl.length);
-          this.feedLine(this.makeSpan(
-            { text: "  │ ", style: { fg: chrome } },
-            { text: wl + " ".repeat(pad), style: { fg: t.textMuted } },
-            { text: " │", style: { fg: chrome } },
-          ));
+          this.feedLine(
+            this.makeSpan(
+              { text: "  │ ", style: { fg: chrome } },
+              { text: wl + " ".repeat(pad), style: { fg: t.textMuted } },
+              { text: " │", style: { fg: chrome } },
+            ),
+          );
         }
       }
 
       // Bottom border
-      this.feedLine(this.makeSpan(
-        { text: "  └" + "─".repeat(Math.max(0, boxW - 2)) + "┘", style: { fg: chrome } },
-      ));
+      this.feedLine(
+        this.makeSpan({
+          text: `  └${"─".repeat(Math.max(0, boxW - 2))}┘`,
+          style: { fg: chrome },
+        }),
+      );
 
       if (!isValid) {
         this.feedLine(tp.error(`  ✖ Unknown teammate: @${h.to}`));
@@ -899,13 +1008,25 @@ class TeammatesREPL {
         this.chatView.appendActionList([
           {
             id: `approve-${handoffId}`,
-            normalStyle: this.makeSpan({ text: "  [approve]", style: { fg: t.textDim } }),
-            hoverStyle: this.makeSpan({ text: "  [approve]", style: { fg: t.accent } }),
+            normalStyle: this.makeSpan({
+              text: "  [approve]",
+              style: { fg: t.textDim },
+            }),
+            hoverStyle: this.makeSpan({
+              text: "  [approve]",
+              style: { fg: t.accent },
+            }),
           },
           {
             id: `reject-${handoffId}`,
-            normalStyle: this.makeSpan({ text: " [reject]", style: { fg: t.textDim } }),
-            hoverStyle: this.makeSpan({ text: " [reject]", style: { fg: t.accent } }),
+            normalStyle: this.makeSpan({
+              text: " [reject]",
+              style: { fg: t.textDim },
+            }),
+            hoverStyle: this.makeSpan({
+              text: " [reject]",
+              style: { fg: t.accent },
+            }),
           },
         ]);
         this.pendingHandoffs.push({
@@ -926,17 +1047,41 @@ class TeammatesREPL {
   private showHandoffDropdown(): void {
     if (!this.chatView) return;
     if (this.pendingHandoffs.length > 0) {
-      const items: { label: string; description: string; completion: string }[] = [];
+      const items: {
+        label: string;
+        description: string;
+        completion: string;
+      }[] = [];
       if (this.pendingHandoffs.length === 1) {
-        items.push({ label: "approve", description: `approve handoff to @${this.pendingHandoffs[0].envelope.to}`, completion: "/approve" });
+        items.push({
+          label: "approve",
+          description: `approve handoff to @${this.pendingHandoffs[0].envelope.to}`,
+          completion: "/approve",
+        });
       } else {
-        items.push({ label: "approve", description: `approve ${this.pendingHandoffs.length} handoffs`, completion: "/approve" });
+        items.push({
+          label: "approve",
+          description: `approve ${this.pendingHandoffs.length} handoffs`,
+          completion: "/approve",
+        });
       }
-      items.push({ label: "always approve", description: "auto-approve future handoffs", completion: "/always-approve" });
+      items.push({
+        label: "always approve",
+        description: "auto-approve future handoffs",
+        completion: "/always-approve",
+      });
       if (this.pendingHandoffs.length === 1) {
-        items.push({ label: "reject", description: `reject handoff to @${this.pendingHandoffs[0].envelope.to}`, completion: "/reject" });
+        items.push({
+          label: "reject",
+          description: `reject handoff to @${this.pendingHandoffs[0].envelope.to}`,
+          completion: "/reject",
+        });
       } else {
-        items.push({ label: "reject", description: `reject ${this.pendingHandoffs.length} handoffs`, completion: "/reject" });
+        items.push({
+          label: "reject",
+          description: `reject ${this.pendingHandoffs.length} handoffs`,
+          completion: "/reject",
+        });
       }
       this.chatView.showDropdown(items);
     } else {
@@ -953,8 +1098,15 @@ class TeammatesREPL {
       const idx = this.pendingHandoffs.findIndex((h) => h.id === hId);
       if (idx >= 0 && this.chatView) {
         const h = this.pendingHandoffs.splice(idx, 1)[0];
-        this.taskQueue.push({ type: "agent", teammate: h.envelope.to, task: h.envelope.task });
-        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  approved", style: { fg: theme().success } }));
+        this.taskQueue.push({
+          type: "agent",
+          teammate: h.envelope.to,
+          task: h.envelope.task,
+        });
+        this.chatView.updateFeedLine(
+          h.approveIdx,
+          this.makeSpan({ text: "  approved", style: { fg: theme().success } }),
+        );
         this.kickDrain();
         this.showHandoffDropdown();
       }
@@ -967,7 +1119,10 @@ class TeammatesREPL {
       const idx = this.pendingHandoffs.findIndex((h) => h.id === hId);
       if (idx >= 0 && this.chatView) {
         const h = this.pendingHandoffs.splice(idx, 1)[0];
-        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  rejected", style: { fg: theme().error } }));
+        this.chatView.updateFeedLine(
+          h.approveIdx,
+          this.makeSpan({ text: "  rejected", style: { fg: theme().error } }),
+        );
         this.showHandoffDropdown();
       }
       return;
@@ -986,11 +1141,24 @@ class TeammatesREPL {
 
     for (const h of this.pendingHandoffs) {
       if (isApprove) {
-        this.taskQueue.push({ type: "agent", teammate: h.envelope.to, task: h.envelope.task });
-        const label = action === "Always approve" ? "  automatically approved" : "  approved";
-        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: label, style: { fg: t.success } }));
+        this.taskQueue.push({
+          type: "agent",
+          teammate: h.envelope.to,
+          task: h.envelope.task,
+        });
+        const label =
+          action === "Always approve"
+            ? "  automatically approved"
+            : "  approved";
+        this.chatView.updateFeedLine(
+          h.approveIdx,
+          this.makeSpan({ text: label, style: { fg: t.success } }),
+        );
       } else {
-        this.chatView.updateFeedLine(h.approveIdx, this.makeSpan({ text: "  rejected", style: { fg: t.error } }));
+        this.chatView.updateFeedLine(
+          h.approveIdx,
+          this.makeSpan({ text: "  rejected", style: { fg: t.error } }),
+        );
       }
     }
     this.pendingHandoffs = [];
@@ -1008,16 +1176,20 @@ class TeammatesREPL {
     const everyoneMatch = input.match(/^@everyone\s+([\s\S]+)$/i);
     if (everyoneMatch) {
       const task = everyoneMatch[1];
-      const names = this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
+      const names = this.orchestrator
+        .listTeammates()
+        .filter((n) => n !== this.adapterName);
       for (const teammate of names) {
         this.taskQueue.push({ type: "agent", teammate, task });
       }
       const bg = this._userBg;
       const t = theme();
-      this.feedUserLine(concat(
-        pen.fg(t.textMuted).bg(bg)("  → "),
-        pen.fg(t.accent).bg(bg)(names.map((n) => `@${n}`).join(", ")),
-      ));
+      this.feedUserLine(
+        concat(
+          pen.fg(t.textMuted).bg(bg)("  → "),
+          pen.fg(t.accent).bg(bg)(names.map((n) => `@${n}`).join(", ")),
+        ),
+      );
       this.feedLine();
       this.refreshView();
       this.kickDrain();
@@ -1032,10 +1204,12 @@ class TeammatesREPL {
       if (names.includes(teammate)) {
         const bg = this._userBg;
         const t = theme();
-        this.feedUserLine(concat(
-          pen.fg(t.textMuted).bg(bg)("  → "),
-          pen.fg(t.accent).bg(bg)(`@${teammate}`),
-        ));
+        this.feedUserLine(
+          concat(
+            pen.fg(t.textMuted).bg(bg)("  → "),
+            pen.fg(t.accent).bg(bg)(`@${teammate}`),
+          ),
+        );
         this.feedLine();
         this.refreshView();
         this.taskQueue.push({ type: "agent", teammate, task });
@@ -1054,10 +1228,12 @@ class TeammatesREPL {
         if (task) {
           const bg = this._userBg;
           const t = theme();
-          this.feedUserLine(concat(
-            pen.fg(t.textMuted).bg(bg)("  → "),
-            pen.fg(t.accent).bg(bg)(`@${teammate}`),
-          ));
+          this.feedUserLine(
+            concat(
+              pen.fg(t.textMuted).bg(bg)("  → "),
+              pen.fg(t.accent).bg(bg)(`@${teammate}`),
+            ),
+          );
           this.feedLine();
           this.refreshView();
           this.taskQueue.push({ type: "agent", teammate, task });
@@ -1076,10 +1252,12 @@ class TeammatesREPL {
     {
       const bg = this._userBg;
       const t = theme();
-      this.feedUserLine(concat(
-        pen.fg(t.textMuted).bg(bg)("  → "),
-        pen.fg(t.accent).bg(bg)(`@${match}`),
-      ));
+      this.feedUserLine(
+        concat(
+          pen.fg(t.textMuted).bg(bg)("  → "),
+          pen.fg(t.accent).bg(bg)(`@${match}`),
+        ),
+      );
     }
     this.feedLine();
     this.refreshView();
@@ -1110,7 +1288,9 @@ class TeammatesREPL {
    * Interactive prompt when no .teammates/ directory is found.
    * Returns the new .teammates/ path, or null if user chose to exit.
    */
-  private async promptOnboarding(adapter: AgentAdapter): Promise<string | null> {
+  private async promptOnboarding(
+    adapter: AgentAdapter,
+  ): Promise<string | null> {
     const cwd = process.cwd();
     const teammatesDir = join(cwd, ".teammates");
     const termWidth = process.stdout.columns || 100;
@@ -1126,22 +1306,25 @@ class TeammatesREPL {
     console.log();
     console.log(chalk.white("  Set up teammates for this project?\n"));
     console.log(
-      chalk.cyan("  1") + chalk.gray(") ") +
+      chalk.cyan("  1") +
+        chalk.gray(") ") +
         chalk.white("Run onboarding") +
-        chalk.gray(" — analyze this codebase and create .teammates/")
+        chalk.gray(" — analyze this codebase and create .teammates/"),
     );
     console.log(
-      chalk.cyan("  2") + chalk.gray(") ") +
+      chalk.cyan("  2") +
+        chalk.gray(") ") +
         chalk.white("Solo mode") +
-        chalk.gray(` — use ${this.adapterName} without teammates`)
+        chalk.gray(` — use ${this.adapterName} without teammates`),
     );
-    console.log(
-      chalk.cyan("  3") + chalk.gray(") ") +
-        chalk.white("Exit")
-    );
+    console.log(chalk.cyan("  3") + chalk.gray(") ") + chalk.white("Exit"));
     console.log();
 
-    const choice = await this.askChoice("Pick an option (1/2/3): ", ["1", "2", "3"]);
+    const choice = await this.askChoice("Pick an option (1/2/3): ", [
+      "1",
+      "2",
+      "3",
+    ]);
 
     if (choice === "3") {
       console.log(chalk.gray("  Goodbye."));
@@ -1152,7 +1335,11 @@ class TeammatesREPL {
       await mkdir(teammatesDir, { recursive: true });
       console.log();
       console.log(chalk.green("  ✔") + chalk.gray(` Created ${teammatesDir}`));
-      console.log(chalk.gray(`  Running in solo mode — all tasks go to ${this.adapterName}.`));
+      console.log(
+        chalk.gray(
+          `  Running in solo mode — all tasks go to ${this.adapterName}.`,
+        ),
+      );
       console.log(chalk.gray("  Run /init later to set up teammates."));
       console.log();
       return teammatesDir;
@@ -1168,11 +1355,16 @@ class TeammatesREPL {
    * Run the onboarding agent to analyze the codebase and create teammates.
    * Used by both promptOnboarding (pre-orchestrator) and cmdInit (post-orchestrator).
    */
-  private async runOnboardingAgent(adapter: AgentAdapter, projectDir: string): Promise<void> {
+  private async runOnboardingAgent(
+    adapter: AgentAdapter,
+    projectDir: string,
+  ): Promise<void> {
     console.log();
     console.log(
       chalk.blue("  Starting onboarding...") +
-        chalk.gray(` ${this.adapterName} will analyze your codebase and create .teammates/`)
+        chalk.gray(
+          ` ${this.adapterName} will analyze your codebase and create .teammates/`,
+        ),
     );
     console.log();
 
@@ -1180,7 +1372,10 @@ class TeammatesREPL {
     const teammatesDir = join(projectDir, ".teammates");
     const copied = await copyTemplateFiles(teammatesDir);
     if (copied.length > 0) {
-      console.log(chalk.green("  ✔") + chalk.gray(` Copied template files: ${copied.join(", ")}`));
+      console.log(
+        chalk.green("  ✔") +
+          chalk.gray(` Copied template files: ${copied.join(", ")}`),
+      );
       console.log();
     }
 
@@ -1197,22 +1392,32 @@ class TeammatesREPL {
 
     const sessionId = await adapter.startSession(tempConfig);
     const spinner = ora({
-      text: chalk.blue(this.adapterName) + chalk.gray(" is analyzing your codebase..."),
+      text:
+        chalk.blue(this.adapterName) +
+        chalk.gray(" is analyzing your codebase..."),
       spinner: "dots",
     }).start();
 
     try {
-      const result = await adapter.executeTask(sessionId, tempConfig, onboardingPrompt);
+      const result = await adapter.executeTask(
+        sessionId,
+        tempConfig,
+        onboardingPrompt,
+      );
       spinner.stop();
       this.printAgentOutput(result.rawOutput);
 
       if (result.success) {
         console.log(chalk.green("  ✔ Onboarding complete!"));
       } else {
-        console.log(chalk.yellow("  ⚠ Onboarding finished with issues: " + result.summary));
+        console.log(
+          chalk.yellow(
+            `  ⚠ Onboarding finished with issues: ${result.summary}`,
+          ),
+        );
       }
     } catch (err: any) {
-      spinner.fail(chalk.red("Onboarding failed: " + err.message));
+      spinner.fail(chalk.red(`Onboarding failed: ${err.message}`));
     }
 
     if (adapter.destroySession) {
@@ -1222,11 +1427,19 @@ class TeammatesREPL {
     // Verify .teammates/ now has content
     try {
       const entries = await readdir(teammatesDir);
-      if (!entries.some(e => !e.startsWith("."))) {
-        console.log(chalk.yellow("  ⚠ .teammates/ was created but appears empty."));
-        console.log(chalk.gray("  You may need to run the onboarding agent again or set up manually."));
+      if (!entries.some((e) => !e.startsWith("."))) {
+        console.log(
+          chalk.yellow("  ⚠ .teammates/ was created but appears empty."),
+        );
+        console.log(
+          chalk.gray(
+            "  You may need to run the onboarding agent again or set up manually.",
+          ),
+        );
       }
-    } catch { /* dir might not exist if onboarding failed badly */ }
+    } catch {
+      /* dir might not exist if onboarding failed badly */
+    }
     console.log();
   }
 
@@ -1235,7 +1448,10 @@ class TeammatesREPL {
    */
   private askChoice(prompt: string, valid: string[]): Promise<string> {
     return new Promise((resolve) => {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
       const ask = () => {
         rl.question(chalk.cyan("  ") + prompt, (answer) => {
           const trimmed = answer.trim();
@@ -1258,12 +1474,12 @@ class TeammatesREPL {
    */
   private printLogo(infoLines: string[]): void {
     const [top, bot] = buildTitle("teammates");
-    console.log("  " + chalk.cyan(top));
-    console.log("  " + chalk.cyan(bot));
+    console.log(`  ${chalk.cyan(top)}`);
+    console.log(`  ${chalk.cyan(bot)}`);
     if (infoLines.length > 0) {
       console.log();
       for (const line of infoLines) {
-        console.log("  " + line);
+        console.log(`  ${line}`);
       }
     }
   }
@@ -1274,7 +1490,9 @@ class TeammatesREPL {
   private printAgentOutput(rawOutput: string | undefined): void {
     const raw = rawOutput ?? "";
     if (!raw) return;
-    const cleaned = raw.replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "").trim();
+    const cleaned = raw
+      .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "")
+      .trim();
     if (cleaned) {
       const rendered = renderMarkdownTables(cleaned);
       this.feedLine(rendered);
@@ -1309,11 +1527,13 @@ class TeammatesREPL {
     if (this.chatView) {
       // Lines are pre-formatted for PromptInput — convert to DropdownItems
       // This path is used for static usage hints; wordwheel items use showDropdown directly
-      this.chatView.showDropdown(lines.map((l) => ({
-        label: stripAnsi(l).trim(),
-        description: "",
-        completion: "",
-      })));
+      this.chatView.showDropdown(
+        lines.map((l) => ({
+          label: stripAnsi(l).trim(),
+          description: "",
+          completion: "",
+        })),
+      );
       this.refreshView();
     } else {
       this.input.setDropdown(lines);
@@ -1324,16 +1544,21 @@ class TeammatesREPL {
    * Which argument positions are teammate-name completable per command.
    * Key = command name, value = set of 0-based arg positions that take a teammate.
    */
-  private static readonly TEAMMATE_ARG_POSITIONS: Record<string, Set<number>> = {
-    assign:  new Set([0]),
-    handoff: new Set([0, 1]),
-    log:     new Set([0]),
-    compact: new Set([0]),
-    debug:   new Set([0]),
-  };
+  private static readonly TEAMMATE_ARG_POSITIONS: Record<string, Set<number>> =
+    {
+      assign: new Set([0]),
+      handoff: new Set([0, 1]),
+      log: new Set([0]),
+      compact: new Set([0]),
+      debug: new Set([0]),
+    };
 
   /** Build param-completion items for the current line, if any. */
-  private getParamItems(cmdName: string, argsBefore: string, partial: string): DropdownItem[] {
+  private getParamItems(
+    cmdName: string,
+    argsBefore: string,
+    partial: string,
+  ): DropdownItem[] {
     // Service-name completions for /install
     if (cmdName === "install" && !argsBefore.trim()) {
       const lower = partial.toLowerCase();
@@ -1342,7 +1567,7 @@ class TeammatesREPL {
         .map(([name, svc]) => ({
           label: name,
           description: svc.description,
-          completion: "/install " + name + " ",
+          completion: `/install ${name} `,
         }));
     }
 
@@ -1350,7 +1575,9 @@ class TeammatesREPL {
     if (!positions) return [];
 
     // Count how many complete args precede the current partial
-    const completedArgs = argsBefore.trim() ? argsBefore.trim().split(/\s+/).length : 0;
+    const completedArgs = argsBefore.trim()
+      ? argsBefore.trim().split(/\s+/).length
+      : 0;
     if (!positions.has(completedArgs)) return [];
 
     const teammates = this.orchestrator.listTeammates();
@@ -1359,11 +1586,11 @@ class TeammatesREPL {
       .filter((n) => n.toLowerCase().startsWith(lower))
       .map((name) => {
         const t = this.orchestrator.getRegistry().get(name);
-        const linePrefix = "/" + cmdName + " " + (argsBefore ? argsBefore : "");
+        const linePrefix = `/${cmdName} ${argsBefore ? argsBefore : ""}`;
         return {
           label: name,
           description: t?.role ?? "",
-          completion: linePrefix + name + " ",
+          completion: `${linePrefix + name} `,
         };
       });
   }
@@ -1372,7 +1599,10 @@ class TeammatesREPL {
    * Find the @mention token the cursor is currently inside, if any.
    * Returns { before, partial, atPos } or null.
    */
-  private findAtMention(line: string, cursor: number): { before: string; partial: string; atPos: number } | null {
+  private findAtMention(
+    line: string,
+    cursor: number,
+  ): { before: string; partial: string; atPos: number } | null {
     // Walk backward from cursor to find the nearest unescaped '@'
     const left = line.slice(0, cursor);
     const atPos = left.lastIndexOf("@");
@@ -1386,7 +1616,12 @@ class TeammatesREPL {
   }
 
   /** Build @mention teammate completion items. */
-  private getAtMentionItems(line: string, before: string, partial: string, atPos: number): DropdownItem[] {
+  private getAtMentionItems(
+    line: string,
+    before: string,
+    partial: string,
+    atPos: number,
+  ): DropdownItem[] {
     const teammates = this.orchestrator.listTeammates();
     const lower = partial.toLowerCase();
     const after = line.slice(atPos + 1 + partial.length);
@@ -1397,7 +1632,7 @@ class TeammatesREPL {
       items.push({
         label: "@everyone",
         description: "Send to all teammates",
-        completion: before + "@everyone " + after.replace(/^\s+/, ""),
+        completion: `${before}@everyone ${after.replace(/^\s+/, "")}`,
       });
     }
 
@@ -1405,9 +1640,9 @@ class TeammatesREPL {
       if (name.toLowerCase().startsWith(lower)) {
         const t = this.orchestrator.getRegistry().get(name);
         items.push({
-          label: "@" + name,
+          label: `@${name}`,
           description: t?.role ?? "",
-          completion: before + "@" + name + " " + after.replace(/^\s+/, ""),
+          completion: `${before}@${name} ${after.replace(/^\s+/, "")}`,
         });
       }
     }
@@ -1417,13 +1652,22 @@ class TeammatesREPL {
   /** Recompute matches and draw the wordwheel. */
   private updateWordwheel(): void {
     this.clearWordwheel();
-    const line: string = this.chatView ? this.chatView.inputValue : this.input.line;
-    const cursor: number = this.chatView ? this.chatView.inputValue.length : this.input.cursor;
+    const line: string = this.chatView
+      ? this.chatView.inputValue
+      : this.input.line;
+    const cursor: number = this.chatView
+      ? this.chatView.inputValue.length
+      : this.input.cursor;
 
     // ── @mention anywhere in the line ──────────────────────────────
     const mention = this.findAtMention(line, cursor);
     if (mention) {
-      this.wordwheelItems = this.getAtMentionItems(line, mention.before, mention.partial, mention.atPos);
+      this.wordwheelItems = this.getAtMentionItems(
+        line,
+        mention.before,
+        mention.partial,
+        mention.atPos,
+      );
       if (this.wordwheelItems.length > 0) {
         if (this.wordwheelIndex >= this.wordwheelItems.length) {
           this.wordwheelIndex = this.wordwheelItems.length - 1;
@@ -1446,7 +1690,11 @@ class TeammatesREPL {
       // Command is known — check for param completions
       const cmdName = line.slice(1, spaceIdx);
       const cmd = this.commands.get(cmdName);
-      if (!cmd) { this.wordwheelItems = []; this.wordwheelIndex = -1; return; }
+      if (!cmd) {
+        this.wordwheelItems = [];
+        this.wordwheelIndex = -1;
+        return;
+      }
 
       const afterCmd = line.slice(spaceIdx + 1);
       // Split into completed args + current partial token
@@ -1475,16 +1723,16 @@ class TeammatesREPL {
       .filter(
         (c) =>
           c.name.startsWith(partial) ||
-          c.aliases.some((a) => a.startsWith(partial))
+          c.aliases.some((a) => a.startsWith(partial)),
       )
       .map((c) => {
         // Extract param placeholder from usage (e.g. "/log [teammate]" → "[teammate]")
         const paramMatch = c.usage.match(/^\/\S+\s+(.+)$/);
-        const params = paramMatch ? " " + paramMatch[1] : "";
+        const params = paramMatch ? ` ${paramMatch[1]}` : "";
         return {
-          label: "/" + c.name,
+          label: `/${c.name}`,
           description: c.description,
-          completion: "/" + c.name + params,
+          completion: `/${c.name}${params}`,
         };
       });
 
@@ -1506,8 +1754,10 @@ class TeammatesREPL {
       this.chatView.showDropdown(this.wordwheelItems);
       // Sync selection index
       if (this.wordwheelIndex >= 0) {
-        while (this.chatView.dropdownIndex < this.wordwheelIndex) this.chatView.dropdownDown();
-        while (this.chatView.dropdownIndex > this.wordwheelIndex) this.chatView.dropdownUp();
+        while (this.chatView.dropdownIndex < this.wordwheelIndex)
+          this.chatView.dropdownDown();
+        while (this.chatView.dropdownIndex > this.wordwheelIndex)
+          this.chatView.dropdownUp();
       }
       this.refreshView();
     } else {
@@ -1516,10 +1766,15 @@ class TeammatesREPL {
           const prefix = i === this.wordwheelIndex ? chalk.cyan("▸ ") : "  ";
           const label = item.label.padEnd(14);
           if (i === this.wordwheelIndex) {
-            return prefix + chalk.cyanBright.bold(label) + " " + chalk.white(item.description);
+            return (
+              prefix +
+              chalk.cyanBright.bold(label) +
+              " " +
+              chalk.white(item.description)
+            );
           }
-          return prefix + chalk.cyan(label) + " " + chalk.gray(item.description);
-        })
+          return `${prefix + chalk.cyan(label)} ${chalk.gray(item.description)}`;
+        }),
       );
     }
   }
@@ -1579,25 +1834,33 @@ class TeammatesREPL {
     // Populate roster on the adapter so prompts include team info
     if ("roster" in this.adapter) {
       const registry = this.orchestrator.getRegistry();
-      (this.adapter as any).roster = this.orchestrator.listTeammates().map((name) => {
-        const t = registry.get(name)!;
-        return { name: t.name, role: t.role, ownership: t.ownership };
-      });
+      (this.adapter as any).roster = this.orchestrator
+        .listTeammates()
+        .map((name) => {
+          const t = registry.get(name)!;
+          return { name: t.name, role: t.role, ownership: t.ownership };
+        });
     }
 
     // Detect installed services from services.json and tell the adapter
     if ("services" in this.adapter) {
-      const services: { name: string; description: string; usage: string }[] = [];
+      const services: { name: string; description: string; usage: string }[] =
+        [];
       try {
-        const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+        const svcJson = JSON.parse(
+          readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
+        );
         if (svcJson && "recall" in svcJson) {
           services.push({
             name: "recall",
-            description: "Local semantic search across teammate memories and daily logs. Use this to find relevant context before starting a task.",
+            description:
+              "Local semantic search across teammate memories and daily logs. Use this to find relevant context before starting a task.",
             usage: 'teammates-recall search "your query" --dir .teammates',
           });
         }
-      } catch { /* no services.json or invalid */ }
+      } catch {
+        /* no services.json or invalid */
+      }
       (this.adapter as any).services = services;
     }
 
@@ -1627,7 +1890,7 @@ class TeammatesREPL {
         } else {
           this.wordwheelIndex = Math.min(
             this.wordwheelIndex + 1,
-            this.wordwheelItems.length - 1
+            this.wordwheelItems.length - 1,
           );
         }
         this.renderItems();
@@ -1656,9 +1919,13 @@ class TeammatesREPL {
     const reg = this.orchestrator.getRegistry();
     let hasRecall = false;
     try {
-      const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+      const svcJson = JSON.parse(
+        readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
+      );
       hasRecall = !!(svcJson && "recall" in svcJson);
-    } catch { /* no services.json */ }
+    } catch {
+      /* no services.json */
+    }
 
     const bannerWidget = new AnimatedBanner({
       adapterName: this.adapterName,
@@ -1683,7 +1950,8 @@ class TeammatesREPL {
       placeholder: " @mention or type a task...",
       placeholderStyle: { fg: t.textDim, italic: true },
       inputColorize: (value: string) => {
-        const styles: (import("@teammates/consolonia").TextStyle | null)[] = new Array(value.length).fill(null);
+        const styles: (import("@teammates/consolonia").TextStyle | null)[] =
+          new Array(value.length).fill(null);
         const accentStyle = { fg: theme().accent };
         const dimStyle = { fg: theme().textDim };
         // Colorize /commands (only at start of input) and @mentions (anywhere)
@@ -1695,7 +1963,7 @@ class TeammatesREPL {
           }
         }
         // Colorize [placeholder] blocks as dim
-        const placeholders = /\[[^\[\]]+\]/g;
+        const placeholders = /\[[^[\]]+\]/g;
         while ((m = placeholders.exec(value)) !== null) {
           for (let i = m.index; i < m.index + m[0].length; i++) {
             styles[i] = dimStyle;
@@ -1703,9 +1971,13 @@ class TeammatesREPL {
         }
         return styles;
       },
-      inputDeleteSize: (value: string, cursor: number, direction: "backward" | "forward") => {
+      inputDeleteSize: (
+        value: string,
+        cursor: number,
+        direction: "backward" | "forward",
+      ) => {
         // Delete entire [placeholder] blocks as a unit (paste placeholders, quoted reply, etc.)
-        const placeholder = /\[[^\[\]]+\]/g;
+        const placeholder = /\[[^[\]]+\]/g;
         let m;
         while ((m = placeholder.exec(value)) !== null) {
           const start = m.index;
@@ -1738,7 +2010,11 @@ class TeammatesREPL {
     });
     this.chatView.on("change", () => {
       // Clear quoted reply if user backspaced over the placeholder
-      if (this._pendingQuotedReply && this.chatView && !this.chatView.inputValue.includes("[quoted reply]")) {
+      if (
+        this._pendingQuotedReply &&
+        this.chatView &&
+        !this.chatView.inputValue.includes("[quoted reply]")
+      ) {
         this._pendingQuotedReply = null;
       }
       this.wordwheelItems = [];
@@ -1747,13 +2023,19 @@ class TeammatesREPL {
       // Reset ESC / Ctrl+C pending state on any text change
       if (this.escPending) {
         this.escPending = false;
-        if (this.escTimer) { clearTimeout(this.escTimer); this.escTimer = null; }
+        if (this.escTimer) {
+          clearTimeout(this.escTimer);
+          this.escTimer = null;
+        }
         this.chatView.setFooter(this.defaultFooter!);
         this.refreshView();
       }
       if (this.ctrlcPending) {
         this.ctrlcPending = false;
-        if (this.ctrlcTimer) { clearTimeout(this.ctrlcTimer); this.ctrlcTimer = null; }
+        if (this.ctrlcTimer) {
+          clearTimeout(this.ctrlcTimer);
+          this.ctrlcTimer = null;
+        }
         this.chatView.setFooter(this.defaultFooter!);
         this.refreshView();
       }
@@ -1772,7 +2054,10 @@ class TeammatesREPL {
       if (this.escPending) {
         // Second ESC — clear input and restore footer
         this.escPending = false;
-        if (this.escTimer) { clearTimeout(this.escTimer); this.escTimer = null; }
+        if (this.escTimer) {
+          clearTimeout(this.escTimer);
+          this.escTimer = null;
+        }
         this.chatView.inputValue = "";
         this.chatView.setFooter(this.defaultFooter!);
         this.pastedTexts.clear();
@@ -1783,7 +2068,9 @@ class TeammatesREPL {
         const termW = process.stdout.columns || 80;
         const hint = "ESC again to clear";
         const pad = Math.max(0, termW - hint.length - 1);
-        this.chatView.setFooter(concat(tp.dim(" ".repeat(pad)), tp.muted(hint)));
+        this.chatView.setFooter(
+          concat(tp.dim(" ".repeat(pad)), tp.muted(hint)),
+        );
         this.refreshView();
         this.escTimer = setTimeout(() => {
           this.escTimer = null;
@@ -1802,7 +2089,10 @@ class TeammatesREPL {
       if (this.ctrlcPending) {
         // Second Ctrl+C — exit
         this.ctrlcPending = false;
-        if (this.ctrlcTimer) { clearTimeout(this.ctrlcTimer); this.ctrlcTimer = null; }
+        if (this.ctrlcTimer) {
+          clearTimeout(this.ctrlcTimer);
+          this.ctrlcTimer = null;
+        }
         this.chatView.setFooter(this.defaultFooter!);
         this.stopRecallWatch();
         if (this.app) this.app.stop();
@@ -1860,7 +2150,16 @@ class TeammatesREPL {
    * the input with a compact placeholder that gets expanded on submit.
    */
   /** Image extensions for drag & drop detection. */
-  private static readonly IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico"]);
+  private static readonly IMAGE_EXTS = new Set([
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".webp",
+    ".svg",
+    ".ico",
+  ]);
 
   private handlePaste(text: string): void {
     if (!this.chatView) return;
@@ -1876,7 +2175,10 @@ class TeammatesREPL {
         const n = ++this.pasteCounter;
         this.pastedTexts.set(n, `[Image: source: ${trimmed}]`);
         const placeholder = `[Image ${fileName}]`;
-        const newVal = current.slice(0, idx) + placeholder + current.slice(idx + clean.length);
+        const newVal =
+          current.slice(0, idx) +
+          placeholder +
+          current.slice(idx + clean.length);
         this.chatView.inputValue = newVal;
         this.refreshView();
       }
@@ -1901,7 +2203,8 @@ class TeammatesREPL {
     const idx = current.indexOf(clean);
     if (idx >= 0) {
       const placeholder = `[Pasted text #${n} +${lines} lines, ${sizeKB}KB]`;
-      const newVal = current.slice(0, idx) + placeholder + current.slice(idx + clean.length);
+      const newVal =
+        current.slice(0, idx) + placeholder + current.slice(idx + clean.length);
       this.chatView.inputValue = newVal;
     }
     this.refreshView();
@@ -1924,33 +2227,43 @@ class TeammatesREPL {
     this.wordwheelIndex = -1;
 
     // Expand paste placeholders with actual content
-    let input = rawLine.replace(/\[Pasted text #(\d+) \+\d+ lines, [\d.]+KB\]\s*/g, (_match, num) => {
-      const n = parseInt(num, 10);
-      const text = this.pastedTexts.get(n);
-      if (text) {
-        this.pastedTexts.delete(n);
-        return text + "\n";
-      }
-      return "";
-    });
+    let input = rawLine.replace(
+      /\[Pasted text #(\d+) \+\d+ lines, [\d.]+KB\]\s*/g,
+      (_match, num) => {
+        const n = parseInt(num, 10);
+        const text = this.pastedTexts.get(n);
+        if (text) {
+          this.pastedTexts.delete(n);
+          return `${text}\n`;
+        }
+        return "";
+      },
+    );
 
     // Expand [Image filename] placeholders with stored image source paths
-    input = input.replace(/\[Image [^\]]+\]/g, (match) => {
-      // Find the matching pastedText entry by checking stored values
-      for (const [n, stored] of this.pastedTexts) {
-        if (stored.startsWith("[Image: source:")) {
-          this.pastedTexts.delete(n);
-          return stored;
+    input = input
+      .replace(/\[Image [^\]]+\]/g, (match) => {
+        // Find the matching pastedText entry by checking stored values
+        for (const [n, stored] of this.pastedTexts) {
+          if (stored.startsWith("[Image: source:")) {
+            this.pastedTexts.delete(n);
+            return stored;
+          }
         }
-      }
-      return match;
-    }).trim();
+        return match;
+      })
+      .trim();
 
     // Expand [quoted reply] placeholder with blockquoted message
     if (this._pendingQuotedReply && input.includes("[quoted reply]")) {
-      const quoted = this._pendingQuotedReply.split("\n").map((l) => `> ${l}`).join("\n");
+      const quoted = this._pendingQuotedReply
+        .split("\n")
+        .map((l) => `> ${l}`)
+        .join("\n");
       const before = input.slice(0, input.indexOf("[quoted reply]")).trimEnd();
-      const after = input.slice(input.indexOf("[quoted reply]") + "[quoted reply]".length).trimStart();
+      const after = input
+        .slice(input.indexOf("[quoted reply]") + "[quoted reply]".length)
+        .trimStart();
       const parts = [before, quoted];
       if (after) parts.push(after);
       input = parts.join("\n");
@@ -2003,22 +2316,43 @@ class TeammatesREPL {
     // Detect recall from services.json
     let recallInstalled = false;
     try {
-      const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+      const svcJson = JSON.parse(
+        readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
+      );
       recallInstalled = !!(svcJson && "recall" in svcJson);
-    } catch { /* no services.json or invalid */ }
+    } catch {
+      /* no services.json or invalid */
+    }
 
     this.feedLine();
     this.feedLine(concat(tp.bold("  Teammates"), tp.muted(" v0.1.0")));
-    this.feedLine(concat(tp.text("  " + this.adapterName), tp.muted(` · ${teammates.length} teammate${teammates.length === 1 ? "" : "s"}`)));
+    this.feedLine(
+      concat(
+        tp.text(`  ${this.adapterName}`),
+        tp.muted(
+          ` · ${teammates.length} teammate${teammates.length === 1 ? "" : "s"}`,
+        ),
+      ),
+    );
     this.feedLine(`  ${process.cwd()}`);
-    this.feedLine(recallInstalled ? tp.success("  ● recall installed") : tp.warning("  ○ recall not installed"));
+    this.feedLine(
+      recallInstalled
+        ? tp.success("  ● recall installed")
+        : tp.warning("  ○ recall not installed"),
+    );
 
     // Roster
     this.feedLine();
     for (const name of teammates) {
       const t = registry.get(name);
       if (t) {
-        this.feedLine(concat(tp.muted("  "), tp.accent("● @" + name.padEnd(14)), tp.muted(t.role)));
+        this.feedLine(
+          concat(
+            tp.muted("  "),
+            tp.accent(`● @${name.padEnd(14)}`),
+            tp.muted(t.role),
+          ),
+        );
       }
     }
 
@@ -2045,10 +2379,13 @@ class TeammatesREPL {
     for (let i = 0; i < col1.length; i++) {
       this.feedLine(
         concat(
-          tp.accent(("  " + col1[i][0]).padEnd(12)), tp.muted(col1[i][1].padEnd(22)),
-          tp.accent(col2[i][0].padEnd(12)), tp.muted(col2[i][1].padEnd(22)),
-          tp.accent(col3[i][0].padEnd(12)), tp.muted(col3[i][1])
-        )
+          tp.accent(`  ${col1[i][0]}`.padEnd(12)),
+          tp.muted(col1[i][1].padEnd(22)),
+          tp.accent(col2[i][0].padEnd(12)),
+          tp.muted(col2[i][1].padEnd(22)),
+          tp.accent(col3[i][0].padEnd(12)),
+          tp.muted(col3[i][1]),
+        ),
       );
     }
 
@@ -2201,7 +2538,7 @@ class TeammatesREPL {
 
         const raw = event.result.rawOutput ?? "";
         // Strip protocol artifacts
-        let cleaned = raw
+        const cleaned = raw
           .replace(/^TO:\s*\S+\s*\n/im, "")
           .replace(/^#\s+.+\n*/m, "")
           .replace(/```handoff\s*\n@\w+\s*\n[\s\S]*?```/g, "")
@@ -2211,21 +2548,32 @@ class TeammatesREPL {
 
         // Header: "teammate: subject"
         const subject = event.result.summary || "Task completed";
-        this.feedLine(concat(
-          tp.accent(`${event.result.teammate}: `),
-          tp.text(subject),
-        ));
+        this.feedLine(
+          concat(tp.accent(`${event.result.teammate}: `), tp.text(subject)),
+        );
         this.lastCleanedOutput = cleaned;
 
         if (sizeKB > 5) {
-          this.feedLine(tp.muted("  " + "─".repeat(40)));
-          this.feedLine(tp.warning(`  ⚠ Response is ${sizeKB.toFixed(1)}KB — use /debug ${event.result.teammate} to view full output`));
-          this.feedLine(tp.muted("  " + "─".repeat(40)));
+          this.feedLine(tp.muted(`  ${"─".repeat(40)}`));
+          this.feedLine(
+            tp.warning(
+              `  ⚠ Response is ${sizeKB.toFixed(1)}KB — use /debug ${event.result.teammate} to view full output`,
+            ),
+          );
+          this.feedLine(tp.muted(`  ${"─".repeat(40)}`));
         } else if (cleaned) {
           this.feedMarkdown(cleaned);
         } else {
-          this.feedLine(tp.muted("  (no response text — the agent may have only performed tool actions)"));
-          this.feedLine(tp.muted(`  Use /debug ${event.result.teammate} to view full output`));
+          this.feedLine(
+            tp.muted(
+              "  (no response text — the agent may have only performed tool actions)",
+            ),
+          );
+          this.feedLine(
+            tp.muted(
+              `  Use /debug ${event.result.teammate} to view full output`,
+            ),
+          );
         }
 
         // Render handoffs
@@ -2243,13 +2591,25 @@ class TeammatesREPL {
           this.chatView.appendActionList([
             {
               id: replyId,
-              normalStyle: this.makeSpan({ text: "  [reply]", style: { fg: t.textDim } }),
-              hoverStyle: this.makeSpan({ text: "  [reply]", style: { fg: t.accent } }),
+              normalStyle: this.makeSpan({
+                text: "  [reply]",
+                style: { fg: t.textDim },
+              }),
+              hoverStyle: this.makeSpan({
+                text: "  [reply]",
+                style: { fg: t.accent },
+              }),
             },
             {
               id: "copy",
-              normalStyle: this.makeSpan({ text: " [copy]", style: { fg: t.textDim } }),
-              hoverStyle: this.makeSpan({ text: " [copy]", style: { fg: t.accent } }),
+              normalStyle: this.makeSpan({
+                text: " [copy]",
+                style: { fg: t.textDim },
+              }),
+              hoverStyle: this.makeSpan({
+                text: " [copy]",
+                style: { fg: t.accent },
+              }),
             },
           ]);
         }
@@ -2272,51 +2632,13 @@ class TeammatesREPL {
     }
   }
 
-  // ─── Commands ────────────────────────────────────────────────────
-
-  private async cmdAssign(argsStr: string): Promise<void> {
-    const parts = argsStr.match(/^(\S+)\s+(.+)$/);
-    if (!parts) {
-      this.feedLine(tp.warning("Usage: /assign <teammate> <task...>"));
-      this.refreshView();
-      return;
-    }
-
-    const [, teammate, task] = parts;
-
-    const extraContext = this.buildConversationContext();
-    const result = await this.orchestrator.assign({ teammate, task, extraContext: extraContext || undefined });
-
-    this.storeResult(result);
-    this.refreshView();
-  }
-
-  private async cmdRoute(argsStr: string): Promise<void> {
-    let match = this.orchestrator.route(argsStr);
-
-    if (!match) {
-      // Keyword routing didn't find a strong match — ask the agent
-      match = await this.orchestrator.agentRoute(argsStr);
-    }
-
-    match = match ?? this.adapterName;
-
-    this.feedLine(concat(tp.muted("  Routed to: "), tp.bold(match)));
-
-    const extraContext = this.buildConversationContext();
-    const result = await this.orchestrator.assign({ teammate: match, task: argsStr, extraContext: extraContext || undefined });
-
-    this.storeResult(result);
-    this.refreshView();
-  }
-
   private async cmdStatus(): Promise<void> {
     const statuses = this.orchestrator.getAllStatuses();
     const registry = this.orchestrator.getRegistry();
 
     this.feedLine();
     this.feedLine(tp.bold("  Status"));
-    this.feedLine(tp.muted("  " + "─".repeat(50)));
+    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
 
     for (const [name, status] of statuses) {
       const t = registry.get(name);
@@ -2325,8 +2647,10 @@ class TeammatesREPL {
 
       // Teammate name + state
       const stateLabel = active ? "working" : status.state;
-      const stateColor = stateLabel === "working" ? tp.info(` (${stateLabel})`)
-        : tp.muted(` (${stateLabel})`);
+      const stateColor =
+        stateLabel === "working"
+          ? tp.info(` (${stateLabel})`)
+          : tp.muted(` (${stateLabel})`);
       this.feedLine(concat(tp.accent(`  @${name}`), stateColor));
 
       // Role
@@ -2336,20 +2660,30 @@ class TeammatesREPL {
 
       // Active task
       if (active) {
-        const taskText = active.task.length > 60 ? active.task.slice(0, 57) + "…" : active.task;
+        const taskText =
+          active.task.length > 60
+            ? `${active.task.slice(0, 57)}…`
+            : active.task;
         this.feedLine(concat(tp.info("    ▸ "), tp.text(taskText)));
       }
 
       // Queued tasks
       for (let i = 0; i < queued.length; i++) {
-        const taskText = queued[i].task.length > 60 ? queued[i].task.slice(0, 57) + "…" : queued[i].task;
+        const taskText =
+          queued[i].task.length > 60
+            ? `${queued[i].task.slice(0, 57)}…`
+            : queued[i].task;
         this.feedLine(concat(tp.muted(`    ${i + 1}. `), tp.muted(taskText)));
       }
 
       // Last result
       if (!active && status.lastSummary) {
-        const time = status.lastTimestamp ? ` ${relativeTime(status.lastTimestamp)}` : "";
-        this.feedLine(tp.muted(`    last: ${status.lastSummary.slice(0, 50)}${time}`));
+        const time = status.lastTimestamp
+          ? ` ${relativeTime(status.lastTimestamp)}`
+          : "";
+        this.feedLine(
+          tp.muted(`    last: ${status.lastSummary.slice(0, 50)}${time}`),
+        );
       }
 
       this.feedLine();
@@ -2381,10 +2715,14 @@ class TeammatesREPL {
 
   private printTeammateLog(
     name: string,
-    status: { lastSummary?: string; lastChangedFiles?: string[]; lastTimestamp?: Date }
+    status: {
+      lastSummary?: string;
+      lastChangedFiles?: string[];
+      lastTimestamp?: Date;
+    },
   ): void {
     this.feedLine();
-    this.feedLine(tp.bold("  " + name));
+    this.feedLine(tp.bold(`  ${name}`));
 
     if (status.lastSummary) {
       this.feedLine(concat(tp.text("  Summary: "), pen(status.lastSummary)));
@@ -2396,7 +2734,7 @@ class TeammatesREPL {
       }
     }
     if (status.lastTimestamp) {
-      this.feedLine(tp.muted("  Time: " + relativeTime(status.lastTimestamp)));
+      this.feedLine(tp.muted(`  Time: ${relativeTime(status.lastTimestamp)}`));
     }
     if (!status.lastSummary) {
       this.feedLine("  No task results yet.");
@@ -2407,18 +2745,21 @@ class TeammatesREPL {
 
   private async cmdDebug(argsStr: string): Promise<void> {
     const teammate = argsStr.trim();
-    const result = teammate
-      ? this.lastResults.get(teammate)
-      : this.lastResult;
+    const result = teammate ? this.lastResults.get(teammate) : this.lastResult;
 
     if (!result?.rawOutput) {
-      this.feedLine(tp.muted("  No raw output available." + (teammate ? "" : " Try: /debug <teammate>")));
+      this.feedLine(
+        tp.muted(
+          "  No raw output available." +
+            (teammate ? "" : " Try: /debug <teammate>"),
+        ),
+      );
       this.refreshView();
       return;
     }
 
     this.feedLine();
-    this.feedLine(tp.muted("  ── raw output from " + result.teammate + " ──"));
+    this.feedLine(tp.muted(`  ── raw output from ${result.teammate} ──`));
     this.feedLine();
     this.feedLine(result.rawOutput);
     this.feedLine();
@@ -2429,18 +2770,27 @@ class TeammatesREPL {
 
   private async cmdCancel(argsStr: string): Promise<void> {
     const n = parseInt(argsStr.trim(), 10);
-    if (isNaN(n) || n < 1 || n > this.taskQueue.length) {
+    if (Number.isNaN(n) || n < 1 || n > this.taskQueue.length) {
       if (this.taskQueue.length === 0) {
         this.feedLine(tp.muted("  Queue is empty."));
       } else {
-        this.feedLine(tp.warning(`  Usage: /cancel <1-${this.taskQueue.length}>`));
+        this.feedLine(
+          tp.warning(`  Usage: /cancel <1-${this.taskQueue.length}>`),
+        );
       }
       this.refreshView();
       return;
     }
 
     const removed = this.taskQueue.splice(n - 1, 1)[0];
-    this.feedLine(concat(tp.muted("  Cancelled: "), tp.accent("@" + removed.teammate), tp.muted(" — "), tp.text(removed.task.slice(0, 60))));
+    this.feedLine(
+      concat(
+        tp.muted("  Cancelled: "),
+        tp.accent(`@${removed.teammate}`),
+        tp.muted(" — "),
+        tp.text(removed.task.slice(0, 60)),
+      ),
+    );
     this.refreshView();
   }
 
@@ -2488,10 +2838,12 @@ class TeammatesREPL {
     if (added.length > 0) {
       const registry = this.orchestrator.getRegistry();
       if ("roster" in this.adapter) {
-        (this.adapter as any).roster = this.orchestrator.listTeammates().map((name) => {
-          const t = registry.get(name)!;
-          return { name: t.name, role: t.role, ownership: t.ownership };
-        });
+        (this.adapter as any).roster = this.orchestrator
+          .listTeammates()
+          .map((name) => {
+            const t = registry.get(name)!;
+            return { name: t.name, role: t.role, ownership: t.ownership };
+          });
       }
     }
     this.feedLine(tp.muted("  Run /teammates to see the roster."));
@@ -2504,7 +2856,9 @@ class TeammatesREPL {
     if (!serviceName) {
       this.feedLine(tp.bold("\n  Available services:"));
       for (const [name, svc] of Object.entries(SERVICE_REGISTRY)) {
-        this.feedLine(concat(tp.accent(name.padEnd(16)), tp.muted(svc.description)));
+        this.feedLine(
+          concat(tp.accent(name.padEnd(16)), tp.muted(svc.description)),
+        );
       }
       this.feedLine();
       this.refreshView();
@@ -2514,7 +2868,9 @@ class TeammatesREPL {
     const service = SERVICE_REGISTRY[serviceName];
     if (!service) {
       this.feedLine(tp.warning(`  Unknown service: ${serviceName}`));
-      this.feedLine(tp.muted(`  Available: ${Object.keys(SERVICE_REGISTRY).join(", ")}`));
+      this.feedLine(
+        tp.muted(`  Available: ${Object.keys(SERVICE_REGISTRY).join(", ")}`),
+      );
       this.refreshView();
       return;
     }
@@ -2527,7 +2883,9 @@ class TeammatesREPL {
     let installSpinner: Ora | null = null;
     if (!this.chatView) {
       installSpinner = ora({
-        text: chalk.blue(serviceName) + chalk.gray(` installing ${service.package}...`),
+        text:
+          chalk.blue(serviceName) +
+          chalk.gray(` installing ${service.package}...`),
         spinner: "dots",
       }).start();
     }
@@ -2539,7 +2897,8 @@ class TeammatesREPL {
       if (installSpinner) installSpinner.stop();
       if (this.chatView) this.chatView.setProgress(null);
     } catch (err: any) {
-      if (installSpinner) installSpinner.fail(chalk.red(`Install failed: ${err.message}`));
+      if (installSpinner)
+        installSpinner.fail(chalk.red(`Install failed: ${err.message}`));
       if (this.chatView) {
         this.chatView.setProgress(null);
         this.feedLine(tp.error(`  ✖ Install failed: ${err.message}`));
@@ -2554,7 +2913,11 @@ class TeammatesREPL {
       execSync(checkCmdStr, { stdio: "ignore" });
     } catch {
       this.feedLine(tp.success(`  ✔ ${serviceName} installed`));
-      this.feedLine(tp.warning(`  ⚠ Restart your terminal to add ${service.checkCmd[0]} to your PATH, then run /install ${serviceName} again to build the index.`));
+      this.feedLine(
+        tp.warning(
+          `  ⚠ Restart your terminal to add ${service.checkCmd[0]} to your PATH, then run /install ${serviceName} again to build the index.`,
+        ),
+      );
       this.refreshView();
       return;
     }
@@ -2564,10 +2927,14 @@ class TeammatesREPL {
     // Register in services.json
     const svcPath = join(this.teammatesDir, "services.json");
     let svcJson: Record<string, unknown> = {};
-    try { svcJson = JSON.parse(readFileSync(svcPath, "utf-8")); } catch { /* new file */ }
+    try {
+      svcJson = JSON.parse(readFileSync(svcPath, "utf-8"));
+    } catch {
+      /* new file */
+    }
     if (!(serviceName in svcJson)) {
       svcJson[serviceName] = {};
-      writeFileSync(svcPath, JSON.stringify(svcJson, null, 2) + "\n");
+      writeFileSync(svcPath, `${JSON.stringify(svcJson, null, 2)}\n`);
       this.feedLine(tp.muted(`  Registered in services.json`));
     }
 
@@ -2591,13 +2958,17 @@ class TeammatesREPL {
           cwd: resolve(this.teammatesDir, ".."),
           timeout: 5 * 60 * 1000,
         });
-        if (idxSpinner) idxSpinner.succeed(chalk.blue(serviceName) + chalk.gray(" index built"));
+        if (idxSpinner)
+          idxSpinner.succeed(
+            chalk.blue(serviceName) + chalk.gray(" index built"),
+          );
         if (this.chatView) {
           this.chatView.setProgress(null);
           this.feedLine(tp.success(`  ✔ ${serviceName} index built`));
         }
       } catch (err: any) {
-        if (idxSpinner) idxSpinner.warn(chalk.yellow(`Index build failed: ${err.message}`));
+        if (idxSpinner)
+          idxSpinner.warn(chalk.yellow(`Index build failed: ${err.message}`));
         if (this.chatView) {
           this.chatView.setProgress(null);
           this.feedLine(tp.warning(`  ⚠ Index build failed: ${err.message}`));
@@ -2642,47 +3013,60 @@ class TeammatesREPL {
    * announce them, update the adapter roster, and refresh statuses.
    */
   private refreshTeammates(): void {
-    this.orchestrator.refresh().then((added) => {
-      if (added.length === 0) return;
+    this.orchestrator
+      .refresh()
+      .then((added) => {
+        if (added.length === 0) return;
 
-      const registry = this.orchestrator.getRegistry();
+        const registry = this.orchestrator.getRegistry();
 
-      // Update adapter roster so prompts include the new teammates
-      if ("roster" in this.adapter) {
-        (this.adapter as any).roster = this.orchestrator.listTeammates().map((name) => {
-          const t = registry.get(name)!;
-          return { name: t.name, role: t.role, ownership: t.ownership };
-        });
-      }
+        // Update adapter roster so prompts include the new teammates
+        if ("roster" in this.adapter) {
+          (this.adapter as any).roster = this.orchestrator
+            .listTeammates()
+            .map((name) => {
+              const t = registry.get(name)!;
+              return { name: t.name, role: t.role, ownership: t.ownership };
+            });
+        }
 
-      // Announce
-      for (const name of added) {
-        const config = registry.get(name);
-        const role = config?.role ?? "teammate";
-        this.feedLine(concat(
-          tp.success(`  ✦ New teammate joined: `),
-          tp.bold(name),
-          tp.muted(` — ${role}`),
-        ));
-      }
-      this.refreshView();
-    }).catch(() => {});
+        // Announce
+        for (const name of added) {
+          const config = registry.get(name);
+          const role = config?.role ?? "teammate";
+          this.feedLine(
+            concat(
+              tp.success(`  ✦ New teammate joined: `),
+              tp.bold(name),
+              tp.muted(` — ${role}`),
+            ),
+          );
+        }
+        this.refreshView();
+      })
+      .catch(() => {});
   }
 
   private startRecallWatch(): void {
     // Only start if recall is installed (check services.json)
     try {
-      const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+      const svcJson = JSON.parse(
+        readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
+      );
       if (!svcJson || !("recall" in svcJson)) return;
     } catch {
       return; // No services.json — recall not installed
     }
 
     try {
-      this.recallWatchProcess = cpSpawn("teammates-recall", ["watch", "--dir", this.teammatesDir, "--json"], {
-        stdio: ["ignore", "ignore", "ignore"],
-        detached: false,
-      });
+      this.recallWatchProcess = cpSpawn(
+        "teammates-recall",
+        ["watch", "--dir", this.teammatesDir, "--json"],
+        {
+          stdio: ["ignore", "ignore", "ignore"],
+          detached: false,
+        },
+      );
       this.recallWatchProcess.on("error", () => {
         // Recall binary not found — silently ignore
         this.recallWatchProcess = null;
@@ -2727,12 +3111,20 @@ class TeammatesREPL {
 
     // Queue a compact task for each teammate
     for (const name of valid) {
-      this.taskQueue.push({ type: "compact", teammate: name, task: "compact + index update" });
+      this.taskQueue.push({
+        type: "compact",
+        teammate: name,
+        task: "compact + index update",
+      });
     }
 
     this.feedLine();
     this.feedLine(
-      concat(tp.muted("  Queued compaction for "), tp.accent(valid.map((n) => `@${n}`).join(", ")), tp.muted(` (${valid.length} task${valid.length === 1 ? "" : "s"})`))
+      concat(
+        tp.muted("  Queued compaction for "),
+        tp.accent(valid.map((n) => `@${n}`).join(", ")),
+        tp.muted(` (${valid.length} task${valid.length === 1 ? "" : "s"})`),
+      ),
     );
     this.feedLine();
     this.refreshView();
@@ -2762,28 +3154,36 @@ class TeammatesREPL {
         parts.push(`${result.weekliesCreated.length} weekly summaries created`);
       }
       if (result.monthliesCreated.length > 0) {
-        parts.push(`${result.monthliesCreated.length} monthly summaries created`);
+        parts.push(
+          `${result.monthliesCreated.length} monthly summaries created`,
+        );
       }
       if (result.dailiesRemoved.length > 0) {
         parts.push(`${result.dailiesRemoved.length} daily logs compacted`);
       }
       if (result.weekliesRemoved.length > 0) {
-        parts.push(`${result.weekliesRemoved.length} old weekly summaries archived`);
+        parts.push(
+          `${result.weekliesRemoved.length} old weekly summaries archived`,
+        );
       }
 
       if (parts.length === 0) {
         if (spinner) spinner.info(`${name}: nothing to compact`);
-        if (this.chatView) this.feedLine(tp.muted(`  ℹ ${name}: nothing to compact`));
+        if (this.chatView)
+          this.feedLine(tp.muted(`  ℹ ${name}: nothing to compact`));
       } else {
         if (spinner) spinner.succeed(`${name}: ${parts.join(", ")}`);
-        if (this.chatView) this.feedLine(tp.success(`  ✔ ${name}: ${parts.join(", ")}`));
+        if (this.chatView)
+          this.feedLine(tp.success(`  ✔ ${name}: ${parts.join(", ")}`));
       }
 
       if (this.chatView) this.chatView.setProgress(null);
 
       // Trigger recall sync if installed
       try {
-        const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+        const svcJson = JSON.parse(
+          readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
+        );
         if (svcJson && "recall" in svcJson) {
           if (this.chatView) {
             this.chatView.setProgress(`Syncing ${name} index...`);
@@ -2791,7 +3191,10 @@ class TeammatesREPL {
           }
           let syncSpinner: Ora | null = null;
           if (!this.chatView) {
-            syncSpinner = ora({ text: `Syncing ${name} index...`, color: "cyan" }).start();
+            syncSpinner = ora({
+              text: `Syncing ${name} index...`,
+              color: "cyan",
+            }).start();
           }
           await execAsync(`teammates-recall sync --dir "${this.teammatesDir}"`);
           if (syncSpinner) syncSpinner.succeed(`${name}: index synced`);
@@ -2800,7 +3203,9 @@ class TeammatesREPL {
             this.feedLine(tp.success(`  ✔ ${name}: index synced`));
           }
         }
-      } catch { /* recall not installed or sync failed — non-fatal */ }
+      } catch {
+        /* recall not installed or sync failed — non-fatal */
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (spinner) spinner.fail(`${name}: ${msg}`);
@@ -2818,7 +3223,10 @@ class TeammatesREPL {
    * 2. Sync recall indexes if recall is installed
    */
   /** Recursively delete files/directories older than maxAgeMs. Removes empty parent dirs. */
-  private async cleanOldTempFiles(dir: string, maxAgeMs: number): Promise<void> {
+  private async cleanOldTempFiles(
+    dir: string,
+    maxAgeMs: number,
+  ): Promise<void> {
     const now = Date.now();
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
@@ -2827,7 +3235,8 @@ class TeammatesREPL {
         await this.cleanOldTempFiles(fullPath, maxAgeMs);
         // Remove dir if now empty
         const remaining = await readdir(fullPath).catch(() => [""]);
-        if (remaining.length === 0) await rm(fullPath, { recursive: true }).catch(() => {});
+        if (remaining.length === 0)
+          await rm(fullPath, { recursive: true }).catch(() => {});
       } else {
         const info = await stat(fullPath).catch(() => null);
         if (info && now - info.mtimeMs > maxAgeMs) {
@@ -2842,17 +3251,25 @@ class TeammatesREPL {
     const tmpDir = join(this.teammatesDir, ".tmp");
     try {
       await this.cleanOldTempFiles(tmpDir, 7 * 24 * 60 * 60 * 1000);
-    } catch { /* .tmp dir may not exist yet — non-fatal */ }
+    } catch {
+      /* .tmp dir may not exist yet — non-fatal */
+    }
 
-    const teammates = this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
+    const teammates = this.orchestrator
+      .listTeammates()
+      .filter((n) => n !== this.adapterName);
     if (teammates.length === 0) return;
 
     // Check if recall is installed
     let recallInstalled = false;
     try {
-      const svcJson = JSON.parse(readFileSync(join(this.teammatesDir, "services.json"), "utf-8"));
+      const svcJson = JSON.parse(
+        readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
+      );
       recallInstalled = !!(svcJson && "recall" in svcJson);
-    } catch { /* no services.json */ }
+    } catch {
+      /* no services.json */
+    }
 
     // 1. Check each teammate for stale daily logs (older than 7 days)
     const oneWeekAgo = new Date();
@@ -2870,12 +3287,18 @@ class TeammatesREPL {
           return /^\d{4}-\d{2}-\d{2}$/.test(stem) && stem < cutoff;
         });
         if (hasStale) needsCompact.push(name);
-      } catch { /* no memory dir */ }
+      } catch {
+        /* no memory dir */
+      }
     }
 
     if (needsCompact.length > 0) {
       this.feedLine(
-        concat(tp.muted("  Compacting stale logs for "), tp.accent(needsCompact.map((n) => `@${n}`).join(", ")), tp.muted("..."))
+        concat(
+          tp.muted("  Compacting stale logs for "),
+          tp.accent(needsCompact.map((n) => `@${n}`).join(", ")),
+          tp.muted("..."),
+        ),
       );
       this.refreshView();
       for (const name of needsCompact) {
@@ -2887,7 +3310,9 @@ class TeammatesREPL {
     if (recallInstalled) {
       try {
         await execAsync(`teammates-recall sync --dir "${this.teammatesDir}"`);
-      } catch { /* sync failed — non-fatal */ }
+      } catch {
+        /* sync failed — non-fatal */
+      }
     }
   }
 
@@ -2926,13 +3351,19 @@ class TeammatesREPL {
     }
     try {
       const isWin = process.platform === "win32";
-      const cmd = isWin ? "clip" : (process.platform === "darwin" ? "pbcopy" : "xclip -selection clipboard");
+      const cmd = isWin
+        ? "clip"
+        : process.platform === "darwin"
+          ? "pbcopy"
+          : "xclip -selection clipboard";
       const child = execCb(cmd, () => {});
       child.stdin?.write(text);
       child.stdin?.end();
       // Show brief "Copied" message in the progress area
       if (this.chatView) {
-        this.chatView.setProgress(concat(tp.success("✔ "), tp.muted("Copied to clipboard")));
+        this.chatView.setProgress(
+          concat(tp.success("✔ "), tp.muted("Copied to clipboard")),
+        );
         this.refreshView();
         setTimeout(() => {
           this.chatView.setProgress(null);
@@ -2941,7 +3372,9 @@ class TeammatesREPL {
       }
     } catch {
       if (this.chatView) {
-        this.chatView.setProgress(concat(tp.error("✖ "), tp.muted("Failed to copy")));
+        this.chatView.setProgress(
+          concat(tp.error("✖ "), tp.muted("Failed to copy")),
+        );
         this.refreshView();
         setTimeout(() => {
           this.chatView.setProgress(null);
@@ -2954,7 +3387,7 @@ class TeammatesREPL {
   private async cmdHelp(): Promise<void> {
     this.feedLine();
     this.feedLine(tp.bold("  Commands"));
-    this.feedLine(tp.muted("  " + "─".repeat(50)));
+    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
 
     // De-duplicate (aliases map to same command)
     const seen = new Set<string>();
@@ -2964,15 +3397,29 @@ class TeammatesREPL {
 
       const aliases =
         cmd.aliases.length > 0
-          ? ` (${cmd.aliases.map((a) => "/" + a).join(", ")})`
+          ? ` (${cmd.aliases.map((a) => `/${a}`).join(", ")})`
           : "";
       this.feedLine(
-        concat(tp.accent(("  " + cmd.usage).padEnd(36)), pen(cmd.description), tp.muted(aliases))
+        concat(
+          tp.accent(`  ${cmd.usage}`.padEnd(36)),
+          pen(cmd.description),
+          tp.muted(aliases),
+        ),
       );
     }
     this.feedLine();
-    this.feedLine(concat(tp.muted("  Tip: "), tp.text("Type text without / to auto-route to the best teammate")));
-    this.feedLine(concat(tp.muted("  Tip: "), tp.text("Press Tab to autocomplete commands and teammate names")));
+    this.feedLine(
+      concat(
+        tp.muted("  Tip: "),
+        tp.text("Type text without / to auto-route to the best teammate"),
+      ),
+    );
+    this.feedLine(
+      concat(
+        tp.muted("  Tip: "),
+        tp.text("Press Tab to autocomplete commands and teammate names"),
+      ),
+    );
     this.feedLine();
     this.refreshView();
   }
@@ -2981,62 +3428,70 @@ class TeammatesREPL {
     const t = theme();
     this.feedLine();
     this.feedLine(tp.bold("  Theme"));
-    this.feedLine(tp.muted("  " + "─".repeat(50)));
+    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
     this.feedLine();
 
     // Helper: show a swatch + variable name + hex + example text
     const row = (name: string, c: Color, example: string) => {
       const hex = colorToHex(c);
-      this.feedLine(concat(
-        pen.fg(c)("  ██"),
-        tp.text(("  " + name).padEnd(24)),
-        tp.muted(hex.padEnd(12)),
-        pen.fg(c)(example),
-      ));
+      this.feedLine(
+        concat(
+          pen.fg(c)("  ██"),
+          tp.text(`  ${name}`.padEnd(24)),
+          tp.muted(hex.padEnd(12)),
+          pen.fg(c)(example),
+        ),
+      );
     };
 
-    this.feedLine(tp.muted("       Variable                Hex         Example"));
-    this.feedLine(tp.muted("  " + "─".repeat(50)));
+    this.feedLine(
+      tp.muted("       Variable                Hex         Example"),
+    );
+    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
 
     // Brand / accent
-    row("accent",          t.accent,          "@beacon  /status  ● teammate");
-    row("accentBright",    t.accentBright,    "▸ highlighted item");
-    row("accentDim",       t.accentDim,       "┌─── border ───┐");
+    row("accent", t.accent, "@beacon  /status  ● teammate");
+    row("accentBright", t.accentBright, "▸ highlighted item");
+    row("accentDim", t.accentDim, "┌─── border ───┐");
 
     this.feedLine();
 
     // Foreground
-    row("text",            t.text,            "Primary text content");
-    row("textMuted",       t.textMuted,       "Description or secondary info");
-    row("textDim",         t.textDim,         "─── separator ───");
+    row("text", t.text, "Primary text content");
+    row("textMuted", t.textMuted, "Description or secondary info");
+    row("textDim", t.textDim, "─── separator ───");
 
     this.feedLine();
 
     // Status
-    row("success",         t.success,         "✔ Task completed");
-    row("warning",         t.warning,         "⚠ Pending handoff");
-    row("error",           t.error,           "✖ Something went wrong");
-    row("info",            t.info,            "⠋ Working on task...");
+    row("success", t.success, "✔ Task completed");
+    row("warning", t.warning, "⚠ Pending handoff");
+    row("error", t.error, "✖ Something went wrong");
+    row("info", t.info, "⠋ Working on task...");
 
     this.feedLine();
 
     // Interactive
-    row("prompt",          t.prompt,          "> ");
-    row("input",           t.input,           "user typed text");
-    row("separator",       t.separator,       "────────────────");
-    row("progress",        t.progress,        "analyzing codebase...");
-    row("dropdown",        t.dropdown,        "/status  session overview");
+    row("prompt", t.prompt, "> ");
+    row("input", t.input, "user typed text");
+    row("separator", t.separator, "────────────────");
+    row("progress", t.progress, "analyzing codebase...");
+    row("dropdown", t.dropdown, "/status  session overview");
     row("dropdownHighlight", t.dropdownHighlight, "▸ /help   all commands");
 
     this.feedLine();
 
     // Cursor
-    this.feedLine(concat(
-      pen.fg(t.cursorFg).bg(t.cursorBg)("  ██"),
-      tp.text("  cursorFg/cursorBg".padEnd(24)),
-      tp.muted((colorToHex(t.cursorFg) + "/" + colorToHex(t.cursorBg)).padEnd(12)),
-      pen.fg(t.cursorFg).bg(t.cursorBg)(" block cursor "),
-    ));
+    this.feedLine(
+      concat(
+        pen.fg(t.cursorFg).bg(t.cursorBg)("  ██"),
+        tp.text("  cursorFg/cursorBg".padEnd(24)),
+        tp.muted(
+          `${colorToHex(t.cursorFg)}/${colorToHex(t.cursorBg)}`.padEnd(12),
+        ),
+        pen.fg(t.cursorFg).bg(t.cursorBg)(" block cursor "),
+      ),
+    );
 
     this.feedLine();
     this.feedLine(tp.muted("  Base accent: #3A96DD"));
@@ -3044,7 +3499,7 @@ class TeammatesREPL {
 
     // ── Markdown preview ──────────────────────────────────────
     this.feedLine(tp.bold("  Markdown Preview"));
-    this.feedLine(tp.muted("  " + "─".repeat(50)));
+    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
     this.feedLine();
 
     const mdSample = [
@@ -3068,28 +3523,28 @@ class TeammatesREPL {
       "> across multiple lines",
       "",
       "```js",
-      "const greeting = \"hello\";",
+      'const greeting = "hello";',
       "async function main() {",
-      "  await fetch(\"/api\");",
+      '  await fetch("/api");',
       "  return 42;",
       "}",
       "```",
       "",
       "```python",
       "def greet(name: str) -> None:",
-      "    print(f\"Hello, {name}\")",
+      '    print(f"Hello, {name}")',
       "```",
       "",
       "```bash",
-      "echo \"$HOME\" | grep --color user",
+      'echo "$HOME" | grep --color user',
       "if [ -f .env ]; then source .env; fi",
       "```",
       "",
       "```json",
       "{",
-      "  \"name\": \"teammates\",",
-      "  \"version\": \"0.1.0\",",
-      "  \"active\": true",
+      '  "name": "teammates",',
+      '  "version": "0.1.0",',
+      '  "active": true',
       "}",
       "```",
       "",
@@ -3111,7 +3566,8 @@ class TeammatesREPL {
 // ─── Usage (non-interactive) ─────────────────────────────────────────
 
 function printUsage(): void {
-  console.log(`
+  console.log(
+    `
 ${chalk.bold("@teammates/cli")} — Agent-agnostic teammate orchestrator
 
 ${chalk.bold("Usage:")}
@@ -3135,7 +3591,8 @@ ${chalk.bold("In-session:")}
   <text>                     Auto-route to the best teammate
   /status                    Session overview
   /help                      All commands
-`.trim());
+`.trim(),
+  );
 }
 
 // ─── Main ────────────────────────────────────────────────────────────

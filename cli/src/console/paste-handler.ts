@@ -11,7 +11,7 @@
 
 import type { Interface as ReadlineInterface } from "node:readline";
 import { esc } from "@teammates/consolonia";
-import { FileDropHandler, type FileAttachment } from "./file-drop.js";
+import { type FileAttachment, FileDropHandler } from "./file-drop.js";
 import type { MutableOutput } from "./mutable-output.js";
 
 export interface PasteResult {
@@ -70,16 +70,20 @@ export class PasteHandler {
     this.formatPrompt = options.formatPrompt ?? (() => "> ");
     this.fileDrop = new FileDropHandler();
 
-    this.formatFileTag = options.formatFileTag ?? ((a) => {
-      const type = a.isImage ? "Image" : "File";
-      return `[${type} #${a.id}]`;
-    });
+    this.formatFileTag =
+      options.formatFileTag ??
+      ((a) => {
+        const type = a.isImage ? "Image" : "File";
+        return `[${type} #${a.id}]`;
+      });
 
-    this.formatFileHint = options.formatFileHint ?? ((a) => {
-      const type = a.isImage ? "Image" : "File";
-      const sizeKB = (a.size / 1024).toFixed(1);
-      return `  ${type}: ${a.name} (${sizeKB}KB)`;
-    });
+    this.formatFileHint =
+      options.formatFileHint ??
+      ((a) => {
+        const type = a.isImage ? "Image" : "File";
+        const sizeKB = (a.size / 1024).toFixed(1);
+        return `  ${type}: ${a.name} (${sizeKB}KB)`;
+      });
 
     this.installHooks();
   }
@@ -109,7 +113,8 @@ export class PasteHandler {
     // Pre-mute: detect paste from stdin chunk size/shape BEFORE readline echoes
     process.stdin.prependListener("data", (chunk: Buffer) => {
       const str = chunk.toString();
-      const hasMultipleNewlines = str.includes("\n") && str.indexOf("\n") < str.length - 1;
+      const hasMultipleNewlines =
+        str.includes("\n") && str.indexOf("\n") < str.length - 1;
       const isLongChunk = str.length > this.longPasteThreshold;
       if (hasMultipleNewlines || isLongChunk) {
         this.output.mute();
@@ -171,7 +176,7 @@ export class PasteHandler {
       const attachment = this.fileDrop.getAll().at(-1)!;
 
       // Clear the echoed path and replace with tag in the prompt line
-      process.stdout.write("\r" + esc.eraseLine);
+      process.stdout.write(`\r${esc.eraseLine}`);
 
       const newLine = this.prePastePrefix + taggedText;
       this.prePastePrefix = "";
@@ -186,22 +191,23 @@ export class PasteHandler {
     }
 
     // Also check if a file path is embedded in the line (with other text)
-    const { text: processedText, filesDetected } = this.fileDrop.processInput(rawLine);
+    const { text: processedText, filesDetected } =
+      this.fileDrop.processInput(rawLine);
     const effectiveLine = filesDetected ? processedText : rawLine;
 
     // If it was a long muted paste, show a truncated preview
     if (effectiveLine.length > this.longPasteThreshold && !filesDetected) {
-      const preview = effectiveLine.slice(0, 80) + "...";
-      process.stdout.write("\r" + esc.eraseLine);
+      const preview = `${effectiveLine.slice(0, 80)}...`;
+      process.stdout.write(`\r${esc.eraseLine}`);
       const prompt = this.formatPrompt();
-      process.stdout.write(prompt + preview + "\n");
+      process.stdout.write(`${prompt + preview}\n`);
     }
 
     // If files were detected but the line has other text too, update the display
     if (filesDetected) {
-      process.stdout.write("\r" + esc.eraseLine);
+      process.stdout.write(`\r${esc.eraseLine}`);
       const prompt = this.formatPrompt();
-      process.stdout.write(prompt + processedText + "\n");
+      process.stdout.write(`${prompt + processedText}\n`);
       for (const a of this.fileDrop.getAll()) {
         console.log(this.formatFileHint(a));
       }
@@ -209,21 +215,24 @@ export class PasteHandler {
 
     // Expand paste placeholders from prior multi-line pastes
     const hasPaste = /\[Pasted text #\d+/.test(effectiveLine);
-    let input = effectiveLine.replace(
-      /\[Pasted text #(\d+) \+\d+ lines, [\d.]+KB\]\s*/g,
-      (_match, num) => {
-        const n = parseInt(num, 10);
-        const text = this.storedTexts.get(n);
-        if (text) {
-          this.storedTexts.delete(n);
-          return text + "\n";
-        }
-        return "";
-      }
-    ).trim();
+    const input = effectiveLine
+      .replace(
+        /\[Pasted text #(\d+) \+\d+ lines, [\d.]+KB\]\s*/g,
+        (_match, num) => {
+          const n = parseInt(num, 10);
+          const text = this.storedTexts.get(n);
+          if (text) {
+            this.storedTexts.delete(n);
+            return `${text}\n`;
+          }
+          return "";
+        },
+      )
+      .trim();
 
     // Expand file tags to paths and collect attachments
-    const { text: expandedInput, attachments } = this.fileDrop.expandTags(input);
+    const { text: expandedInput, attachments } =
+      this.fileDrop.expandTags(input);
 
     this.onLine({
       input: filesDetected ? expandedInput : input,

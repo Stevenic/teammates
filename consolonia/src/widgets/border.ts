@@ -6,9 +6,13 @@
  * in the form: ┤ Title ├
  */
 
+import type {
+  BoxStyle,
+  DrawingContext,
+  TextStyle,
+} from "../drawing/context.js";
 import { Control } from "../layout/control.js";
-import type { Size, Constraint, Rect } from "../layout/types.js";
-import type { DrawingContext, TextStyle, BoxStyle } from "../drawing/context.js";
+import type { Constraint, Rect, Size } from "../layout/types.js";
 
 export interface BorderOptions {
   child?: Control;
@@ -87,7 +91,7 @@ export class Border extends Control {
 
   measure(constraint: Constraint): Size {
     // Border takes 1 cell on each side (2 total per axis)
-    const innerConstraint: Constraint = {
+    const _innerConstraint: Constraint = {
       minWidth: Math.max(0, constraint.minWidth - 2),
       minHeight: Math.max(0, constraint.minHeight - 2),
       maxWidth: Math.max(0, constraint.maxWidth - 2),
@@ -143,7 +147,7 @@ export class Border extends Control {
         ctx.drawText(
           startX,
           bounds.y,
-          "\u2524 " + displayTitle + " \u251C",
+          `\u2524 ${displayTitle} \u251C`,
           this._titleStyle,
         );
       }

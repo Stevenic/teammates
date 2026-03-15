@@ -6,10 +6,10 @@
  * visible width.
  */
 
-import { Control } from "../layout/control.js";
-import type { Size, Constraint, Rect } from "../layout/types.js";
 import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent, KeyEvent, PasteEvent } from "../input/events.js";
+import { Control } from "../layout/control.js";
+import type { Constraint, Size } from "../layout/types.js";
 
 /** Returns the style to use at each character position in the input value. */
 export type InputColorizer = (value: string) => (TextStyle | null)[];
@@ -19,7 +19,11 @@ export type InputColorizer = (value: string) => (TextStyle | null)[];
  * Receives the value and cursor position. Returns the number of chars to
  * delete (backward for backspace, forward for delete). Default: 1.
  */
-export type DeleteSizer = (value: string, cursor: number, direction: "backward" | "forward") => number;
+export type DeleteSizer = (
+  value: string,
+  cursor: number,
+  direction: "backward" | "forward",
+) => number;
 
 export interface TextInputOptions {
   placeholder?: string;
@@ -47,6 +51,7 @@ export class TextInput extends Control {
   private _promptStyle: TextStyle;
   private _colorize: InputColorizer | null;
   private _deleteSize: DeleteSizer | null;
+  private _scrollOffset: number = 0;
 
   /** Command history entries (most recent last). */
   private _history: string[];
@@ -54,9 +59,6 @@ export class TextInput extends Control {
   private _historyIndex: number = -1;
   /** Saved input when user starts browsing history. */
   private _savedInput: string = "";
-
-  /** Horizontal scroll offset (first visible column in value). */
-  private _scrollOffset: number = 0;
 
   constructor(options: TextInputOptions = {}) {
     super();
@@ -271,8 +273,7 @@ export class TextInput extends Control {
           : 1;
         const deleteFrom = Math.max(0, this._cursor - count);
         this._value =
-          this._value.slice(0, deleteFrom) +
-          this._value.slice(this._cursor);
+          this._value.slice(0, deleteFrom) + this._value.slice(this._cursor);
         this._cursor = deleteFrom;
         this.emit("change", this._value);
         this.invalidate();
@@ -572,9 +573,11 @@ export class TextInput extends Control {
 
     const lines = this._wrapLines(firstRowW, totalWidth);
     // +1 for cursor row if cursor is at the very end and would start a new line
-    const cursorOnNewLine = this._value.length > 0
-      && this._cursor === this._value.length
-      && lines[lines.length - 1].length >= (lines.length === 1 ? firstRowW : totalWidth);
+    const cursorOnNewLine =
+      this._value.length > 0 &&
+      this._cursor === this._value.length &&
+      lines[lines.length - 1].length >=
+        (lines.length === 1 ? firstRowW : totalWidth);
     const totalRows = lines.length + (cursorOnNewLine ? 1 : 0);
     const rows = Math.min(maxH, Math.max(1, totalRows));
 
@@ -633,7 +636,10 @@ export class TextInput extends Control {
     // Clamp
     const totalLines = lines.length;
     const maxVScroll = Math.max(0, totalLines - visibleRows);
-    this._vScrollOffset = Math.max(0, Math.min(this._vScrollOffset, maxVScroll));
+    this._vScrollOffset = Math.max(
+      0,
+      Math.min(this._vScrollOffset, maxVScroll),
+    );
 
     // Compute per-character styles
     const charStyles = this._colorize ? this._colorize(this._value) : null;

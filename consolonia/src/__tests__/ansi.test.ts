@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
 import { Writable } from "node:stream";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import * as esc from "../ansi/esc.js";
-import { stripAnsi, visibleLength, truncateAnsi } from "../ansi/strip.js";
 import { AnsiOutput } from "../ansi/output.js";
+import { stripAnsi, truncateAnsi, visibleLength } from "../ansi/strip.js";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -372,7 +372,11 @@ describe("AnsiOutput", () => {
 
   describe("writePixel", () => {
     it("emits cursor position, colors, and character", () => {
-      const px = makePixel("A", { r: 255, g: 0, b: 0, a: 255 }, { r: 0, g: 0, b: 0, a: 255 });
+      const px = makePixel(
+        "A",
+        { r: 255, g: 0, b: 0, a: 255 },
+        { r: 0, g: 0, b: 0, a: 255 },
+      );
       output.writePixel(0, 0, px);
       output.flush();
 
@@ -383,8 +387,16 @@ describe("AnsiOutput", () => {
     });
 
     it("skips cursor move for adjacent horizontal pixels", () => {
-      const px1 = makePixel("A", { r: 255, g: 0, b: 0, a: 255 }, { r: 0, g: 0, b: 0, a: 255 });
-      const px2 = makePixel("B", { r: 255, g: 0, b: 0, a: 255 }, { r: 0, g: 0, b: 0, a: 255 });
+      const px1 = makePixel(
+        "A",
+        { r: 255, g: 0, b: 0, a: 255 },
+        { r: 0, g: 0, b: 0, a: 255 },
+      );
+      const px2 = makePixel(
+        "B",
+        { r: 255, g: 0, b: 0, a: 255 },
+        { r: 0, g: 0, b: 0, a: 255 },
+      );
 
       output.writePixel(0, 0, px1);
       output.writePixel(1, 0, px2);
@@ -397,8 +409,16 @@ describe("AnsiOutput", () => {
     });
 
     it("emits cursor move when pixels are not adjacent", () => {
-      const px1 = makePixel("A", { r: 255, g: 0, b: 0, a: 255 }, { r: 0, g: 0, b: 0, a: 255 });
-      const px2 = makePixel("B", { r: 255, g: 0, b: 0, a: 255 }, { r: 0, g: 0, b: 0, a: 255 });
+      const px1 = makePixel(
+        "A",
+        { r: 255, g: 0, b: 0, a: 255 },
+        { r: 0, g: 0, b: 0, a: 255 },
+      );
+      const px2 = makePixel(
+        "B",
+        { r: 255, g: 0, b: 0, a: 255 },
+        { r: 0, g: 0, b: 0, a: 255 },
+      );
 
       output.writePixel(0, 0, px1);
       output.writePixel(5, 0, px2); // gap at x=5

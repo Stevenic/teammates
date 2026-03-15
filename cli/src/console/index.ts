@@ -10,16 +10,36 @@
  *   - ANSI helpers: re-exported from @teammates/consolonia + CLI-specific extras
  */
 
-export { InteractiveReadline, type InteractiveReadlineOptions } from "./interactive-readline.js";
-export { MutableOutput } from "./mutable-output.js";
-export { PasteHandler, type PasteResult, type PasteHandlerOptions } from "./paste-handler.js";
-export { FileDropHandler, type FileAttachment } from "./file-drop.js";
+// ANSI helpers — consolonia re-exports + CLI-specific extras
+export { stripAnsi, truncateAnsi, visibleLength } from "@teammates/consolonia";
+export {
+  cr,
+  cursorDown,
+  cursorHome,
+  cursorToCol,
+  cursorUp,
+  eraseDown,
+  eraseLine,
+  eraseScreen,
+  eraseToEnd,
+} from "./ansi.js";
 export { Dropdown } from "./dropdown.js";
+export { type FileAttachment, FileDropHandler } from "./file-drop.js";
+export {
+  InteractiveReadline,
+  type InteractiveReadlineOptions,
+} from "./interactive-readline.js";
+export { renderMarkdownTables } from "./markdown-table.js";
+export { MutableOutput } from "./mutable-output.js";
+export {
+  PasteHandler,
+  type PasteHandlerOptions,
+  type PasteResult,
+} from "./paste-handler.js";
 export { PromptBox, type PromptBoxOptions } from "./prompt-box.js";
 export { PromptInput, type PromptInputOptions } from "./prompt-input.js";
-export { Wordwheel, type WordwheelItem, type WordwheelOptions } from "./wordwheel.js";
-export { renderMarkdownTables } from "./markdown-table.js";
-
-// ANSI helpers — consolonia re-exports + CLI-specific extras
-export { stripAnsi, visibleLength, truncateAnsi } from "@teammates/consolonia";
-export { cursorUp, cursorDown, cursorToCol, eraseLine, eraseToEnd, eraseDown, eraseScreen, cursorHome, cr } from "./ansi.js";
+export {
+  Wordwheel,
+  type WordwheelItem,
+  type WordwheelOptions,
+} from "./wordwheel.js";

@@ -5,22 +5,22 @@
  * simplified for the Node.js/TypeScript environment.
  */
 
-import type { Color } from "../pixel/color.js";
 import type { Rect } from "../layout/types.js";
-import type { Pixel } from "../pixel/pixel.js";
-import { blendPixel } from "../pixel/pixel.js";
-import { type PixelBuffer } from "../pixel/buffer.js";
-import { sym, charWidth } from "../pixel/symbol.js";
-import { foreground } from "../pixel/foreground.js";
 import { background } from "../pixel/background.js";
 import {
-  UP,
-  RIGHT,
+  boxChar,
   DOWN,
   LEFT,
   mergeBoxPatterns,
-  boxChar,
+  RIGHT,
+  UP,
 } from "../pixel/box-pattern.js";
+import type { PixelBuffer } from "../pixel/buffer.js";
+import type { Color } from "../pixel/color.js";
+import { foreground } from "../pixel/foreground.js";
+import type { Pixel } from "../pixel/pixel.js";
+import { blendPixel } from "../pixel/pixel.js";
+import { charWidth, sym } from "../pixel/symbol.js";
 import { ClipStack } from "./clip.js";
 
 // ── Style interfaces ──────────────────────────────────────────────
@@ -96,14 +96,23 @@ export class DrawingContext {
   // ── Visibility check ────────────────────────────────────────
 
   /** Translate a point by the current offset. */
-  private tx(x: number): number { return x + this.offsetX; }
-  private ty(y: number): number { return y + this.offsetY; }
+  private tx(x: number): number {
+    return x + this.offsetX;
+  }
+  private ty(y: number): number {
+    return y + this.offsetY;
+  }
 
   /** Check if a local-coord point is visible after translate. */
   private isVisible(x: number, y: number): boolean {
     const wx = this.tx(x);
     const wy = this.ty(y);
-    if (wx < 0 || wx >= this.buffer.width || wy < 0 || wy >= this.buffer.height) {
+    if (
+      wx < 0 ||
+      wx >= this.buffer.width ||
+      wy < 0 ||
+      wy >= this.buffer.height
+    ) {
       return false;
     }
     return this.clipStack.contains(wx, wy);
@@ -259,21 +268,42 @@ export class DrawingContext {
     }
 
     // Corners
-    this.drawBoxChar(x, y, DOWN | RIGHT, fgColor, bgColor, bold);                      // top-left
-    this.drawBoxChar(x + width - 1, y, DOWN | LEFT, fgColor, bgColor, bold);            // top-right
-    this.drawBoxChar(x, y + height - 1, UP | RIGHT, fgColor, bgColor, bold);            // bottom-left
-    this.drawBoxChar(x + width - 1, y + height - 1, UP | LEFT, fgColor, bgColor, bold); // bottom-right
+    this.drawBoxChar(x, y, DOWN | RIGHT, fgColor, bgColor, bold); // top-left
+    this.drawBoxChar(x + width - 1, y, DOWN | LEFT, fgColor, bgColor, bold); // top-right
+    this.drawBoxChar(x, y + height - 1, UP | RIGHT, fgColor, bgColor, bold); // bottom-left
+    this.drawBoxChar(
+      x + width - 1,
+      y + height - 1,
+      UP | LEFT,
+      fgColor,
+      bgColor,
+      bold,
+    ); // bottom-right
 
     // Top and bottom edges
     for (let dx = 1; dx < width - 1; dx++) {
-      this.drawBoxChar(x + dx, y, LEFT | RIGHT, fgColor, bgColor, bold);                // top
-      this.drawBoxChar(x + dx, y + height - 1, LEFT | RIGHT, fgColor, bgColor, bold);   // bottom
+      this.drawBoxChar(x + dx, y, LEFT | RIGHT, fgColor, bgColor, bold); // top
+      this.drawBoxChar(
+        x + dx,
+        y + height - 1,
+        LEFT | RIGHT,
+        fgColor,
+        bgColor,
+        bold,
+      ); // bottom
     }
 
     // Left and right edges
     for (let dy = 1; dy < height - 1; dy++) {
-      this.drawBoxChar(x, y + dy, UP | DOWN, fgColor, bgColor, bold);                   // left
-      this.drawBoxChar(x + width - 1, y + dy, UP | DOWN, fgColor, bgColor, bold);       // right
+      this.drawBoxChar(x, y + dy, UP | DOWN, fgColor, bgColor, bold); // left
+      this.drawBoxChar(
+        x + width - 1,
+        y + dy,
+        UP | DOWN,
+        fgColor,
+        bgColor,
+        bold,
+      ); // right
     }
   }
 
@@ -294,9 +324,10 @@ export class DrawingContext {
     // Check if there's already a box pattern at this position
     const existing = this.bufGet(x, y);
     const existingPattern = existing.foreground.symbol.pattern;
-    const mergedPattern = existingPattern !== 0
-      ? mergeBoxPatterns(existingPattern, pattern)
-      : pattern;
+    const mergedPattern =
+      existingPattern !== 0
+        ? mergeBoxPatterns(existingPattern, pattern)
+        : pattern;
 
     const char = boxChar(mergedPattern);
     const s = sym(char, mergedPattern);

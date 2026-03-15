@@ -6,7 +6,7 @@
  * and translates between the orchestrator's protocol and the agent's native API.
  */
 
-import type { TeammateConfig, TaskResult } from "./types.js";
+import type { TaskResult, TeammateConfig } from "./types.js";
 
 export interface AgentAdapter {
   /** Human-readable name of the agent backend (e.g. "codex", "claude-code") */
@@ -25,7 +25,7 @@ export interface AgentAdapter {
   executeTask(
     sessionId: string,
     teammate: TeammateConfig,
-    prompt: string
+    prompt: string,
   ): Promise<TaskResult>;
 
   /**
@@ -70,7 +70,7 @@ export function buildTeammatePrompt(
     roster?: RosterEntry[];
     services?: InstalledService[];
     sessionFile?: string;
-  }
+  },
 ): string {
   const parts: string[] = [];
 
@@ -109,9 +109,10 @@ export function buildTeammatePrompt(
     parts.push("These are the other teammates you can hand off work to:\n");
     for (const t of options.roster) {
       if (t.name === teammate.name) continue;
-      const owns = t.ownership.primary.length > 0
-        ? ` — owns: ${t.ownership.primary.join(", ")}`
-        : "";
+      const owns =
+        t.ownership.primary.length > 0
+          ? ` — owns: ${t.ownership.primary.join(", ")}`
+          : "";
       parts.push(`- **@${t.name}**: ${t.role}${owns}`);
     }
     parts.push("\n---\n");
@@ -206,8 +207,12 @@ TO: user
 
   // ── Current date/time ────────────────────────────────────────────
   const now = new Date();
-  parts.push(`**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})`);
-  parts.push(`**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}\n`);
+  parts.push(
+    `**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})`,
+  );
+  parts.push(
+    `**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}\n`,
+  );
   parts.push("---\n");
 
   // ── Task ──────────────────────────────────────────────────────────

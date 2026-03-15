@@ -5,15 +5,9 @@
  * and delegates execution to the plugged-in agent adapter.
  */
 
-import type {
-  TaskAssignment,
-  TaskResult,
-  HandoffEnvelope,
-  OrchestratorEvent,
-} from "./types.js";
 import type { AgentAdapter } from "./adapter.js";
-import { formatHandoffContext } from "./adapter.js";
 import { Registry } from "./registry.js";
+import type { OrchestratorEvent, TaskAssignment, TaskResult } from "./types.js";
 
 export interface OrchestratorConfig {
   /** Path to .teammates/ directory */
@@ -144,7 +138,7 @@ export class Orchestrator {
       ]) {
         // Extract meaningful keywords from glob patterns
         const keywords = pattern
-          .replace(/[*\/{}]/g, " ")
+          .replace(/[*/{}]/g, " ")
           .split(/\s+/)
           .filter((w) => w.length > 2);
 
@@ -183,7 +177,11 @@ export class Orchestrator {
   async agentRoute(task: string): Promise<string | null> {
     if (!this.adapter.routeTask) return null;
 
-    const roster: Array<{ name: string; role: string; ownership: { primary: string[]; secondary: string[] } }> = [];
+    const roster: Array<{
+      name: string;
+      role: string;
+      ownership: { primary: string[]; secondary: string[] };
+    }> = [];
     for (const [name, config] of this.registry.all()) {
       roster.push({ name, role: config.role, ownership: config.ownership });
     }
@@ -216,7 +214,7 @@ export class Orchestrator {
 
   /** Reset all teammate statuses to idle and clear sessions */
   async reset(): Promise<void> {
-    for (const [name, sessionId] of this.sessions) {
+    for (const [_name, sessionId] of this.sessions) {
       if (this.adapter.destroySession) {
         await this.adapter.destroySession(sessionId);
       }
@@ -229,7 +227,7 @@ export class Orchestrator {
 
   /** Destroy all sessions */
   async shutdown(): Promise<void> {
-    for (const [name, sessionId] of this.sessions) {
+    for (const [_name, sessionId] of this.sessions) {
       if (this.adapter.destroySession) {
         await this.adapter.destroySession(sessionId);
       }

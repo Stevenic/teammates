@@ -30,14 +30,18 @@
  *   "tab"     ()                     — user pressed Tab (for autocomplete)
  */
 
-import { Control } from "../layout/control.js";
-import type { Size, Constraint, Rect } from "../layout/types.js";
 import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
-import { Text } from "./text.js";
-import { StyledText, type StyledLine } from "./styled-text.js";
-import { TextInput, type InputColorizer, type DeleteSizer } from "./text-input.js";
+import { Control } from "../layout/control.js";
+import type { Constraint, Rect, Size } from "../layout/types.js";
 import type { StyledSpan } from "../styled.js";
+import { type StyledLine, StyledText } from "./styled-text.js";
+import { Text } from "./text.js";
+import {
+  type DeleteSizer,
+  type InputColorizer,
+  TextInput,
+} from "./text-input.js";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -145,9 +149,9 @@ export class ChatView extends Control {
   private _maxInputH: number;
 
   // ── Layout cache ───────────────────────────────────────────────
-  private _feedScrollOffset: number = 0;
   private _lastWidth: number = 0;
   private _lastHeight: number = 0;
+  private _feedScrollOffset: number = 0;
 
   // ── Scrollbar state ───────────────────────────────────────────
   /** Cached from last render for hit-testing. */
@@ -173,9 +177,12 @@ export class ChatView extends Control {
     this._progressStyle = options.progressStyle ?? { italic: true };
     this._separatorStyle = options.separatorStyle ?? {};
     this._separatorChar = options.separatorChar ?? "─";
-    this._dropdownHighlightStyle = options.dropdownHighlightStyle ?? { bold: true };
+    this._dropdownHighlightStyle = options.dropdownHighlightStyle ?? {
+      bold: true,
+    };
     this._dropdownStyle = options.dropdownStyle ?? {};
-    this._dropdownLabelStyle = options.dropdownLabelStyle ?? this._dropdownStyle;
+    this._dropdownLabelStyle =
+      options.dropdownLabelStyle ?? this._dropdownStyle;
     this._footerStyle = options.footerStyle ?? {};
     this._maxInputH = options.maxInputHeight ?? 1;
 
@@ -192,11 +199,17 @@ export class ChatView extends Control {
     this.addChild(this._banner);
 
     // Top separator (between banner and feed)
-    this._topSeparator = new _Separator(this._separatorChar, this._separatorStyle);
+    this._topSeparator = new _Separator(
+      this._separatorChar,
+      this._separatorStyle,
+    );
     this.addChild(this._topSeparator);
 
     // Bottom separator (between feed and input area)
-    this._bottomSeparator = new _Separator(this._separatorChar, this._separatorStyle);
+    this._bottomSeparator = new _Separator(
+      this._separatorChar,
+      this._separatorStyle,
+    );
     this.addChild(this._bottomSeparator);
 
     // Progress text (above separator, fixed)
@@ -225,7 +238,10 @@ export class ChatView extends Control {
     this.addChild(this._input);
 
     // Separator between input and footer
-    this._inputSeparator = new _Separator(this._separatorChar, this._separatorStyle);
+    this._inputSeparator = new _Separator(
+      this._separatorChar,
+      this._separatorStyle,
+    );
     this.addChild(this._inputSeparator);
 
     // Footer (below input separator / dropdown, always 1 row)
@@ -335,7 +351,11 @@ export class ChatView extends Control {
   }
 
   /** Append a clickable action line to the feed. Emits "action" on click. */
-  appendAction(id: string, normalContent: StyledLine, hoverContent: StyledLine): void {
+  appendAction(
+    id: string,
+    normalContent: StyledLine,
+    hoverContent: StyledLine,
+  ): void {
     const line = new StyledText({
       lines: [normalContent],
       defaultStyle: this._feedStyle,
@@ -355,7 +375,11 @@ export class ChatView extends Control {
   appendActionList(actions: FeedActionItem[]): void {
     if (actions.length === 0) return;
     const combined = this._concatSpans(actions.map((a) => a.normalStyle));
-    const line = new StyledText({ lines: [combined], defaultStyle: this._feedStyle, wrap: false });
+    const line = new StyledText({
+      lines: [combined],
+      defaultStyle: this._feedStyle,
+      wrap: false,
+    });
     const idx = this._feedLines.length;
     this._feedLines.push(line);
     this._feedActions.set(idx, { items: actions, normalStyle: combined });
@@ -457,7 +481,10 @@ export class ChatView extends Control {
 
   /** Show a progress/status message just above the separator. */
   setProgress(content: StyledLine | null): void {
-    if (content === null || (typeof content === "string" && content.length === 0)) {
+    if (
+      content === null ||
+      (typeof content === "string" && content.length === 0)
+    ) {
       this._progressText.lines = [];
       this._progressText.visible = false;
     } else {
@@ -504,7 +531,10 @@ export class ChatView extends Control {
 
   /** Accept the currently highlighted dropdown item. Returns it, or null. */
   acceptDropdownItem(): DropdownItem | null {
-    if (this._dropdownIndex < 0 || this._dropdownIndex >= this._dropdownItems.length) {
+    if (
+      this._dropdownIndex < 0 ||
+      this._dropdownIndex >= this._dropdownItems.length
+    ) {
       return null;
     }
     const item = this._dropdownItems[this._dropdownIndex];
@@ -544,7 +574,7 @@ export class ChatView extends Control {
           // Only consume Enter if the highlighted item has a completion value
           // AND the input doesn't already match the completion (otherwise submit).
           const item = this._dropdownItems[this._dropdownIndex];
-          if (item && item.completion) {
+          if (item?.completion) {
             const currentVal = this._input.value.trim();
             if (currentVal !== item.completion.trim()) {
               this.acceptDropdownItem();
@@ -585,13 +615,17 @@ export class ChatView extends Control {
 
       // Scrollbar drag
       if (this._scrollbarVisible) {
-        const onScrollbar = me.x === this._scrollbarX
-          && me.y >= this._feedY
-          && me.y < this._feedY + this._feedH;
+        const onScrollbar =
+          me.x === this._scrollbarX &&
+          me.y >= this._feedY &&
+          me.y < this._feedY + this._feedH;
 
         if (me.type === "press" && me.button === "left" && onScrollbar) {
           const relY = me.y - this._feedY;
-          if (relY >= this._thumbPos && relY < this._thumbPos + this._thumbSize) {
+          if (
+            relY >= this._thumbPos &&
+            relY < this._thumbPos + this._thumbSize
+          ) {
             // Clicked on thumb — start dragging
             this._dragging = true;
             this._dragOffsetY = relY - this._thumbPos;
@@ -599,7 +633,10 @@ export class ChatView extends Control {
             // Clicked on track — jump to that position
             const ratio = relY / this._feedH;
             this._feedScrollOffset = Math.round(ratio * this._maxScroll);
-            this._feedScrollOffset = Math.max(0, Math.min(this._feedScrollOffset, this._maxScroll));
+            this._feedScrollOffset = Math.max(
+              0,
+              Math.min(this._feedScrollOffset, this._maxScroll),
+            );
             this.invalidate();
           }
           return true;
@@ -625,11 +662,15 @@ export class ChatView extends Control {
       // Action hover/click in feed area
       if (this._feedActions.size > 0) {
         const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
-        const entry = feedLineIdx >= 0 ? this._feedActions.get(feedLineIdx) : undefined;
+        const entry =
+          feedLineIdx >= 0 ? this._feedActions.get(feedLineIdx) : undefined;
 
         if (me.type === "move") {
           const newHover = entry ? feedLineIdx : -1;
-          if (newHover !== this._hoveredAction || (entry && entry.items.length > 1)) {
+          if (
+            newHover !== this._hoveredAction ||
+            (entry && entry.items.length > 1)
+          ) {
             // Restore previous hover
             if (this._hoveredAction >= 0) {
               const prev = this._feedActions.get(this._hoveredAction);
@@ -662,7 +703,10 @@ export class ChatView extends Control {
   }
 
   /** Resolve which action item the mouse x-position falls on. */
-  private _resolveActionItem(entry: FeedActionEntry, x: number): FeedActionItem | null {
+  private _resolveActionItem(
+    entry: FeedActionEntry,
+    x: number,
+  ): FeedActionItem | null {
     if (entry.items.length === 1) return entry.items[0];
     // Calculate text length of each item's normal style to find boundaries
     let col = 0;
@@ -675,10 +719,13 @@ export class ChatView extends Control {
   }
 
   /** Build a hover line: highlight only the target item, keep others normal. */
-  private _buildHoverLine(entry: FeedActionEntry, target: FeedActionItem | null): StyledLine {
+  private _buildHoverLine(
+    entry: FeedActionEntry,
+    target: FeedActionItem | null,
+  ): StyledLine {
     if (entry.items.length === 1 && target) return target.hoverStyle;
     const parts: StyledLine[] = entry.items.map((item) =>
-      item === target ? item.hoverStyle : item.normalStyle
+      item === target ? item.hoverStyle : item.normalStyle,
     );
     return this._concatSpans(parts);
   }
@@ -691,7 +738,8 @@ export class ChatView extends Control {
     let len = 0;
     for (const seg of segments) {
       if (typeof seg === "string") len += seg.length;
-      else if (seg && typeof seg === "object" && "text" in seg) len += (seg as { text: string }).text.length;
+      else if (seg && typeof seg === "object" && "text" in seg)
+        len += (seg as { text: string }).text.length;
     }
     return len;
   }
@@ -738,7 +786,12 @@ export class ChatView extends Control {
     const botSepH = 1;
 
     // Input: measure to get wrapped height (up to maxInputH rows)
-    const inputSize = this._input.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: this._maxInputH });
+    const inputSize = this._input.measure({
+      minWidth: 0,
+      maxWidth: W,
+      minHeight: 0,
+      maxHeight: this._maxInputH,
+    });
     const inputH = inputSize.height;
 
     // Input separator: 1 row (between input and footer/dropdown)
@@ -771,7 +824,12 @@ export class ChatView extends Control {
 
     // 2. Progress text (above separator, fixed — not part of scrollable feed)
     if (progressH > 0) {
-      this._progressText.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: 1 });
+      this._progressText.measure({
+        minWidth: 0,
+        maxWidth: W,
+        minHeight: 0,
+        maxHeight: 1,
+      });
       this._progressText.arrange({ x: b.x, y, width: W, height: progressH });
       this._progressText.render(ctx);
       y += progressH;
@@ -797,11 +855,15 @@ export class ChatView extends Control {
       const totalDropdownH = dropdownExtraH + 1;
       this._renderDropdown(ctx, b.x, y, W, totalDropdownH);
     } else {
-      this._footer.measure({ minWidth: 0, maxWidth: W, minHeight: 0, maxHeight: 1 });
+      this._footer.measure({
+        minWidth: 0,
+        maxWidth: W,
+        minHeight: 0,
+        maxHeight: 1,
+      });
       this._footer.arrange({ x: b.x, y, width: W, height: footerH });
       this._footer.render(ctx);
     }
-
   }
 
   // ── Feed rendering ─────────────────────────────────────────────
@@ -826,7 +888,12 @@ export class ChatView extends Control {
 
     // Banner (if visible)
     if (this._banner.visible) {
-      const bannerSize = this._banner.measure({ minWidth: 0, maxWidth: contentWidth, minHeight: 0, maxHeight: Infinity });
+      const bannerSize = this._banner.measure({
+        minWidth: 0,
+        maxWidth: contentWidth,
+        minHeight: 0,
+        maxHeight: Infinity,
+      });
       const bh = Math.max(1, bannerSize.height);
       items.push({
         height: bh,
@@ -850,7 +917,12 @@ export class ChatView extends Control {
     // Feed lines
     for (let fi = 0; fi < this._feedLines.length; fi++) {
       const line = this._feedLines[fi];
-      const lineSize = line.measure({ minWidth: 0, maxWidth: contentWidth, minHeight: 0, maxHeight: Infinity });
+      const lineSize = line.measure({
+        minWidth: 0,
+        maxWidth: contentWidth,
+        minHeight: 0,
+        maxHeight: Infinity,
+      });
       const h = Math.max(1, lineSize.height);
       items.push({
         height: h,
@@ -870,7 +942,10 @@ export class ChatView extends Control {
 
     // Clamp scroll offset
     const maxScroll = Math.max(0, totalContentH - height);
-    this._feedScrollOffset = Math.max(0, Math.min(this._feedScrollOffset, maxScroll));
+    this._feedScrollOffset = Math.max(
+      0,
+      Math.min(this._feedScrollOffset, maxScroll),
+    );
 
     // Clip feed area
     ctx.pushClip({ x, y, width, height });
@@ -905,10 +980,16 @@ export class ChatView extends Control {
     // Render scrollbar and cache geometry for hit-testing
     if (height > 0 && totalContentH > height) {
       const scrollX = x + width - 1;
-      const thumbSize = Math.max(1, Math.round((height / totalContentH) * height));
-      const thumbPos = maxScroll > 0
-        ? Math.round((this._feedScrollOffset / maxScroll) * (height - thumbSize))
-        : 0;
+      const thumbSize = Math.max(
+        1,
+        Math.round((height / totalContentH) * height),
+      );
+      const thumbPos =
+        maxScroll > 0
+          ? Math.round(
+              (this._feedScrollOffset / maxScroll) * (height - thumbSize),
+            )
+          : 0;
       const trackStyle = this._separatorStyle;
       const thumbStyle = this._feedStyle;
 
@@ -924,7 +1005,12 @@ export class ChatView extends Control {
 
       for (let row = 0; row < height; row++) {
         const inThumb = row >= thumbPos && row < thumbPos + thumbSize;
-        ctx.drawChar(scrollX, y + row, inThumb ? "┃" : "│", inThumb ? thumbStyle : trackStyle);
+        ctx.drawChar(
+          scrollX,
+          y + row,
+          inThumb ? "┃" : "│",
+          inThumb ? thumbStyle : trackStyle,
+        );
       }
     } else {
       this._scrollbarVisible = false;
@@ -945,7 +1031,9 @@ export class ChatView extends Control {
     for (let i = 0; i < this._dropdownItems.length && i < height; i++) {
       const item = this._dropdownItems[i];
       const isHighlighted = i === this._dropdownIndex;
-      const style = isHighlighted ? this._dropdownHighlightStyle : this._dropdownStyle;
+      const style = isHighlighted
+        ? this._dropdownHighlightStyle
+        : this._dropdownStyle;
 
       const prefix = isHighlighted ? "▸ " : "  ";
       const labelPad = item.label.padEnd(16);

@@ -10,10 +10,10 @@
  * representation and styles are carried across wrap boundaries.
  */
 
-import { Control } from "../layout/control.js";
-import type { Size, Constraint } from "../layout/types.js";
 import type { DrawingContext, TextStyle } from "../drawing/context.js";
-import { type StyledSpan, type StyledSegment, spanLength } from "../styled.js";
+import { Control } from "../layout/control.js";
+import type { Constraint, Size } from "../layout/types.js";
+import { type StyledSegment, type StyledSpan, spanLength } from "../styled.js";
 
 // ── Types ────────────────────────────────────────────────────────
 

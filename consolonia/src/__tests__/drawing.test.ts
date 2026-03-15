@@ -2,13 +2,13 @@
  * Tests for Phase 5: Drawing Context (ClipStack + DrawingContext).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ClipStack } from "../drawing/clip.js";
 import { DrawingContext } from "../drawing/context.js";
-import { PixelBuffer } from "../pixel/buffer.js";
-import { WHITE, RED, GREEN, BLUE, BLACK } from "../pixel/color.js";
 import type { Rect } from "../layout/types.js";
-import { UP, RIGHT, DOWN, LEFT, BOX_CHARS } from "../pixel/box-pattern.js";
+import { BOX_CHARS, DOWN, LEFT, RIGHT, UP } from "../pixel/box-pattern.js";
+import { PixelBuffer } from "../pixel/buffer.js";
+import { BLUE, GREEN, RED, WHITE } from "../pixel/color.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -50,7 +50,7 @@ describe("ClipStack", () => {
 
     // Inside
     expect(cs.contains(2, 3)).toBe(true);
-    expect(cs.contains(6, 6)).toBe(true);  // x=6 < 2+5=7, y=6 < 3+4=7
+    expect(cs.contains(6, 6)).toBe(true); // x=6 < 2+5=7, y=6 < 3+4=7
 
     // On exclusive boundary (right/bottom edge)
     expect(cs.contains(7, 3)).toBe(false);
@@ -238,9 +238,9 @@ describe("DrawingContext", () => {
       ctx.drawText(0, 0, "A\u4E16B", { fg: WHITE });
 
       expect(charAt(buf, 0, 0)).toBe("A");
-      expect(charAt(buf, 1, 0)).toBe("\u4E16");    // wide char at 1
-      expect(charAt(buf, 2, 0)).toBe("");           // continuation
-      expect(charAt(buf, 3, 0)).toBe("B");          // B after the 2-wide char
+      expect(charAt(buf, 1, 0)).toBe("\u4E16"); // wide char at 1
+      expect(charAt(buf, 2, 0)).toBe(""); // continuation
+      expect(charAt(buf, 3, 0)).toBe("B"); // B after the 2-wide char
     });
 
     it("skips control characters", () => {
@@ -268,7 +268,7 @@ describe("DrawingContext", () => {
       expect(bgAt(buf, 4, 4)).toEqual(RED);
 
       // Outside
-      expect(bgAt(buf, 1, 3).a).toBe(0);   // transparent
+      expect(bgAt(buf, 1, 3).a).toBe(0); // transparent
       expect(bgAt(buf, 5, 3).a).toBe(0);
       expect(bgAt(buf, 2, 2).a).toBe(0);
       expect(bgAt(buf, 2, 5).a).toBe(0);

@@ -3,25 +3,22 @@
  * Text, Border, Panel, TextInput, ScrollView
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { Text } from "../widgets/text.js";
+import { describe, expect, it, vi } from "vitest";
+import { DrawingContext } from "../drawing/context.js";
+import { keyEvent, mouseEvent, pasteEvent } from "../input/events.js";
+import type { Constraint, Rect } from "../layout/types.js";
+import { PixelBuffer } from "../pixel/buffer.js";
+import { color, TRANSPARENT } from "../pixel/color.js";
 import { Border } from "../widgets/border.js";
 import { Panel } from "../widgets/panel.js";
-import { TextInput } from "../widgets/text-input.js";
 import { ScrollView } from "../widgets/scroll-view.js";
-import { PixelBuffer } from "../pixel/buffer.js";
-import { DrawingContext } from "../drawing/context.js";
-import { keyEvent, pasteEvent, mouseEvent } from "../input/events.js";
-import type { Constraint, Rect } from "../layout/types.js";
-import { color, TRANSPARENT, WHITE, RED, BLUE } from "../pixel/color.js";
+import { Text } from "../widgets/text.js";
+import { TextInput } from "../widgets/text-input.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /** Create an unconstrained constraint (large max). */
-function unconstrainedConstraint(
-  maxWidth = 80,
-  maxHeight = 24,
-): Constraint {
+function unconstrainedConstraint(maxWidth = 80, maxHeight = 24): Constraint {
   return { minWidth: 0, minHeight: 0, maxWidth, maxHeight };
 }
 
@@ -33,8 +30,12 @@ function createRenderTarget(width = 40, height = 10) {
 }
 
 /** Helper: measure a control and arrange it at (0,0) with its desired size. */
-function layoutControl(
-  ctrl: { measure(c: Constraint): any; arrange(r: Rect): void; desiredSize: any },
+function _layoutControl(
+  ctrl: {
+    measure(c: Constraint): any;
+    arrange(r: Rect): void;
+    desiredSize: any;
+  },
   maxWidth = 80,
   maxHeight = 24,
 ) {
@@ -140,7 +141,7 @@ describe("Text widget", () => {
   describe("alignment", () => {
     it("left (default) aligns text at x=0 offset", () => {
       const t = new Text({ text: "Hi", align: "left" });
-      const size = t.measure(unconstrainedConstraint());
+      const _size = t.measure(unconstrainedConstraint());
       t.arrange({ x: 0, y: 0, width: 10, height: 1 });
 
       const { buffer, ctx } = createRenderTarget(10, 1);
@@ -942,9 +943,7 @@ describe("ScrollView widget", () => {
     it("wheeldown increases scrollOffset", () => {
       const sv = setupScrollView(makeTallChild(50), 10);
 
-      const handled = sv.handleInput(
-        mouseEvent(0, 0, "none", "wheeldown"),
-      );
+      const handled = sv.handleInput(mouseEvent(0, 0, "none", "wheeldown"));
       expect(handled).toBe(true);
       expect(sv.scrollOffset).toBe(3);
     });
@@ -1029,7 +1028,7 @@ describe("ScrollView widget", () => {
   describe("arrange", () => {
     it("gives child its full content height", () => {
       const child = makeTallChild(50, 20);
-      const sv = setupScrollView(child, 10);
+      const _sv = setupScrollView(child, 10);
 
       expect(child.bounds.height).toBe(50);
       expect(child.bounds.width).toBe(20);

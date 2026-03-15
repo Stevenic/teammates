@@ -5,8 +5,8 @@
  * Emits a KeyEvent for each printable character.
  */
 
-import { MatchResult, type IMatcher } from './matcher.js';
-import { keyEvent, type InputEvent } from './events.js';
+import { type InputEvent, keyEvent } from "./events.js";
+import { type IMatcher, MatchResult } from "./matcher.js";
 
 export class TextMatcher implements IMatcher {
   private result: InputEvent | null = null;
@@ -18,7 +18,7 @@ export class TextMatcher implements IMatcher {
     // Also accept high-Unicode characters (surrogate pairs, emoji, etc.)
     if (code >= 32 && code !== 127 && code !== 27) {
       const isUpper = code >= 65 && code <= 90;
-      const key = char === ' ' ? 'space' : char;
+      const key = char === " " ? "space" : char;
       const charValue = char;
       this.result = keyEvent(key, charValue, isUpper, false, false);
       return MatchResult.Complete;

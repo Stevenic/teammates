@@ -12,10 +12,16 @@
   "scripts": {
     "build": "npm run build -w consolonia && npm run build -w recall && npm run build -w cli",
     "test": "npm test --workspaces --if-present",
-    "dev": "npm run dev --workspaces --if-present"
+    "dev": "npm run dev --workspaces --if-present",
+    "lint": "biome check",
+    "lint:fix": "biome check --write",
+    "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "engines": {
     "node": ">=20.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@biomejs/biome": "2.4.7"
+  }
 }
