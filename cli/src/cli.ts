@@ -2223,6 +2223,9 @@ class TeammatesREPL {
           this.feedLine(tp.muted("  " + "─".repeat(40)));
         } else if (cleaned) {
           this.feedMarkdown(cleaned);
+        } else {
+          this.feedLine(tp.muted("  (no response text — the agent may have only performed tool actions)"));
+          this.feedLine(tp.muted(`  Use /debug ${event.result.teammate} to view full output`));
         }
 
         // Render handoffs

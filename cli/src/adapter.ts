@@ -196,6 +196,7 @@ TO: user
 **Rules:**
 - The \`# Subject\` line is REQUIRED — it becomes the message title.
 - Always write a substantive body. Never return just the subject.
+- **Your final message MUST contain your response text.** Do not end your turn with only tool calls — always finish with a visible message to the user.
 - Use markdown: headings, lists, code blocks, bold, etc.
 - Do as much work as you can before handing off.
 - Only hand off to teammates listed in "Your Team" above.
