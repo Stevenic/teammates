@@ -47,6 +47,7 @@ import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import type { AgentAdapter } from "./adapter.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
+import { CopilotAdapter } from "./adapters/copilot.js";
 import { EchoAdapter } from "./adapters/echo.js";
 import {
   findAtMention,
@@ -122,6 +123,13 @@ async function findTeammatesDir(): Promise<string | null> {
 function resolveAdapter(name: string): AgentAdapter {
   if (name === "echo") return new EchoAdapter();
 
+  // GitHub Copilot SDK adapter
+  if (name === "copilot") {
+    return new CopilotAdapter({
+      model: modelOverride,
+    });
+  }
+
   // All other adapters go through the CLI proxy
   if (PRESETS[name]) {
     return new CliProxyAdapter({
@@ -131,7 +139,7 @@ function resolveAdapter(name: string): AgentAdapter {
     });
   }
 
-  const available = ["echo", ...Object.keys(PRESETS)].join(", ");
+  const available = ["echo", "copilot", ...Object.keys(PRESETS)].join(", ");
   console.error(chalk.red(`Unknown adapter: ${name}`));
   console.error(`Available adapters: ${available}`);
   process.exit(1);

@@ -298,6 +298,14 @@ export class CliProxyAdapter implements AgentAdapter {
       );
       const env = { ...process.env, ...this.preset.env };
 
+      // Suppress Node.js ExperimentalWarning in routing subprocesses
+      const existingNodeOpts = env.NODE_OPTIONS ?? "";
+      if (!existingNodeOpts.includes("--disable-warning=ExperimentalWarning")) {
+        env.NODE_OPTIONS = existingNodeOpts
+          ? `${existingNodeOpts} --disable-warning=ExperimentalWarning`
+          : "--disable-warning=ExperimentalWarning";
+      }
+
       const output = await new Promise<string>((resolve, reject) => {
         const routeStdin = this.preset.stdinPrompt ?? false;
         const needsShell = this.preset.shell ?? process.platform === "win32";
@@ -397,6 +405,15 @@ export class CliProxyAdapter implements AgentAdapter {
       const interactive = this.preset.interactive ?? false;
       const useStdin = this.preset.stdinPrompt ?? false;
 
+      // Suppress Node.js ExperimentalWarning (e.g. SQLite) in agent
+      // subprocesses so it doesn't leak into the terminal UI.
+      const existingNodeOpts = env.NODE_OPTIONS ?? "";
+      if (!existingNodeOpts.includes("--disable-warning=ExperimentalWarning")) {
+        env.NODE_OPTIONS = existingNodeOpts
+          ? `${existingNodeOpts} --disable-warning=ExperimentalWarning`
+          : "--disable-warning=ExperimentalWarning";
+      }
+
       // On Windows, npm-installed CLIs are .cmd wrappers that require shell.
       // When using shell mode, pass command+args as a single string to avoid
       // Node DEP0190 deprecation warning about unescaped args with shell: true.
@@ -485,7 +502,7 @@ export class CliProxyAdapter implements AgentAdapter {
 
 // ─── Output parsing (shared across all agents) ─────────────────────
 
-function parseResult(
+export function parseResult(
   teammateName: string,
   output: string,
   teammateNames: string[] = [],
@@ -584,7 +601,7 @@ function findHandoffBlocks(output: string): { target: string; task: string }[] {
 }
 
 /** Extract file paths from agent output. */
-function parseChangedFiles(output: string): string[] {
+export function parseChangedFiles(output: string): string[] {
   const files = new Set<string>();
 
   // diff --git a/path b/path
