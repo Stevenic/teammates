@@ -76,26 +76,83 @@ Uses [Vectra](https://github.com/Stevenic/vectra) for vector search and [transfo
 
 Any agent that can run shell commands gets semantic memory recall. See [recall/README.md](recall/README.md) for details.
 
-## Tool Agnostic
+## Supported Coding Agents
 
-teammates works with any AI coding tool that can read and write files:
+teammates works with any AI coding tool that can read and write files. The following agents have first-class support:
 
-- Claude Code
-- Cursor
-- Windsurf
-- Aider
-- GitHub Copilot
-- Cline
-- Continue
-- Any other agent that reads markdown
+- **Claude Code** — Anthropic's agentic coding tool
+- **OpenAI Codex** — OpenAI's coding agent (CLI)
+- **GitHub Copilot** — GitHub's AI coding agent (VS Code, JetBrains, CLI)
+
+Also works with: Cursor, Windsurf, Aider, Cline, Continue, and any other agent that reads markdown.
 
 ## Getting Started
+
+### 1. Clone the framework
 
 ```bash
 git clone https://github.com/Stevenic/teammates.git
 ```
 
-Then tell your AI agent:
+### 2. Start onboarding with your agent
+
+Pick the agent you use and run the appropriate command from your **target project directory** (the project you want to add teammates to):
+
+#### Claude Code
+
+```bash
+claude
+```
+
+Then in the Claude Code session:
+
+```
+Read <path-to-teammates>/ONBOARDING.md and set up teammates for this project
+```
+
+Claude Code will read the onboarding instructions, analyze your codebase, and scaffold the `.teammates/` directory.
+
+#### OpenAI Codex
+
+```bash
+codex
+```
+
+Then in the Codex session:
+
+```
+Read <path-to-teammates>/ONBOARDING.md and set up teammates for this project
+```
+
+Codex will follow the same onboarding flow — reading the instructions, proposing teammates based on your codebase, and creating the `.teammates/` directory.
+
+#### GitHub Copilot
+
+In **VS Code** or **JetBrains** with Copilot Chat (Agent mode):
+
+1. Open your target project
+2. Open Copilot Chat and switch to **Agent** mode
+3. Send:
+
+```
+Read <path-to-teammates>/ONBOARDING.md and set up teammates for this project
+```
+
+From the **Copilot CLI**:
+
+```bash
+gh copilot
+```
+
+Then:
+
+```
+Read <path-to-teammates>/ONBOARDING.md and set up teammates for this project
+```
+
+#### Other Agents
+
+For any agent that can read and write files, the prompt is the same:
 
 > Read ONBOARDING.md and set up teammates for my project at `<path-to-your-project>`
 
