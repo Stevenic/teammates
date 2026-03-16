@@ -131,11 +131,7 @@ describe("renderMarkdownTables", () => {
   });
 
   it("does not wrap when table fits within maxWidth", () => {
-    const input = [
-      "| A | B |",
-      "|---|---|",
-      "| 1 | 2 |",
-    ].join("\n");
+    const input = ["| A | B |", "|---|---|", "| 1 | 2 |"].join("\n");
 
     const result = renderMarkdownTables(input, 120);
     const lines = result.split("\n");

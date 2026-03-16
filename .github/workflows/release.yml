@@ -57,7 +57,7 @@ jobs:
       - name: Verify package version
         run: |
           PKG="${{ inputs.package }}"
-          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$PKG/package.json','utf8')).version)")
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('packages/$PKG/package.json','utf8')).version)")
           echo "Publishing @teammates/${PKG}@${VERSION}"
           echo "package-version=${VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -86,21 +86,21 @@ jobs:
       - name: Publish (dry run)
         if: inputs.dry-run
         run: npm publish --dry-run
-        working-directory: ${{ inputs.package }}
+        working-directory: packages/${{ inputs.package }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish
         if: ${{ !inputs.dry-run }}
         run: npm publish --access public
-        working-directory: ${{ inputs.package }}
+        working-directory: packages/${{ inputs.package }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Summary
         run: |
           PKG="${{ inputs.package }}"
-          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$PKG/package.json','utf8')).version)")
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('packages/$PKG/package.json','utf8')).version)")
           DRY="${{ inputs.dry-run }}"
           if [ "$DRY" = "true" ]; then
             echo "## 🏷️ Dry Run: @teammates/${PKG}@${VERSION}" >> "$GITHUB_STEP_SUMMARY"

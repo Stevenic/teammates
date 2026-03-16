@@ -384,9 +384,9 @@ describe("symbol", () => {
       expect(charWidth(0x00e9)).toBe(1);
     });
 
-    it("Emoji (outside CJK ranges) default to width 1", () => {
-      // U+1F600 = grinning face (not in covered CJK ranges)
-      expect(charWidth(0x1f600)).toBe(1);
+    it("Emoji in SMP range are width 2", () => {
+      // U+1F600 = grinning face (in emoji range 0x1f000-0x1faff)
+      expect(charWidth(0x1f600)).toBe(2);
     });
   });
 

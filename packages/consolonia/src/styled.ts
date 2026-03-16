@@ -28,7 +28,6 @@
 
 import type { TextStyle } from "./drawing/context.js";
 import type { Color } from "./pixel/color.js";
-import { charWidth } from "./pixel/symbol.js";
 import {
   BLACK,
   BLACK_BRIGHT,
@@ -50,6 +49,7 @@ import {
   YELLOW,
   YELLOW_BRIGHT,
 } from "./pixel/color.js";
+import { charWidth } from "./pixel/symbol.js";
 
 // ── Segment type ─────────────────────────────────────────────────
 

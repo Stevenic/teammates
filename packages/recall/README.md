@@ -1,5 +1,7 @@
 # @teammates/recall
 
+> Part of the [teammates](https://github.com/Stevenic/teammates) monorepo.
+
 Local semantic memory search for teammates. Indexes `WISDOM.md` and memory files (`memory/*.md` — daily logs and typed memories) using [Vectra](https://github.com/Stevenic/vectra) for vector search and [transformers.js](https://huggingface.co/docs/transformers.js) for embeddings.
 
 **Zero cloud dependencies.** Everything runs locally — embeddings are generated on-device, indexes are stored as local files.

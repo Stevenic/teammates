@@ -13,9 +13,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  approveAll,
   CopilotClient,
   type CopilotSession,
-  approveAll,
   type SessionEvent,
 } from "@github/copilot-sdk";
 import type {
@@ -76,11 +76,7 @@ export class CopilotAdapter implements AgentAdapter {
 
     // Create session file inside .teammates/.tmp so the agent can access it
     if (!this.sessionsDir) {
-      const tmpBase = join(
-        teammate.cwd ?? process.cwd(),
-        ".teammates",
-        ".tmp",
-      );
+      const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
       this.sessionsDir = join(tmpBase, "sessions");
       await mkdir(this.sessionsDir, { recursive: true });
       const gitignorePath = join(tmpBase, "..", ".gitignore");
@@ -179,8 +175,7 @@ export class CopilotAdapter implements AgentAdapter {
 
       // Use the final assistant message content, fall back to collected deltas
       const output =
-        (reply?.data as { content?: string })?.content ??
-        outputParts.join("");
+        (reply?.data as { content?: string })?.content ?? outputParts.join("");
 
       const teammateNames = this.roster.map((r) => r.name);
       return parseResult(teammate.name, output, teammateNames, prompt);
@@ -190,10 +185,7 @@ export class CopilotAdapter implements AgentAdapter {
     }
   }
 
-  async routeTask(
-    task: string,
-    roster: RosterEntry[],
-  ): Promise<string | null> {
+  async routeTask(task: string, roster: RosterEntry[]): Promise<string | null> {
     await this.ensureClient();
 
     const lines = [
@@ -220,10 +212,7 @@ export class CopilotAdapter implements AgentAdapter {
     });
 
     try {
-      const reply = await session.sendAndWait(
-        { prompt: task },
-        30_000,
-      );
+      const reply = await session.sendAndWait({ prompt: task }, 30_000);
 
       const output =
         (reply?.data as { content?: string })?.content?.trim().toLowerCase() ??
@@ -232,7 +221,10 @@ export class CopilotAdapter implements AgentAdapter {
       // Match against roster names
       const rosterNames = roster.map((r) => r.name);
       for (const name of rosterNames) {
-        if (output === name.toLowerCase() || output.endsWith(name.toLowerCase())) {
+        if (
+          output === name.toLowerCase() ||
+          output.endsWith(name.toLowerCase())
+        ) {
           return name;
         }
       }

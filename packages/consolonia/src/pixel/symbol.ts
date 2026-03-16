@@ -15,6 +15,40 @@ export interface Symbol {
 }
 
 /**
+ * Check if a code point is zero-width (invisible) and should be skipped
+ * during rendering. These characters have no visual representation and
+ * occupy zero terminal columns. If drawn as individual cells, terminals
+ * typically show them as "missing glyph" boxes.
+ */
+export function isZeroWidth(codePoint: number): boolean {
+  // Soft hyphen
+  if (codePoint === 0x00ad) return true;
+  // Combining diacritical marks (U+0300–U+036F)
+  if (codePoint >= 0x0300 && codePoint <= 0x036f) return true;
+  // Zero-width space, non-joiner, joiner
+  if (codePoint >= 0x200b && codePoint <= 0x200d) return true;
+  // Left-to-right / right-to-left marks
+  if (codePoint >= 0x200e && codePoint <= 0x200f) return true;
+  // LRE, RLE, PDF, LRO, RLO
+  if (codePoint >= 0x202a && codePoint <= 0x202e) return true;
+  // Word joiner
+  if (codePoint === 0x2060) return true;
+  // LRI, RLI, FSI, PDI
+  if (codePoint >= 0x2066 && codePoint <= 0x2069) return true;
+  // Combining grapheme joiner
+  if (codePoint === 0x034f) return true;
+  // Variation selectors (VS1-VS16)
+  if (codePoint >= 0xfe00 && codePoint <= 0xfe0f) return true;
+  // BOM / zero-width no-break space
+  if (codePoint === 0xfeff) return true;
+  // Variation selectors supplement (VS17-VS256)
+  if (codePoint >= 0xe0100 && codePoint <= 0xe01ef) return true;
+  // Tags block (used in flag sequences)
+  if (codePoint >= 0xe0001 && codePoint <= 0xe007f) return true;
+  return false;
+}
+
+/**
  * Determine the display width of a single character.
  * Returns 2 for wide characters (CJK, fullwidth forms, emoji), 1 otherwise.
  */
@@ -98,12 +132,16 @@ export function charWidth(codePoint: number): 1 | 2 {
 
 /**
  * Calculate the display width of a string (sum of charWidth per code point).
+ * Zero-width characters (variation selectors, ZWJ, etc.) are excluded.
  * Useful for layout and wrapping where terminal column count matters.
  */
 export function stringDisplayWidth(text: string): number {
   let width = 0;
   for (const char of text) {
-    width += charWidth(char.codePointAt(0)!);
+    const cp = char.codePointAt(0)!;
+    if (!isZeroWidth(cp)) {
+      width += charWidth(cp);
+    }
   }
   return width;
 }

@@ -46,9 +46,9 @@ jobs:
         with:
           path: |
             node_modules
-            cli/node_modules
-            consolonia/node_modules
-            recall/node_modules
+            packages/cli/node_modules
+            packages/consolonia/node_modules
+            packages/recall/node_modules
           key: modules-22-${{ hashFiles('package-lock.json') }}
 
       - name: Install dependencies
@@ -94,9 +94,9 @@ jobs:
         with:
           path: |
             node_modules
-            cli/node_modules
-            consolonia/node_modules
-            recall/node_modules
+            packages/cli/node_modules
+            packages/consolonia/node_modules
+            packages/recall/node_modules
           key: modules-${{ matrix.node-version }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install dependencies
@@ -104,10 +104,10 @@ jobs:
         run: npm ci
 
       - name: Build independent packages
-        run: npm run build -w consolonia & npm run build -w recall & wait
+        run: npm run build -w packages/consolonia & npm run build -w packages/recall & wait
 
       - name: Build CLI (depends on consolonia)
-        run: npm run build -w cli
+        run: npm run build -w packages/cli
 
       - name: Test all packages with coverage
         run: npm run test:coverage
@@ -117,7 +117,7 @@ jobs:
         run: |
           echo "## Test Coverage" >> "$GITHUB_STEP_SUMMARY"
           for pkg in consolonia recall cli; do
-            SUMMARY="$pkg/coverage/coverage-summary.json"
+            SUMMARY="packages/$pkg/coverage/coverage-summary.json"
             if [ -f "$SUMMARY" ]; then
               PCT=$(node -e "const s=JSON.parse(require('fs').readFileSync('$SUMMARY','utf8'));console.log(s.total.lines.pct)")
               echo "- **$pkg**: ${PCT}% lines" >> "$GITHUB_STEP_SUMMARY"

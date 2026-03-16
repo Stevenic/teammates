@@ -1189,7 +1189,9 @@ class TeammatesREPL {
     this.feedLine();
     this.feedLine(
       concat(
-        tp.accent(`  ${proposals.length} SOUL.md proposal${proposals.length > 1 ? "s" : ""}`),
+        tp.accent(
+          `  ${proposals.length} SOUL.md proposal${proposals.length > 1 ? "s" : ""}`,
+        ),
         tp.muted(" — approve or reject each:"),
       ),
     );
@@ -1199,20 +1201,14 @@ class TeammatesREPL {
       const pId = `${retroId}-${i}`;
 
       this.feedLine();
-      this.feedLine(
-        tp.text(`  Proposal ${i + 1}: ${p.title}`),
-      );
-      this.feedLine(
-        tp.muted(`    Section: ${p.section}`),
-      );
+      this.feedLine(tp.text(`  Proposal ${i + 1}: ${p.title}`));
+      this.feedLine(tp.muted(`    Section: ${p.section}`));
       if (p.before === "(new entry)") {
         this.feedLine(tp.muted("    Before: (new entry)"));
       } else {
         this.feedLine(tp.muted(`    Before: ${p.before}`));
       }
-      this.feedLine(
-        concat(tp.muted("    After: "), tp.text(p.after)),
-      );
+      this.feedLine(concat(tp.muted("    After: "), tp.text(p.after)));
       this.feedLine(tp.muted(`    Why: ${p.why}`));
 
       if (this.chatView) {
@@ -1261,10 +1257,20 @@ class TeammatesREPL {
   }
 
   /** Parse Proposal N blocks from retro output. */
-  private parseRetroProposals(
-    text: string,
-  ): { title: string; section: string; before: string; after: string; why: string }[] {
-    const proposals: { title: string; section: string; before: string; after: string; why: string }[] = [];
+  private parseRetroProposals(text: string): {
+    title: string;
+    section: string;
+    before: string;
+    after: string;
+    why: string;
+  }[] {
+    const proposals: {
+      title: string;
+      section: string;
+      before: string;
+      after: string;
+      why: string;
+    }[] = [];
     // Match **Proposal N: title** blocks
     const proposalPattern = /\*\*Proposal\s+\d+[:.]\s*(.+?)\*\*/gi;
     let match;
@@ -1274,7 +1280,8 @@ class TeammatesREPL {
     }
 
     for (let i = 0; i < positions.length; i++) {
-      const end = i + 1 < positions.length ? positions[i + 1].start : text.length;
+      const end =
+        i + 1 < positions.length ? positions[i + 1].start : text.length;
       const block = text.slice(positions[i].start, end);
 
       const section = this.extractField(block, "Section") || "Unknown";
@@ -1311,9 +1318,16 @@ class TeammatesREPL {
   /** Show/hide the retro approval dropdown based on pending proposals. */
   private showRetroDropdown(): void {
     if (!this.chatView) return;
-    if (this.pendingRetroProposals.length > 0 && this.pendingHandoffs.length === 0) {
+    if (
+      this.pendingRetroProposals.length > 0 &&
+      this.pendingHandoffs.length === 0
+    ) {
       const n = this.pendingRetroProposals.length;
-      const items: { label: string; description: string; completion: string }[] = [];
+      const items: {
+        label: string;
+        description: string;
+        completion: string;
+      }[] = [];
       items.push({
         label: "approve all",
         description: `approve ${n} SOUL.md proposal${n > 1 ? "s" : ""}`,
@@ -1341,7 +1355,10 @@ class TeammatesREPL {
         const p = this.pendingRetroProposals.splice(idx, 1)[0];
         this.chatView.updateFeedLine(
           p.actionIdx,
-          this.makeSpan({ text: "    approved", style: { fg: theme().success } }),
+          this.makeSpan({
+            text: "    approved",
+            style: { fg: theme().success },
+          }),
         );
         this.queueRetroApply(p.teammate, [p]);
         this.showRetroDropdown();
@@ -1422,7 +1439,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     this.taskQueue.push({ type: "agent", teammate, task: applyPrompt });
     this.feedLine(
-      concat(tp.muted("  Queued SOUL.md update for "), tp.accent(`@${teammate}`)),
+      concat(
+        tp.muted("  Queued SOUL.md update for "),
+        tp.accent(`@${teammate}`),
+      ),
     );
     this.refreshView();
     this.kickDrain();
@@ -2373,7 +2393,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.chatView.on("action", (id: string) => {
       if (id === "copy") {
         this.doCopy(this.lastCleanedOutput || undefined);
-      } else if (id.startsWith("retro-approve-") || id.startsWith("retro-reject-")) {
+      } else if (
+        id.startsWith("retro-approve-") ||
+        id.startsWith("retro-reject-")
+      ) {
         this.handleRetroAction(id);
       } else if (id.startsWith("approve-") || id.startsWith("reject-")) {
         this.handleHandoffAction(id);
@@ -2812,7 +2835,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         this.lastCleanedOutput = cleaned;
 
         if (sizeKB > 5) {
-          const tmpFile = join(tmpdir(), `teammates-${event.result.teammate}-${Date.now()}.md`);
+          const tmpFile = join(
+            tmpdir(),
+            `teammates-${event.result.teammate}-${Date.now()}.md`,
+          );
           writeFileSync(tmpFile, cleaned, "utf-8");
           this.feedLine(tp.muted(`  ${"─".repeat(40)}`));
           this.feedLine(

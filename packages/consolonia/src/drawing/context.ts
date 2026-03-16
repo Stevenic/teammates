@@ -20,7 +20,7 @@ import type { Color } from "../pixel/color.js";
 import { foreground } from "../pixel/foreground.js";
 import type { Pixel } from "../pixel/pixel.js";
 import { blendPixel } from "../pixel/pixel.js";
-import { charWidth, sym } from "../pixel/symbol.js";
+import { charWidth, isZeroWidth, sym } from "../pixel/symbol.js";
 import { ClipStack } from "./clip.js";
 
 // ── Style interfaces ──────────────────────────────────────────────
@@ -190,9 +190,12 @@ export class DrawingContext {
         continue;
       }
 
-      // Skip control characters
+      // Skip control characters and zero-width characters (variation
+      // selectors, ZWJ, combining marks, etc.) — they have no visual
+      // representation and would render as "missing glyph" boxes.
       const cp = char.codePointAt(0)!;
       if (cp < 0x20 && cp !== 0x09) continue;
+      if (isZeroWidth(cp)) continue;
 
       const w = charWidth(cp);
       this.drawChar(cx, y, char, style);
@@ -223,6 +226,7 @@ export class DrawingContext {
         }
         const cp = char.codePointAt(0)!;
         if (cp < 0x20 && cp !== 0x09) continue;
+        if (isZeroWidth(cp)) continue;
         const w = charWidth(cp);
         this.drawChar(cx, y, char, seg.style);
         cx += w;

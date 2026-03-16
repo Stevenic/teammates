@@ -1,5 +1,7 @@
 # @teammates/cli
 
+> Part of the [teammates](https://github.com/Stevenic/teammates) monorepo.
+
 Agent-agnostic CLI orchestrator for teammates. Routes tasks to teammates, manages handoffs, and plugs into any coding agent backend.
 
 ## Quick Start
