@@ -15,7 +15,7 @@ import {
   exec as execCb,
   execSync,
 } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -60,7 +60,7 @@ import { compactEpisodic } from "./compact.js";
 import { PromptInput } from "./console/prompt-input.js";
 import { buildTitle } from "./console/startup.js";
 import {
-  buildAdaptationPrompt,
+  buildImportAdaptationPrompt,
   copyTemplateFiles,
   getOnboardingPrompt,
   importTeammates,
@@ -1852,11 +1852,19 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       console.log(chalk.gray(`    (${files.length} files copied)`));
       console.log();
 
+      // Copy framework files so the agent has TEMPLATE.md etc. available
+      await copyTemplateFiles(teammatesDir);
+
       // Ask if user wants the agent to adapt teammates to this codebase
       console.log(chalk.white("  Adapt teammates to this codebase?"));
       console.log(
         chalk.gray(
-          "  The agent will update ownership patterns, file paths, and boundaries.",
+          "  The agent will scan this project, evaluate which teammates are needed,",
+        ),
+      );
+      console.log(
+        chalk.gray(
+          "  adapt their files, and create any new teammates the project needs.",
         ),
       );
       console.log(chalk.gray("  You can also do this later with /init."));
@@ -1865,7 +1873,12 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       const adapt = await this.askChoice("Adapt now? (y/n): ", ["y", "n"]);
 
       if (adapt === "y") {
-        await this.runAdaptationAgent(this.adapter, projectDir, teammates);
+        await this.runAdaptationAgent(
+          this.adapter,
+          projectDir,
+          teammates,
+          sourceDir,
+        );
       } else {
         console.log(
           chalk.gray("  Skipped adaptation. Run /init to adapt later."),
@@ -1878,70 +1891,74 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   /**
-   * Run the agent to adapt imported teammates' ownership/boundaries
-   * to the current codebase. Queues one task per teammate so the user
-   * can review and approve each adaptation individually.
+   * Run the agent to adapt imported teammates to the current codebase.
+   * Uses a single comprehensive session that scans the project, evaluates
+   * which teammates to keep/drop/create, adapts kept teammates (with
+   * Previous Projects sections), and creates any new teammates needed.
    */
   private async runAdaptationAgent(
     adapter: AgentAdapter,
     projectDir: string,
     teammateNames: string[],
+    sourceProjectPath: string,
   ): Promise<void> {
     const teammatesDir = join(projectDir, ".teammates");
     console.log();
     console.log(
-      chalk.blue("  Queuing adaptation tasks...") +
+      chalk.blue("  Starting adaptation...") +
         chalk.gray(
-          ` ${this.adapterName} will adapt each teammate individually`,
+          ` ${this.adapterName} will scan this project and adapt the team`,
         ),
     );
     console.log();
 
-    for (const name of teammateNames) {
-      const prompt = await buildAdaptationPrompt(teammatesDir, name);
-      const tempConfig = {
-        name: this.adapterName,
-        role: "Adaptation agent",
-        soul: "",
-        wisdom: "",
-        dailyLogs: [] as { date: string; content: string }[],
-        weeklyLogs: [] as { week: string; content: string }[],
-        ownership: { primary: [] as string[], secondary: [] as string[] },
-        routingKeywords: [] as string[],
-      };
+    const prompt = await buildImportAdaptationPrompt(
+      teammatesDir,
+      teammateNames,
+      sourceProjectPath,
+    );
+    const tempConfig = {
+      name: this.adapterName,
+      role: "Adaptation agent",
+      soul: "",
+      wisdom: "",
+      dailyLogs: [] as { date: string; content: string }[],
+      weeklyLogs: [] as { week: string; content: string }[],
+      ownership: { primary: [] as string[], secondary: [] as string[] },
+      routingKeywords: [] as string[],
+    };
 
-      const sessionId = await adapter.startSession(tempConfig);
-      const spinner = ora({
-        text:
-          chalk.blue(this.adapterName) +
-          chalk.gray(` is adapting @${name} to this codebase...`),
-        spinner: "dots",
-      }).start();
+    const sessionId = await adapter.startSession(tempConfig);
+    const spinner = ora({
+      text:
+        chalk.blue(this.adapterName) +
+        chalk.gray(" is scanning the project and adapting teammates..."),
+      spinner: "dots",
+    }).start();
 
-      try {
-        const result = await adapter.executeTask(sessionId, tempConfig, prompt);
-        spinner.stop();
-        this.printAgentOutput(result.rawOutput);
+    try {
+      const result = await adapter.executeTask(sessionId, tempConfig, prompt);
+      spinner.stop();
+      this.printAgentOutput(result.rawOutput);
 
-        if (result.success) {
-          console.log(chalk.green(`  ✔ @${name} adaptation complete!`));
-        } else {
-          console.log(
-            chalk.yellow(
-              `  ⚠ @${name} adaptation finished with issues: ${result.summary}`,
-            ),
-          );
-        }
-      } catch (err: any) {
-        spinner.fail(chalk.red(`@${name} adaptation failed: ${err.message}`));
+      if (result.success) {
+        console.log(chalk.green("  ✔ Team adaptation complete!"));
+      } else {
+        console.log(
+          chalk.yellow(
+            `  ⚠ Adaptation finished with issues: ${result.summary}`,
+          ),
+        );
       }
-
-      if (adapter.destroySession) {
-        await adapter.destroySession(sessionId);
-      }
-
-      console.log();
+    } catch (err: any) {
+      spinner.fail(chalk.red(`Adaptation failed: ${err.message}`));
     }
+
+    if (adapter.destroySession) {
+      await adapter.destroySession(sessionId);
+    }
+
+    console.log();
   }
 
   /**
@@ -3433,50 +3450,61 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   private async cmdDebug(argsStr: string): Promise<void> {
     const arg = argsStr.trim().replace(/^@/, "");
 
-    // Resolve targets
-    let targets: { name: string; result: TaskResult }[];
+    // Resolve which teammates to show debug info for
+    let targetNames: string[];
     if (arg === "everyone") {
-      targets = [];
-      for (const [name, result] of this.lastResults) {
-        if (name !== this.adapterName && result.rawOutput) {
-          targets.push({ name, result });
-        }
+      targetNames = [];
+      for (const [name] of this.lastResults) {
+        if (name !== this.adapterName) targetNames.push(name);
       }
-      if (targets.length === 0) {
-        this.feedLine(tp.muted("  No raw output available from any teammate."));
+      if (targetNames.length === 0) {
+        this.feedLine(tp.muted("  No debug info available from any teammate."));
         this.refreshView();
         return;
       }
+    } else if (arg) {
+      targetNames = [arg];
+    } else if (this.lastResult) {
+      targetNames = [this.lastResult.teammate];
     } else {
-      const result = arg ? this.lastResults.get(arg) : this.lastResult;
-      if (!result?.rawOutput) {
-        this.feedLine(
-          tp.muted(
-            "  No raw output available." +
-              (arg ? "" : " Try: /debug <teammate>"),
-          ),
-        );
-        this.refreshView();
-        return;
-      }
-      targets = [{ name: result.teammate, result }];
+      this.feedLine(
+        tp.muted("  No debug info available. Try: /debug [teammate]"),
+      );
+      this.refreshView();
+      return;
     }
 
-    for (const { name, result } of targets) {
+    let debugText = "";
+    for (const name of targetNames) {
       this.feedLine();
-      this.feedLine(tp.muted(`  ── raw output from ${name} ──`));
+      this.feedLine(tp.muted(`  ── debug for ${name} ──`));
+
+      // Read the last debug entry from the session file
+      const sessionEntry = this.readLastDebugEntry(name);
+      if (sessionEntry) {
+        this.feedLine();
+        this.feedMarkdown(sessionEntry);
+        debugText += (debugText ? "\n\n" : "") + sessionEntry;
+      } else {
+        // Fall back to raw output from lastResults
+        const result = this.lastResults.get(name);
+        if (result?.rawOutput) {
+          this.feedLine();
+          this.feedMarkdown(result.rawOutput);
+          debugText += (debugText ? "\n\n" : "") + result.rawOutput;
+        } else {
+          this.feedLine(tp.muted("  No debug info available."));
+        }
+      }
+
       this.feedLine();
-      this.feedMarkdown(result.rawOutput!);
-      this.feedLine();
-      this.feedLine(tp.muted("  ── end raw output ──"));
+      this.feedLine(tp.muted("  ── end debug ──"));
     }
 
     // [copy] action for the debug output
-    if (this.chatView) {
+    if (this.chatView && debugText) {
       const t = theme();
-      this.lastCleanedOutput = targets
-        .map((t) => t.result.rawOutput!)
-        .join("\n\n");
+      this.lastCleanedOutput = debugText;
       this.chatView.appendActionList([
         {
           id: "copy",
@@ -3494,6 +3522,27 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     this.feedLine();
     this.refreshView();
+  }
+
+  /**
+   * Read the last debug entry from a teammate's session file.
+   * Debug entries are delimited by "## Debug — " headings.
+   */
+  private readLastDebugEntry(teammate: string): string | null {
+    try {
+      const sessionFile = this.adapter.getSessionFile?.(teammate);
+      if (!sessionFile) return null;
+      const content = readFileSync(sessionFile, "utf-8");
+      // Split on debug entry headings and return the last one
+      const entries = content.split(/(?=^## Debug — )/m);
+      const last = entries[entries.length - 1];
+      if (last && last.startsWith("## Debug — ")) {
+        return last.trim();
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   private async cmdCancel(argsStr: string): Promise<void> {
@@ -3531,6 +3580,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       const entry = this.taskQueue.splice(idx, 1)[0];
       this.agentActive.set(agent, entry);
 
+      const startTime = Date.now();
       try {
         if (entry.type === "compact") {
           await this.runCompact(entry.teammate);
@@ -3543,6 +3593,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
             task: entry.task,
             extraContext: extraContext || undefined,
           });
+          // Write debug entry to session file
+          this.writeDebugEntry(entry.teammate, entry.task, result, startTime);
           // btw results are not stored in conversation history
           if (entry.type !== "btw") {
             this.storeResult(result);
@@ -3552,6 +3604,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           }
         }
       } catch (err: any) {
+        // Write error debug entry to session file
+        this.writeDebugEntry(entry.teammate, entry.task, null, startTime, err);
         // Handle spawn failures, network errors, etc. gracefully
         this.activeTasks.delete(agent);
         if (this.activeTasks.size === 0) this.stopStatusAnimation();
@@ -3561,6 +3615,61 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       }
 
       this.agentActive.delete(agent);
+    }
+  }
+
+  /**
+   * Append a debug entry to the teammate's session file.
+   * Captures task prompt, result summary, raw output, timing, and errors.
+   */
+  private writeDebugEntry(
+    teammate: string,
+    task: string,
+    result: TaskResult | null,
+    startTime: number,
+    error?: any,
+  ): void {
+    try {
+      const sessionFile = this.adapter.getSessionFile?.(teammate);
+      if (!sessionFile) return;
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      const timestamp = new Date().toISOString();
+      const lines: string[] = [
+        "",
+        `## Debug — ${timestamp}`,
+        "",
+        `**Duration:** ${elapsed}s`,
+        `**Task:** ${task.length > 200 ? `${task.slice(0, 200)}…` : task}`,
+        "",
+      ];
+
+      if (error) {
+        lines.push(`**Status:** ERROR`);
+        lines.push(`**Error:** ${error?.message ?? String(error)}`);
+      } else if (result) {
+        lines.push(`**Status:** ${result.success ? "OK" : "FAILED"}`);
+        lines.push(`**Summary:** ${result.summary || "(no summary)"}`);
+        if (result.changedFiles.length > 0) {
+          lines.push(`**Changed files:** ${result.changedFiles.join(", ")}`);
+        }
+        if (result.handoffs.length > 0) {
+          lines.push(
+            `**Handoffs:** ${result.handoffs.map((h) => `@${h.to}`).join(", ")}`,
+          );
+        }
+        lines.push("");
+        lines.push("<details><summary>Raw output</summary>");
+        lines.push("");
+        lines.push(result.rawOutput ?? "(empty)");
+        lines.push("");
+        lines.push("</details>");
+      }
+
+      lines.push("");
+      appendFileSync(sessionFile, lines.join("\n"), "utf-8");
+    } catch {
+      // Don't let debug logging break task execution
     }
   }
 
@@ -3603,20 +3712,25 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           ),
         );
 
-        // Queue one adaptation task per teammate
+        // Copy framework files so the agent has TEMPLATE.md etc. available
+        await copyTemplateFiles(teammatesDir);
+
+        // Queue a single adaptation task that handles all teammates
         this.feedLine(
           tp.muted(
-            `  Queuing ${this.adapterName} to adapt each teammate individually...`,
+            `  Queuing ${this.adapterName} to scan this project and adapt the team...`,
           ),
         );
-        for (const name of teammates) {
-          const prompt = await buildAdaptationPrompt(teammatesDir, name);
-          this.taskQueue.push({
-            type: "agent",
-            teammate: this.adapterName,
-            task: prompt,
-          });
-        }
+        const prompt = await buildImportAdaptationPrompt(
+          teammatesDir,
+          teammates,
+          sourceDir,
+        );
+        this.taskQueue.push({
+          type: "agent",
+          teammate: this.adapterName,
+          task: prompt,
+        });
         this.kickDrain();
       } catch (err: any) {
         this.feedLine(tp.error(`  Import failed: ${err.message}`));

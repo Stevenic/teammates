@@ -241,6 +241,10 @@ export class CopilotAdapter implements AgentAdapter {
     }
   }
 
+  getSessionFile(teammateName: string): string | undefined {
+    return this.sessionFiles.get(teammateName);
+  }
+
   async destroySession(_sessionId: string): Promise<void> {
     // Disconnect all sessions
     for (const [, session] of this.sessions) {

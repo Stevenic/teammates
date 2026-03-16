@@ -217,65 +217,147 @@ export async function importTeammates(
 }
 
 /**
- * Build the adaptation prompt for a single imported teammate.
- * Tells the agent to update ownership patterns, file paths, and boundaries
- * for the new codebase while preserving identity, principles, and wisdom.
+ * Build a comprehensive import-adaptation prompt that runs as a single agent session.
+ * The agent will:
+ * 1. Scan the current project
+ * 2. Evaluate which imported teammates are needed
+ * 3. Adapt kept teammates (add Previous Projects section + rewrite for new project)
+ * 4. Create any new teammates the project needs
+ * 5. Remove teammates that don't apply
  *
  * @param teammatesDir - The .teammates/ directory in the target project
- * @param teammateName - The name of the teammate to adapt
+ * @param teammateNames - Names of all imported teammates
+ * @param sourceProjectPath - Path to the source project (for Previous Projects section)
  */
-export async function buildAdaptationPrompt(
+export async function buildImportAdaptationPrompt(
   teammatesDir: string,
-  teammateName: string,
+  teammateNames: string[],
+  sourceProjectPath: string,
 ): Promise<string> {
-  const teammateDir = join(teammatesDir, teammateName);
+  const teammateSections: string[] = [];
 
-  // Read the teammate's current SOUL.md and WISDOM.md
-  let soulContent = "";
-  let wisdomContent = "";
-  try {
-    soulContent = await readFile(join(teammateDir, "SOUL.md"), "utf-8");
-  } catch {
-    /* missing — agent will create from scratch */
+  for (const name of teammateNames) {
+    const dir = join(teammatesDir, name);
+    let soulContent = "";
+    let wisdomContent = "";
+    try {
+      soulContent = await readFile(join(dir, "SOUL.md"), "utf-8");
+    } catch {
+      /* missing */
+    }
+    try {
+      wisdomContent = await readFile(join(dir, "WISDOM.md"), "utf-8");
+    } catch {
+      /* missing */
+    }
+
+    const soulBlock = soulContent
+      ? `**SOUL.md:**\n\`\`\`markdown\n${soulContent}\n\`\`\``
+      : "*No SOUL.md found*";
+    const wisdomBlock = wisdomContent
+      ? `\n**WISDOM.md:**\n\`\`\`markdown\n${wisdomContent}\n\`\`\``
+      : "";
+
+    teammateSections.push(`### @${name}\n${soulBlock}${wisdomBlock}`);
   }
-  try {
-    wisdomContent = await readFile(join(teammateDir, "WISDOM.md"), "utf-8");
-  } catch {
-    /* missing — that's fine */
-  }
 
-  const soulSection = soulContent
-    ? `\n\n## Current SOUL.md\n\n\`\`\`markdown\n${soulContent}\n\`\`\``
-    : "\n\n*No SOUL.md found — create one from the template.*";
+  const projectDir = dirname(teammatesDir);
 
-  const wisdomSection = wisdomContent
-    ? `\n\n## Current WISDOM.md\n\n\`\`\`markdown\n${wisdomContent}\n\`\`\``
-    : "";
+  return `You are adapting an imported team to a new project.
 
-  return `You are adapting the imported teammate **${teammateName}** to this new codebase.
+**Source project:** \`${sourceProjectPath}\`
+**Target project:** \`${projectDir}\`
+**Target .teammates/ directory:** \`${teammatesDir}\`
+**Imported teammates:** ${teammateNames.map((n) => `@${n}`).join(", ")}
 
-**Teammate directory:** \`${teammateDir}\`
+## Imported Teammates (from source project)
 
-This teammate was imported from another project. Their SOUL.md and WISDOM.md contain identity, principles, and accumulated wisdom that should be preserved, but their **ownership patterns**, **file paths**, **boundaries**, **capabilities**, and **routing keywords** need to be updated for this codebase.
-${soulSection}${wisdomSection}
+${teammateSections.join("\n\n---\n\n")}
 
-## Your job:
+## Instructions
 
-1. **Analyze this codebase** — read the project structure, entry points, package manifest, and key files to understand the architecture.
+Work through these phases in order. **Pause after Phase 1 and Phase 2** to present your analysis and get user approval before making changes.
 
-2. **Update ${teammateName}'s SOUL.md**:
-   - **Preserve**: Identity, Core Principles, Ethics, personality, tone
-   - **Update**: Ownership patterns (primary/secondary file globs), Boundaries (reference correct teammate names), Capabilities (commands, file patterns, technologies), Routing keywords, Quality Bar
-   - **Adapt**: Any codebase-specific references (paths, package names, tools)
+### Phase 1: Scan This Project
 
-3. **Update ${teammateName}'s WISDOM.md**:
-   - **Preserve**: Wisdom entries that are universal (principles, patterns, lessons)
-   - **Remove or update**: Entries referencing old project paths, file names, or architecture
-   - **Add**: A creation entry noting this teammate was imported and adapted
+Analyze the current project to understand its structure:
+- Read the project root: package manifest, README, config files
+- Identify major subsystems, languages, frameworks, file patterns
+- Understand the dependency flow and architecture
 
-4. **Verify** that ownership globs are valid for this codebase.
+**Present your analysis to the user and wait for confirmation.**
 
-Present your proposed changes before applying them. Focus only on **${teammateName}** — other teammates will be adapted separately.`;
+### Phase 2: Evaluate Imported Teammates
+
+For each imported teammate, decide:
+- **KEEP** — their domain or expertise is relevant to this project (even if specific details need updating)
+- **DROP** — their domain doesn't exist here and their skills aren't transferable
+
+Also identify **gaps** — major subsystems in this project that none of the imported teammates cover. Propose new teammates for these gaps.
+
+**Present your evaluation as a structured plan and wait for user approval:**
+\`\`\`
+KEEP: @name1, @name2
+DROP: @name3
+CREATE: @newname (role description)
+\`\`\`
+
+### Phase 3: Adapt Kept Teammates
+
+For each KEEP teammate, edit their SOUL.md and WISDOM.md:
+
+1. **Add a "Previous Projects" section** to SOUL.md (place it after Ethics, before any appendix). Compress what the teammate did in the source project into a portable summary:
+   \`\`\`markdown
+   ## Previous Projects
+
+   ### <project-name>
+   - **Role**: <one-line summary of what they did>
+   - **Stack**: <key technologies they worked with>
+   - **Domains**: <what they owned — file patterns or subsystem names>
+   - **Key learnings**: <1-3 bullets of notable patterns, decisions, or lessons>
+   \`\`\`
+
+2. **Rewrite the rest of SOUL.md** for this project:
+   - **Preserve**: Identity (name, personality), Core Principles, Ethics
+   - **Rewrite**: Ownership (primary/secondary file globs for THIS project), Boundaries, Capabilities (commands, file patterns, technologies), Routing keywords, Quality Bar
+   - **Update**: Any codebase-specific references (paths, package names, tools, teammate names)
+
+3. **Update WISDOM.md**:
+   - **Add** a "Previous Projects" section at the top with a compressed note:
+     \`\`\`markdown
+     ## Previous Projects
+
+     ### <project-name>
+     - Carried over universal wisdom entries from the source project
+     - Project-specific entries removed or adapted
+     \`\`\`
+   - **Keep** wisdom entries that are universal (general principles, patterns, lessons)
+   - **Remove** entries that reference source project paths, architecture, or tools not used here
+   - **Adapt** entries with transferable knowledge but old-project-specific details
+
+### Phase 4: Handle Dropped Teammates
+
+For each DROP teammate, delete their directory under \`${teammatesDir}\`.
+
+### Phase 5: Create New Teammates
+
+For each new teammate proposed in Phase 2 (after user approval):
+- Create \`${teammatesDir}/<name>/\` with SOUL.md, WISDOM.md, and \`memory/\`
+- Use the template at \`${teammatesDir}/TEMPLATE.md\` for structure
+- WISDOM.md starts with one creation entry
+
+### Phase 6: Update Framework Files
+
+- Update \`${teammatesDir}/README.md\` with the final roster
+- Update \`${teammatesDir}/CROSS-TEAM.md\` ownership table
+
+### Phase 7: Verify
+
+- Every kept/new teammate has SOUL.md and WISDOM.md
+- Ownership globs cover the codebase without major gaps
+- Boundaries reference the correct owning teammate
+- Previous Projects sections are present for all imported teammates
+- CROSS-TEAM.md has one row per teammate`;
 }
 
 /**

@@ -367,6 +367,10 @@ export class CliProxyAdapter implements AgentAdapter {
     }
   }
 
+  getSessionFile(teammateName: string): string | undefined {
+    return this.sessionFiles.get(teammateName);
+  }
+
   async destroySession(_sessionId: string): Promise<void> {
     // Clean up any leaked temp prompt files
     for (const file of this.pendingTempFiles) {

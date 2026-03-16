@@ -34,6 +34,9 @@ export interface AgentAdapter {
    */
   resumeSession?(teammate: TeammateConfig, sessionId: string): Promise<string>;
 
+  /** Get the session file path for a teammate (if session is active). */
+  getSessionFile?(teammateName: string): string | undefined;
+
   /** Clean up a session. */
   destroySession?(sessionId: string): Promise<void>;
 
