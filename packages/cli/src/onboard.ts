@@ -7,7 +7,14 @@
  * analyze the codebase and create teammate-specific folders.
  */
 
-import { copyFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -91,6 +98,182 @@ export async function copyTemplateFiles(
   }
 
   return copied;
+}
+
+/**
+ * Check if a directory entry name is a non-teammate entry.
+ * Directories starting with "." are local/ephemeral (gitignored).
+ * Directories starting with "_" are shared non-teammate folders.
+ * Files (non-directories) and special names are also excluded.
+ */
+const NON_TEAMMATE_NAMES = new Set(["example", "services.json"]);
+function isNonTeammateEntry(name: string): boolean {
+  return name.startsWith(".") || name.startsWith("_") || NON_TEAMMATE_NAMES.has(name);
+}
+
+/**
+ * Detect whether a directory entry is a teammate folder (has SOUL.md).
+ */
+async function isTeammateFolder(dirPath: string): Promise<boolean> {
+  try {
+    await stat(join(dirPath, "SOUL.md"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Import teammates from another project's .teammates/ dir.
+ *
+ * Only copies SOUL.md and WISDOM.md per teammate (identity + wisdom carry over).
+ * Creates an empty memory/ dir for each (fresh start — no daily logs or typed memories).
+ * Also copies USER.md if present. Framework files (CROSS-TEAM.md, README.md, etc.)
+ * are project-specific and NOT copied — they get created fresh from the template.
+ *
+ * Skips teammates that already exist in the target (idempotent).
+ * Returns { teammates: string[], files: string[] }.
+ */
+export async function importTeammates(
+  sourceDir: string,
+  targetDir: string,
+): Promise<{ teammates: string[]; files: string[] }> {
+  // Validate source exists and looks like a .teammates/ dir
+  try {
+    await stat(sourceDir);
+  } catch {
+    throw new Error(`Source directory not found: ${sourceDir}`);
+  }
+
+  await mkdir(targetDir, { recursive: true });
+
+  const teammates: string[] = [];
+  const files: string[] = [];
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = join(sourceDir, entry.name);
+    const destPath = join(targetDir, entry.name);
+
+    if (entry.isDirectory() && !isNonTeammateEntry(entry.name)) {
+      // Check if it's a teammate folder
+      if (await isTeammateFolder(srcPath)) {
+        // Skip if teammate already exists in target
+        try {
+          await stat(destPath);
+          continue;
+        } catch {
+          /* doesn't exist, proceed */
+        }
+
+        // Create teammate dir and copy only SOUL.md + WISDOM.md
+        await mkdir(destPath, { recursive: true });
+
+        // SOUL.md (required — isTeammateFolder confirmed it exists)
+        await copyFile(join(srcPath, "SOUL.md"), join(destPath, "SOUL.md"));
+        files.push(`${entry.name}/SOUL.md`);
+
+        // WISDOM.md (optional)
+        try {
+          await copyFile(
+            join(srcPath, "WISDOM.md"),
+            join(destPath, "WISDOM.md"),
+          );
+          files.push(`${entry.name}/WISDOM.md`);
+        } catch {
+          /* no WISDOM.md in source, skip */
+        }
+
+        // Create empty memory/ dir (fresh start)
+        await mkdir(join(destPath, "memory"), { recursive: true });
+
+        teammates.push(entry.name);
+      }
+    } else if (entry.isFile() && entry.name === "USER.md") {
+      // Only USER.md transfers — framework files (CROSS-TEAM.md, README.md,
+      // PROTOCOL.md, TEMPLATE.md) are project-specific and get created fresh
+      // from the template by copyTemplateFiles().
+      try {
+        await stat(destPath);
+      } catch {
+        await copyFile(srcPath, destPath);
+        files.push(entry.name);
+      }
+    }
+  }
+
+  // Ensure .gitignore exists
+  const gitignoreDest = join(targetDir, ".gitignore");
+  try {
+    await stat(gitignoreDest);
+  } catch {
+    await writeFile(gitignoreDest, "USER.md\n.index/\n", "utf-8");
+    files.push(".gitignore");
+  }
+
+  return { teammates, files };
+}
+
+/**
+ * Build the adaptation prompt for a single imported teammate.
+ * Tells the agent to update ownership patterns, file paths, and boundaries
+ * for the new codebase while preserving identity, principles, and wisdom.
+ *
+ * @param teammatesDir - The .teammates/ directory in the target project
+ * @param teammateName - The name of the teammate to adapt
+ */
+export async function buildAdaptationPrompt(
+  teammatesDir: string,
+  teammateName: string,
+): Promise<string> {
+  const teammateDir = join(teammatesDir, teammateName);
+
+  // Read the teammate's current SOUL.md and WISDOM.md
+  let soulContent = "";
+  let wisdomContent = "";
+  try {
+    soulContent = await readFile(join(teammateDir, "SOUL.md"), "utf-8");
+  } catch {
+    /* missing — agent will create from scratch */
+  }
+  try {
+    wisdomContent = await readFile(join(teammateDir, "WISDOM.md"), "utf-8");
+  } catch {
+    /* missing — that's fine */
+  }
+
+  const soulSection = soulContent
+    ? `\n\n## Current SOUL.md\n\n\`\`\`markdown\n${soulContent}\n\`\`\``
+    : "\n\n*No SOUL.md found — create one from the template.*";
+
+  const wisdomSection = wisdomContent
+    ? `\n\n## Current WISDOM.md\n\n\`\`\`markdown\n${wisdomContent}\n\`\`\``
+    : "";
+
+  return `You are adapting the imported teammate **${teammateName}** to this new codebase.
+
+**Teammate directory:** \`${teammateDir}\`
+
+This teammate was imported from another project. Their SOUL.md and WISDOM.md contain identity, principles, and accumulated wisdom that should be preserved, but their **ownership patterns**, **file paths**, **boundaries**, **capabilities**, and **routing keywords** need to be updated for this codebase.
+${soulSection}${wisdomSection}
+
+## Your job:
+
+1. **Analyze this codebase** — read the project structure, entry points, package manifest, and key files to understand the architecture.
+
+2. **Update ${teammateName}'s SOUL.md**:
+   - **Preserve**: Identity, Core Principles, Ethics, personality, tone
+   - **Update**: Ownership patterns (primary/secondary file globs), Boundaries (reference correct teammate names), Capabilities (commands, file patterns, technologies), Routing keywords, Quality Bar
+   - **Adapt**: Any codebase-specific references (paths, package names, tools)
+
+3. **Update ${teammateName}'s WISDOM.md**:
+   - **Preserve**: Wisdom entries that are universal (principles, patterns, lessons)
+   - **Remove or update**: Entries referencing old project paths, file names, or architecture
+   - **Add**: A creation entry noting this teammate was imported and adapted
+
+4. **Verify** that ownership globs are valid for this codebase.
+
+Present your proposed changes before applying them. Focus only on **${teammateName}** — other teammates will be adapted separately.`;
 }
 
 /**

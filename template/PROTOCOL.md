@@ -168,6 +168,18 @@ A good wisdom entry is a **pattern** (not an incident), **principled** (states a
 - Wisdom is personal to each teammate — do not duplicate across teammates
 - **Private docs** — Teammates may create additional files and folders under their own `.teammates/<name>/` directory (e.g., `notes/`, `specs/`, `scratch/`). These are private by default. To make a doc visible to other teammates, add a pointer in [CROSS-TEAM.md](CROSS-TEAM.md) with a brief description of what it contains.
 
+## Folder Naming Convention
+
+Every child folder of `.teammates/` is interpreted by its name prefix:
+
+| Prefix | Meaning | Git behavior | Examples |
+|---|---|---|---|
+| _(none)_ | Teammate folder | Checked in | `beacon/`, `scribe/` |
+| `_` | Shared non-teammate folder | Checked in | `_standups/`, `_tasks/` |
+| `.` | Local/ephemeral folder | Gitignored | `.tmp/`, `.index/` |
+
+The CLI uses this convention to detect teammates: any child directory without a `.` or `_` prefix that contains a `SOUL.md` is treated as a teammate. Shared folders (like `_standups/`) are committed to the repo but are not teammates. Dot-prefixed folders (like `.tmp/`) are local-only and always gitignored.
+
 ## Adding New Teammates
 
 1. Copy the SOUL.md and WISDOM.md templates from [TEMPLATE.md](TEMPLATE.md) to a new folder under `.teammates/`

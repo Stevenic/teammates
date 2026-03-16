@@ -59,7 +59,12 @@ import {
 import { compactEpisodic } from "./compact.js";
 import { PromptInput } from "./console/prompt-input.js";
 import { buildTitle } from "./console/startup.js";
-import { copyTemplateFiles, getOnboardingPrompt } from "./onboard.js";
+import {
+  buildAdaptationPrompt,
+  copyTemplateFiles,
+  getOnboardingPrompt,
+  importTeammates,
+} from "./onboard.js";
 import { Orchestrator } from "./orchestrator.js";
 import { colorToHex, theme } from "./theme.js";
 import type {
@@ -1597,30 +1602,37 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     console.log(
       chalk.cyan("  1") +
         chalk.gray(") ") +
-        chalk.white("Run onboarding") +
-        chalk.gray(" — analyze this codebase and create .teammates/"),
+        chalk.white("New team") +
+        chalk.gray(" — analyze this codebase and create teammates from scratch"),
     );
     console.log(
       chalk.cyan("  2") +
         chalk.gray(") ") +
+        chalk.white("Import team") +
+        chalk.gray(" — copy teammates from another project"),
+    );
+    console.log(
+      chalk.cyan("  3") +
+        chalk.gray(") ") +
         chalk.white("Solo mode") +
         chalk.gray(` — use ${this.adapterName} without teammates`),
     );
-    console.log(chalk.cyan("  3") + chalk.gray(") ") + chalk.white("Exit"));
+    console.log(chalk.cyan("  4") + chalk.gray(") ") + chalk.white("Exit"));
     console.log();
 
-    const choice = await this.askChoice("Pick an option (1/2/3): ", [
+    const choice = await this.askChoice("Pick an option (1/2/3/4): ", [
       "1",
       "2",
       "3",
+      "4",
     ]);
 
-    if (choice === "3") {
+    if (choice === "4") {
       console.log(chalk.gray("  Goodbye."));
       return null;
     }
 
-    if (choice === "2") {
+    if (choice === "3") {
       await mkdir(teammatesDir, { recursive: true });
       console.log();
       console.log(chalk.green("  ✔") + chalk.gray(` Created ${teammatesDir}`));
@@ -1631,6 +1643,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       );
       console.log(chalk.gray("  Run /init later to set up teammates."));
       console.log();
+      return teammatesDir;
+    }
+
+    if (choice === "2") {
+      // Import from another project
+      await mkdir(teammatesDir, { recursive: true });
+      await this.runImport(cwd);
       return teammatesDir;
     }
 
@@ -1734,6 +1753,176 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   /**
+   * Import teammates from another project's .teammates/ directory.
+   * Prompts for a path, copies teammate folders + framework files,
+   * then optionally runs the agent to adapt ownership for this codebase.
+   */
+  private async runImport(projectDir: string): Promise<void> {
+    console.log();
+    console.log(
+      chalk.white("  Enter the path to another project") +
+        chalk.gray(" (the project root or its .teammates/ directory):"),
+    );
+    console.log();
+
+    const rawPath = await this.askInput("Path: ");
+    if (!rawPath) {
+      console.log(chalk.yellow("  No path provided. Aborting import."));
+      return;
+    }
+
+    // Resolve the source — accept either project root or .teammates/ directly
+    const resolved = resolve(rawPath);
+    let sourceDir: string;
+    try {
+      const s = await stat(join(resolved, ".teammates"));
+      if (s.isDirectory()) {
+        sourceDir = join(resolved, ".teammates");
+      } else {
+        sourceDir = resolved;
+      }
+    } catch {
+      sourceDir = resolved;
+    }
+
+    const teammatesDir = join(projectDir, ".teammates");
+    console.log();
+
+    try {
+      const { teammates, files } = await importTeammates(
+        sourceDir,
+        teammatesDir,
+      );
+
+      if (teammates.length === 0) {
+        console.log(
+          chalk.yellow("  No teammates found at ") +
+            chalk.white(sourceDir),
+        );
+        console.log(
+          chalk.gray(
+            "  The directory should contain teammate folders (each with a SOUL.md).",
+          ),
+        );
+        return;
+      }
+
+      console.log(
+        chalk.green("  ✔") +
+          chalk.white(` Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: `) +
+          chalk.cyan(teammates.join(", ")),
+      );
+      console.log(
+        chalk.gray(`    (${files.length} files copied)`),
+      );
+      console.log();
+
+      // Ask if user wants the agent to adapt teammates to this codebase
+      console.log(
+        chalk.white("  Adapt teammates to this codebase?"),
+      );
+      console.log(
+        chalk.gray(
+          "  The agent will update ownership patterns, file paths, and boundaries.",
+        ),
+      );
+      console.log(
+        chalk.gray("  You can also do this later with /init."),
+      );
+      console.log();
+
+      const adapt = await this.askChoice("Adapt now? (y/n): ", [
+        "y",
+        "n",
+      ]);
+
+      if (adapt === "y") {
+        await this.runAdaptationAgent(this.adapter, projectDir, teammates);
+      } else {
+        console.log(
+          chalk.gray(
+            "  Skipped adaptation. Run /init to adapt later.",
+          ),
+        );
+      }
+    } catch (err: any) {
+      console.log(chalk.red(`  Import failed: ${err.message}`));
+    }
+    console.log();
+  }
+
+  /**
+   * Run the agent to adapt imported teammates' ownership/boundaries
+   * to the current codebase. Queues one task per teammate so the user
+   * can review and approve each adaptation individually.
+   */
+  private async runAdaptationAgent(
+    adapter: AgentAdapter,
+    projectDir: string,
+    teammateNames: string[],
+  ): Promise<void> {
+    const teammatesDir = join(projectDir, ".teammates");
+    console.log();
+    console.log(
+      chalk.blue("  Queuing adaptation tasks...") +
+        chalk.gray(
+          ` ${this.adapterName} will adapt each teammate individually`,
+        ),
+    );
+    console.log();
+
+    for (const name of teammateNames) {
+      const prompt = await buildAdaptationPrompt(teammatesDir, name);
+      const tempConfig = {
+        name: this.adapterName,
+        role: "Adaptation agent",
+        soul: "",
+        wisdom: "",
+        dailyLogs: [] as { date: string; content: string }[],
+        weeklyLogs: [] as { week: string; content: string }[],
+        ownership: { primary: [] as string[], secondary: [] as string[] },
+        routingKeywords: [] as string[],
+      };
+
+      const sessionId = await adapter.startSession(tempConfig);
+      const spinner = ora({
+        text:
+          chalk.blue(this.adapterName) +
+          chalk.gray(` is adapting @${name} to this codebase...`),
+        spinner: "dots",
+      }).start();
+
+      try {
+        const result = await adapter.executeTask(
+          sessionId,
+          tempConfig,
+          prompt,
+        );
+        spinner.stop();
+        this.printAgentOutput(result.rawOutput);
+
+        if (result.success) {
+          console.log(chalk.green(`  ✔ @${name} adaptation complete!`));
+        } else {
+          console.log(
+            chalk.yellow(
+              `  ⚠ @${name} adaptation finished with issues: ${result.summary}`,
+            ),
+          );
+        }
+      } catch (err: any) {
+        spinner.fail(chalk.red(`@${name} adaptation failed: ${err.message}`));
+      }
+
+      if (adapter.destroySession) {
+        await adapter.destroySession(sessionId);
+      }
+
+      console.log();
+    }
+  }
+
+  /**
    * Simple blocking prompt — reads one line from stdin and validates.
    */
   private askChoice(prompt: string, valid: string[]): Promise<string> {
@@ -1755,6 +1944,89 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       };
       ask();
     });
+  }
+
+  private askInput(prompt: string): Promise<string> {
+    return new Promise((resolve) => {
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+      rl.question(chalk.cyan("  ") + prompt, (answer) => {
+        rl.close();
+        resolve(answer.trim());
+      });
+    });
+  }
+
+  /**
+   * Check whether USER.md needs to be created or is still template placeholders.
+   */
+  private needsUserSetup(teammatesDir: string): boolean {
+    const userMdPath = join(teammatesDir, "USER.md");
+    try {
+      const content = readFileSync(userMdPath, "utf-8");
+      // Template placeholders contain "<your name>" — treat as not set up
+      return !content.trim() || content.includes("<your name>");
+    } catch {
+      // File doesn't exist
+      return true;
+    }
+  }
+
+  /**
+   * Interactive interview to create USER.md.
+   * Asks a few quick questions and writes a populated USER.md.
+   */
+  private async runUserInterview(teammatesDir: string): Promise<void> {
+    const userMdPath = join(teammatesDir, "USER.md");
+    const termWidth = process.stdout.columns || 100;
+
+    console.log();
+    console.log(chalk.gray("─".repeat(termWidth)));
+    console.log();
+    console.log(
+      chalk.white("  Quick intro — helps teammates tailor their work to you."),
+    );
+    console.log(chalk.gray("  (press Enter to skip any question)\n"));
+
+    const name = await this.askInput("Your name: ");
+    const role = await this.askInput(
+      "Your role (e.g., senior backend engineer): ",
+    );
+    const experience = await this.askInput(
+      "Relevant experience (e.g., 10 years Go, new to React): ",
+    );
+    const preferences = await this.askInput(
+      "How you like to work (e.g., terse responses, explain reasoning): ",
+    );
+    const context = await this.askInput(
+      "Anything else (e.g., solo dev, working on a rewrite): ",
+    );
+
+    const lines = ["# User\n"];
+    lines.push(
+      `- **Name:** ${name || "_not provided_"}`,
+    );
+    lines.push(
+      `- **Role:** ${role || "_not provided_"}`,
+    );
+    lines.push(
+      `- **Experience:** ${experience || "_not provided_"}`,
+    );
+    lines.push(
+      `- **Preferences:** ${preferences || "_not provided_"}`,
+    );
+    lines.push(
+      `- **Context:** ${context || "_not provided_"}`,
+    );
+
+    writeFileSync(userMdPath, `${lines.join("\n")}\n`, "utf-8");
+    console.log();
+    console.log(
+      `${chalk.green("  ✔")} ${chalk.gray("Saved USER.md — update anytime with /user")}`,
+    );
+    console.log();
   }
 
   // ─── Display helpers ──────────────────────────────────────────────
@@ -2129,6 +2401,11 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     if (!teammatesDir) {
       teammatesDir = await this.promptOnboarding(adapter);
       if (!teammatesDir) return; // user chose to exit
+    }
+
+    // Ensure USER.md exists with real content (not just template placeholders)
+    if (this.needsUserSetup(teammatesDir)) {
+      await this.runUserInterview(teammatesDir);
     }
 
     // Init orchestrator
@@ -2802,9 +3079,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       {
         name: "init",
         aliases: ["onboard", "setup"],
-        usage: "/init",
-        description: "Run onboarding to set up teammates for this project",
-        run: () => this.cmdInit(),
+        usage: "/init [from-path]",
+        description: "Set up teammates (or import from another project)",
+        run: (args) => this.cmdInit(args),
       },
       {
         name: "clear",
@@ -3219,10 +3496,69 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     }
   }
 
-  private async cmdInit(): Promise<void> {
+  private async cmdInit(argsStr: string): Promise<void> {
     const cwd = process.cwd();
-    await mkdir(join(cwd, ".teammates"), { recursive: true });
-    await this.runOnboardingAgent(this.adapter, cwd);
+    const teammatesDir = join(cwd, ".teammates");
+    await mkdir(teammatesDir, { recursive: true });
+
+    const fromPath = argsStr.trim();
+    if (fromPath) {
+      // Import mode: /init <path-to-another-project>
+      const resolved = resolve(fromPath);
+      let sourceDir: string;
+      try {
+        const s = await stat(join(resolved, ".teammates"));
+        if (s.isDirectory()) {
+          sourceDir = join(resolved, ".teammates");
+        } else {
+          sourceDir = resolved;
+        }
+      } catch {
+        sourceDir = resolved;
+      }
+
+      try {
+        const { teammates, files } = await importTeammates(
+          sourceDir,
+          teammatesDir,
+        );
+
+        if (teammates.length === 0) {
+          this.feedLine(
+            tp.warning(`  No teammates found at ${sourceDir}`),
+          );
+          this.refreshView();
+          return;
+        }
+
+        this.feedLine(
+          tp.success(
+            `  Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: ${teammates.join(", ")} (${files.length} files)`,
+          ),
+        );
+
+        // Queue one adaptation task per teammate
+        this.feedLine(
+          tp.muted(
+            `  Queuing ${this.adapterName} to adapt each teammate individually...`,
+          ),
+        );
+        for (const name of teammates) {
+          const prompt = await buildAdaptationPrompt(teammatesDir, name);
+          this.taskQueue.push({
+            type: "agent",
+            teammate: this.adapterName,
+            task: prompt,
+          });
+        }
+        this.kickDrain();
+      } catch (err: any) {
+        this.feedLine(tp.error(`  Import failed: ${err.message}`));
+      }
+    } else {
+      // Normal onboarding
+      await this.runOnboardingAgent(this.adapter, cwd);
+    }
 
     // Reload the registry to pick up newly created teammates
     const added = await this.orchestrator.refresh();
@@ -3237,7 +3573,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           });
       }
     }
-    this.feedLine(tp.muted("  Run /teammates to see the roster."));
+    this.feedLine(tp.muted("  Run /status to see the roster."));
     this.refreshView();
   }
 

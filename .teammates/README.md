@@ -36,11 +36,22 @@ Scribe defines the framework structure (templates, onboarding instructions). Bea
 
 ## Structure
 
+Every child folder of `.teammates/` is interpreted by its name prefix:
+
+- **No prefix** → teammate folder (e.g., `beacon/`, `scribe/`)
+- **`_` prefix** → shared non-teammate folder, checked in (e.g., `_standups/`, `_tasks/`)
+- **`.` prefix** → local/ephemeral folder, gitignored (e.g., `.tmp/`)
+
 Each teammate folder contains:
 
 - **SOUL.md** — Identity, continuity instructions, principles, boundaries, capabilities, and ownership
 - **WISDOM.md** — Distilled principles from compacted memories (read second, after SOUL.md)
 - **memory/** — Daily logs (`YYYY-MM-DD.md`), typed memory files (`<type>_<topic>.md`), and episodic summaries (`weekly/`, `monthly/`)
+
+Shared folders:
+
+- **[_standups/](_standups/)** — Daily standup entries (one file per day, all teammates append)
+- **[_tasks/](_tasks/)** — Queued task files
 
 Root-level shared files:
 

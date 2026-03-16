@@ -32,6 +32,12 @@
 
 ## Structure
 
+Every child folder of `.teammates/` is interpreted by its name prefix:
+
+- **No prefix** → teammate folder (e.g., `beacon/`, `scribe/`)
+- **`_` prefix** → shared non-teammate folder, checked in (e.g., `_standups/`, `_tasks/`)
+- **`.` prefix** → local/ephemeral folder, gitignored (e.g., `.tmp/`)
+
 Each teammate folder contains:
 
 - **SOUL.md** — Identity, continuity instructions, principles, boundaries, capabilities, and ownership

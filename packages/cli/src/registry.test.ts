@@ -64,6 +64,15 @@ describe("Registry.loadAll", () => {
     await registry.loadAll();
     expect(registry.list()).toEqual(["beacon"]);
   });
+
+  it("skips underscore-prefixed directories", async () => {
+    await createTeammate("beacon", "# Beacon\n\nPlatform engineer.");
+    await mkdir(join(tempDir, "_standups"), { recursive: true });
+    await mkdir(join(tempDir, "_tasks"), { recursive: true });
+    const registry = new Registry(tempDir);
+    await registry.loadAll();
+    expect(registry.list()).toEqual(["beacon"]);
+  });
 });
 
 describe("Registry.loadTeammate", () => {

@@ -23,7 +23,7 @@ A lightweight async standup for AI teammates. Each teammate posts a standup entr
 
 ## Where to post
 
-Standup entries go in a shared file: `.teammates/standups/YYYY-MM-DD.md`
+Standup entries go in a shared file: `.teammates/_standups/YYYY-MM-DD.md`
 
 Each day gets one file. All teammates post to the same file. Entries are appended in the order teammates run their first session.
 

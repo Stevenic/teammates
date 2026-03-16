@@ -26,7 +26,10 @@ export class Registry {
   async loadAll(): Promise<Map<string, TeammateConfig>> {
     const entries = await readdir(this.teammatesDir, { withFileTypes: true });
     const dirs = entries.filter(
-      (e) => e.isDirectory() && !e.name.startsWith("."),
+      (e) =>
+        e.isDirectory() &&
+        !e.name.startsWith(".") &&
+        !e.name.startsWith("_"),
     );
 
     for (const dir of dirs) {

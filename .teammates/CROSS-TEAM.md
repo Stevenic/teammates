@@ -24,7 +24,7 @@ When adding a new teammate, add a row to this table.
 
 - **[Architecture](scribe/docs/ARCHITECTURE.md)** — Full project architecture: packages, data flow, key patterns, tech stack. Maintained by Scribe. _(added 2026-03-13)_
 - **[Episodic Compaction Design](scribe/docs/EPISODIC-COMPACTION.md)** — Design for daily→weekly→monthly memory compaction and its interaction with typed memories + wisdom. Implemented. _(added 2026-03-14)_
-- **[Daily Standup Format](scribe/docs/STANDUP-FORMAT.md)** — Async standup format for AI teammates: Done/Next, posted daily to `.teammates/standups/YYYY-MM-DD.md`. _(added 2026-03-14)_
+- **[Daily Standup Format](scribe/docs/STANDUP-FORMAT.md)** — Async standup format for AI teammates: Done/Next, posted daily to `.teammates/_standups/YYYY-MM-DD.md`. _(added 2026-03-14)_
 - **[Retrospective Format](scribe/docs/RETRO-FORMAT.md)** — `/retro` command design: four-section self-review (Working / Not Working / Proposed Changes / Questions). Needs CLI implementation by Beacon. _(added 2026-03-15)_
 - **[Cookbook](../docs/cookbook.md)** — Concrete recipes for common workflows: adding teammates, handoffs, retros, compaction, decisions, etc. _(added 2026-03-15)_
 - **[Decision Log](DECISIONS.md)** — Shared decision log (ADR-lite). All teammates can record decisions here. _(added 2026-03-15)_
