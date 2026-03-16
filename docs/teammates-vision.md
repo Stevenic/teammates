@@ -1,3 +1,8 @@
+---
+layout: default
+title: Vision
+---
+
 # Teammates: Persistent AI Specialists with Institutional Memory
 
 ## Executive Summary

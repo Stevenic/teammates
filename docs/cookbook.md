@@ -1,3 +1,8 @@
+---
+layout: default
+title: Cookbook
+---
+
 # Teammates Cookbook
 
 Concrete recipes for common workflows. Each recipe is self-contained — read the one you need, skip the rest.

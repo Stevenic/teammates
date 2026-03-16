@@ -1,3 +1,8 @@
+---
+layout: default
+title: Adoption Guide
+---
+
 # Adopting Teammates in an Existing Project
 
 A practical guide for introducing AI teammates to a team that's already shipping code.

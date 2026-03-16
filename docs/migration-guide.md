@@ -1,3 +1,8 @@
+---
+layout: default
+title: Migration Guide
+---
+
 # Template Version Migration Guide
 
 When the upstream `template/` files change, projects bootstrapped from those templates need to catch up. This guide documents what changed in each version and how to upgrade.

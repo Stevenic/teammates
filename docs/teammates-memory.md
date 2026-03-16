@@ -1,3 +1,8 @@
+---
+layout: default
+title: Memory System
+---
+
 # Teammates Memory System
 
 How AI teammates persist knowledge across sessions.

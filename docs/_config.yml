@@ -1,0 +1,12 @@
+title: Teammates
+description: A framework for defining persistent AI personas with memory, file ownership, and cross-team protocols.
+url: https://stevenic.github.io
+baseurl: /teammates
+theme: jekyll-theme-minimal
+
+exclude:
+  - node_modules
+  - package.json
+  - package-lock.json
+  - biome.json
+  - "*.ts"
