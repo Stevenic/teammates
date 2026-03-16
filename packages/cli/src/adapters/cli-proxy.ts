@@ -173,11 +173,13 @@ export class CliProxyAdapter implements AgentAdapter {
   async startSession(teammate: TeammateConfig): Promise<string> {
     const id = `${this.name}-${teammate.name}-${nextId++}`;
 
-    // Create session file inside .teammates/.tmp so sandboxed agents can access it
+    // Always ensure sessions directory exists before writing — startupMaintenance
+    // runs concurrently and may delete empty dirs between calls.
+    const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
+    const dir = join(tmpBase, "sessions");
+    await mkdir(dir, { recursive: true });
+
     if (!this.sessionsDir) {
-      const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
-      const dir = join(tmpBase, "sessions");
-      await mkdir(dir, { recursive: true });
       this.sessionsDir = dir;
       // Ensure .tmp is gitignored
       const gitignorePath = join(tmpBase, "..", ".gitignore");

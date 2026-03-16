@@ -545,15 +545,14 @@ function renderTable(
   const totalNatural = colWidths.reduce((a, b) => a + b, 0) + totalBorders;
   if (totalNatural > avail && avail > totalBorders + numCols * MIN_COL) {
     const budgetForCols = avail - totalBorders;
-    const naturalSum = colWidths.reduce((a, b) => a + b, 0);
     // Proportional shrink, respecting minimum
     let remaining = budgetForCols;
     const fixed: boolean[] = new Array(numCols).fill(false);
-    // First pass: clamp small columns to their natural width
+    // First pass: lock columns that are already small (at or below fair share)
+    // so they keep their natural width instead of being shrunk further
+    const fairShare = Math.floor(budgetForCols / numCols);
     for (let c = 0; c < numCols; c++) {
-      const share = Math.floor((colWidths[c] / naturalSum) * budgetForCols);
-      if (share >= colWidths[c]) {
-        // Column already fits — no shrinking needed
+      if (colWidths[c] <= fairShare) {
         fixed[c] = true;
         remaining -= colWidths[c];
       }

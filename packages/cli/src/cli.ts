@@ -1762,6 +1762,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       weeklyLogs: [] as { week: string; content: string }[],
       ownership: { primary: [] as string[], secondary: [] as string[] },
       routingKeywords: [] as string[],
+      cwd: projectDir,
     };
 
     const sessionId = await adapter.startSession(tempConfig);
@@ -1966,6 +1967,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       weeklyLogs: [] as { week: string; content: string }[],
       ownership: { primary: [] as string[], secondary: [] as string[] },
       routingKeywords: [] as string[],
+      cwd: projectDir,
     };
 
     const sessionId = await adapter.startSession(tempConfig);
@@ -2854,13 +2856,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     });
 
     this.chatView.on("link", (url: string) => {
+      const quoted = JSON.stringify(url);
       const cmd =
         process.platform === "darwin"
-          ? "open"
+          ? `open ${quoted}`
           : process.platform === "win32"
-            ? "start"
-            : "xdg-open";
-      execCb(`${cmd} ${JSON.stringify(url)}`);
+            ? `start "" ${quoted}`
+            : `xdg-open ${quoted}`;
+      execCb(cmd, () => {});
     });
 
     this.app = new App({
@@ -4233,10 +4236,13 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         await this.cleanOldTempFiles(fullPath, maxAgeMs);
-        // Remove dir if now empty
-        const remaining = await readdir(fullPath).catch(() => [""]);
-        if (remaining.length === 0)
-          await rm(fullPath, { recursive: true }).catch(() => {});
+        // Remove dir if now empty — but skip "sessions" which is structural
+        // and may be recreated concurrently by startSession().
+        if (entry.name !== "sessions") {
+          const remaining = await readdir(fullPath).catch(() => [""]);
+          if (remaining.length === 0)
+            await rm(fullPath, { recursive: true }).catch(() => {});
+        }
       } else {
         const info = await stat(fullPath).catch(() => null);
         if (info && now - info.mtimeMs > maxAgeMs) {

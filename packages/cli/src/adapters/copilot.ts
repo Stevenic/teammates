@@ -74,11 +74,13 @@ export class CopilotAdapter implements AgentAdapter {
     // Ensure the client is running
     await this.ensureClient(teammate.cwd);
 
-    // Create session file inside .teammates/.tmp so the agent can access it
+    // Always ensure sessions directory exists before writing — startupMaintenance
+    // runs concurrently and may delete empty dirs between calls.
+    const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
+    const dir = join(tmpBase, "sessions");
+    await mkdir(dir, { recursive: true });
+
     if (!this.sessionsDir) {
-      const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
-      const dir = join(tmpBase, "sessions");
-      await mkdir(dir, { recursive: true });
       this.sessionsDir = dir;
       const gitignorePath = join(tmpBase, "..", ".gitignore");
       const existing = await readFile(gitignorePath, "utf-8").catch(() => "");
