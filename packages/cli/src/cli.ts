@@ -642,6 +642,35 @@ class TeammatesREPL {
   private lastCleanedOutput = ""; // last teammate output for clipboard copy
   private dispatching = false;
   private autoApproveHandoffs = false;
+
+  /** Read .teammates/settings.json (returns { version, services, ... } or defaults). */
+  private readSettings(): { version: number; services: { name: string;[key: string]: unknown }[];[key: string]: unknown } {
+    try {
+      const raw = JSON.parse(
+        readFileSync(join(this.teammatesDir, "settings.json"), "utf-8"),
+      );
+      return {
+        version: raw.version ?? 1,
+        services: Array.isArray(raw.services) ? raw.services : [],
+        ...raw,
+      };
+    } catch {
+      return { version: 1, services: [] };
+    }
+  }
+
+  /** Write .teammates/settings.json. */
+  private writeSettings(settings: { version: number; services: { name: string;[key: string]: unknown }[];[key: string]: unknown }): void {
+    writeFileSync(
+      join(this.teammatesDir, "settings.json"),
+      `${JSON.stringify(settings, null, 2)}\n`,
+    );
+  }
+
+  /** Check whether a specific service is installed. */
+  private isServiceInstalled(name: string): boolean {
+    return this.readSettings().services.some((s) => s.name === name);
+  }
   /** Pending handoffs awaiting user approval. */
   private pendingHandoffs: {
     id: string;
@@ -2508,24 +2537,17 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         });
     }
 
-    // Detect installed services from services.json and tell the adapter
+    // Detect installed services from settings.json and tell the adapter
     if ("services" in this.adapter) {
       const services: { name: string; description: string; usage: string }[] =
         [];
-      try {
-        const svcJson = JSON.parse(
-          readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
-        );
-        if (svcJson && "recall" in svcJson) {
-          services.push({
-            name: "recall",
-            description:
-              "Local semantic search across teammate memories and daily logs. Use this to find relevant context before starting a task.",
-            usage: 'teammates-recall search "your query" --dir .teammates',
-          });
-        }
-      } catch {
-        /* no services.json or invalid */
+      if (this.isServiceInstalled("recall")) {
+        services.push({
+          name: "recall",
+          description:
+            "Local semantic search across teammate memories and daily logs. Use this to find relevant context before starting a task.",
+          usage: 'teammates-recall search "your query" --dir .teammates',
+        });
       }
       (this.adapter as any).services = services;
     }
@@ -2591,15 +2613,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     const names = this.orchestrator.listTeammates();
     const reg = this.orchestrator.getRegistry();
-    let hasRecall = false;
-    try {
-      const svcJson = JSON.parse(
-        readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
-      );
-      hasRecall = !!(svcJson && "recall" in svcJson);
-    } catch {
-      /* no services.json */
-    }
+    const hasRecall = this.isServiceInstalled("recall");
 
     const bannerWidget = new AnimatedBanner({
       adapterName: this.adapterName,
@@ -3025,16 +3039,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     const registry = this.orchestrator.getRegistry();
     const termWidth = process.stdout.columns || 100;
 
-    // Detect recall from services.json
-    let recallInstalled = false;
-    try {
-      const svcJson = JSON.parse(
-        readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
-      );
-      recallInstalled = !!(svcJson && "recall" in svcJson);
-    } catch {
-      /* no services.json or invalid */
-    }
+    // Detect recall from settings.json
+    const recallInstalled = this.isServiceInstalled("recall");
 
     this.feedLine();
     this.feedLine(concat(tp.bold("  Teammates"), tp.muted(` v${PKG_VERSION}`)));
@@ -3831,18 +3837,12 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     this.feedLine(tp.success(`  ✔ ${serviceName} installed successfully`));
 
-    // Register in services.json
-    const svcPath = join(this.teammatesDir, "services.json");
-    let svcJson: Record<string, unknown> = {};
-    try {
-      svcJson = JSON.parse(readFileSync(svcPath, "utf-8"));
-    } catch {
-      /* new file */
-    }
-    if (!(serviceName in svcJson)) {
-      svcJson[serviceName] = {};
-      writeFileSync(svcPath, `${JSON.stringify(svcJson, null, 2)}\n`);
-      this.feedLine(tp.muted(`  Registered in services.json`));
+    // Register in settings.json
+    const settings = this.readSettings();
+    if (!settings.services.some((s) => s.name === serviceName)) {
+      settings.services.push({ name: serviceName });
+      this.writeSettings(settings);
+      this.feedLine(tp.muted(`  Registered in settings.json`));
     }
 
     // Build initial index if this service supports it
@@ -3956,15 +3956,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   private startRecallWatch(): void {
-    // Only start if recall is installed (check services.json)
-    try {
-      const svcJson = JSON.parse(
-        readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
-      );
-      if (!svcJson || !("recall" in svcJson)) return;
-    } catch {
-      return; // No services.json — recall not installed
-    }
+    // Only start if recall is installed (check settings.json)
+    if (!this.isServiceInstalled("recall")) return;
 
     try {
       this.recallWatchProcess = cpSpawn(
@@ -4090,11 +4083,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       if (this.chatView) this.chatView.setProgress(null);
 
       // Trigger recall sync if installed
-      try {
-        const svcJson = JSON.parse(
-          readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
-        );
-        if (svcJson && "recall" in svcJson) {
+      if (this.isServiceInstalled("recall")) {
+        try {
           if (this.chatView) {
             this.chatView.setProgress(`Syncing ${name} index...`);
             this.refreshView();
@@ -4112,9 +4102,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
             this.chatView.setProgress(null);
             this.feedLine(tp.success(`  ✔ ${name}: index synced`));
           }
+        } catch {
+          /* sync failed — non-fatal */
         }
-      } catch {
-        /* recall not installed or sync failed — non-fatal */
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -4247,15 +4237,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     if (teammates.length === 0) return;
 
     // Check if recall is installed
-    let recallInstalled = false;
-    try {
-      const svcJson = JSON.parse(
-        readFileSync(join(this.teammatesDir, "services.json"), "utf-8"),
-      );
-      recallInstalled = !!(svcJson && "recall" in svcJson);
-    } catch {
-      /* no services.json */
-    }
+    const recallInstalled = this.isServiceInstalled("recall");
 
     // 1. Check each teammate for stale daily logs (older than 7 days)
     const oneWeekAgo = new Date();

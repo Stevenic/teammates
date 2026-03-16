@@ -106,7 +106,7 @@ export async function copyTemplateFiles(
  * Directories starting with "_" are shared non-teammate folders.
  * Files (non-directories) and special names are also excluded.
  */
-const NON_TEAMMATE_NAMES = new Set(["example", "services.json"]);
+const NON_TEAMMATE_NAMES = new Set(["example", "settings.json"]);
 function isNonTeammateEntry(name: string): boolean {
   return (
     name.startsWith(".") || name.startsWith("_") || NON_TEAMMATE_NAMES.has(name)
