@@ -253,7 +253,7 @@ See the [decision log template](../template/DECISIONS.md) for the full format.
 
 2. Check the upstream template version in the `template/` directory.
 
-3. If versions differ, consult `docs/migration-guide.md` for the specific changes between versions and step-by-step upgrade instructions.
+3. If versions differ, compare with the upstream `template/` files and apply changes manually.
 
 4. After updating, bump the `<!-- template-version: N -->` comment in each updated file.
 

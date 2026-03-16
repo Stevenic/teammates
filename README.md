@@ -181,7 +181,6 @@ teammates/
   docs/                 # Vision and design documents
     adoption-guide.md   # How to introduce teammates to an existing team
     cookbook.md          # Concrete recipes for common workflows
-    migration-guide.md  # Template version upgrade instructions
     teammates-vision.md # Architecture and Microsoft Teams roadmap
     teammates-memory.md # Memory system design and comparison
   template/

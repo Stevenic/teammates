@@ -50,7 +50,6 @@ That's it. Your agent reads the onboarding instructions and does the rest.
 
 - [Adoption Guide](adoption-guide) — How to introduce teammates to an existing team
 - [Cookbook](cookbook) — Concrete recipes for common workflows
-- [Migration Guide](migration-guide) — Template version upgrade instructions
 - [Memory System](teammates-memory) — Memory system design and comparison
 - [Vision](teammates-vision) — Architecture and Microsoft Teams roadmap
 
