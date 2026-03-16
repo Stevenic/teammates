@@ -22,12 +22,18 @@ export class Registry {
     this.teammatesDir = teammatesDir;
   }
 
+  /** Names that are never teammates (template references, config files) */
+  private static NON_TEAMMATE_NAMES = new Set(["example"]);
+
   /** Discover and load all teammates from .teammates/ */
   async loadAll(): Promise<Map<string, TeammateConfig>> {
     const entries = await readdir(this.teammatesDir, { withFileTypes: true });
     const dirs = entries.filter(
       (e) =>
-        e.isDirectory() && !e.name.startsWith(".") && !e.name.startsWith("_"),
+        e.isDirectory() &&
+        !e.name.startsWith(".") &&
+        !e.name.startsWith("_") &&
+        !Registry.NON_TEAMMATE_NAMES.has(e.name),
     );
 
     for (const dir of dirs) {

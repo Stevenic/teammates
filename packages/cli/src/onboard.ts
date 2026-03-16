@@ -139,7 +139,7 @@ async function isTeammateFolder(dirPath: string): Promise<boolean> {
 export async function importTeammates(
   sourceDir: string,
   targetDir: string,
-): Promise<{ teammates: string[]; files: string[] }> {
+): Promise<{ teammates: string[]; skipped: string[]; files: string[] }> {
   // Validate source exists and looks like a .teammates/ dir
   try {
     await stat(sourceDir);
@@ -150,6 +150,7 @@ export async function importTeammates(
   await mkdir(targetDir, { recursive: true });
 
   const teammates: string[] = [];
+  const skipped: string[] = [];
   const files: string[] = [];
   const entries = await readdir(sourceDir, { withFileTypes: true });
 
@@ -163,6 +164,7 @@ export async function importTeammates(
         // Skip if teammate already exists in target
         try {
           await stat(destPath);
+          skipped.push(entry.name);
           continue;
         } catch {
           /* doesn't exist, proceed */
@@ -213,17 +215,13 @@ export async function importTeammates(
     files.push(".gitignore");
   }
 
-  return { teammates, files };
+  return { teammates, skipped, files };
 }
 
 /**
- * Build a comprehensive import-adaptation prompt that runs as a single agent session.
- * The agent will:
- * 1. Scan the current project
- * 2. Evaluate which imported teammates are needed
- * 3. Adapt kept teammates (add Previous Projects section + rewrite for new project)
- * 4. Create any new teammates the project needs
- * 5. Remove teammates that don't apply
+ * Build an import-adaptation prompt that runs as a single non-interactive agent session.
+ * The agent scans the target project and adapts all imported teammates in one pass.
+ * No pauses or approval gates — the agent must complete all work autonomously.
  *
  * @param teammatesDir - The .teammates/ directory in the target project
  * @param teammateNames - Names of all imported teammates
@@ -263,12 +261,14 @@ export async function buildImportAdaptationPrompt(
 
   const projectDir = dirname(teammatesDir);
 
-  return `You are adapting an imported team to a new project.
+  return `You are adapting an imported team to a new project. This is a non-interactive session — complete ALL work without pausing. Do not ask for confirmation or wait for user input.
 
 **Source project:** \`${sourceProjectPath}\`
 **Target project:** \`${projectDir}\`
 **Target .teammates/ directory:** \`${teammatesDir}\`
 **Imported teammates:** ${teammateNames.map((n) => `@${n}`).join(", ")}
+
+> **IMPORTANT:** The \`example/\` directory inside \`.teammates/\` is a **template reference**, NOT a teammate. Do not adapt it, rename it, or treat it as a teammate. When creating new teammates, never use "example" as a folder name.
 
 ## Imported Teammates (from source project)
 
@@ -276,88 +276,68 @@ ${teammateSections.join("\n\n---\n\n")}
 
 ## Instructions
 
-Work through these phases in order. **Pause after Phase 1 and Phase 2** to present your analysis and get user approval before making changes.
+Complete these steps in order. Do NOT pause, ask questions, or wait for approval. Make all changes directly.
 
-### Phase 1: Scan This Project
+### Step 1: Scan This Project
 
-Analyze the current project to understand its structure:
-- Read the project root: package manifest, README, config files
-- Identify major subsystems, languages, frameworks, file patterns
-- Understand the dependency flow and architecture
+Read the project root to understand its structure:
+- Package manifest, README, config files
+- Major subsystems, languages, frameworks, file patterns
+- Dependency flow and architecture
 
-**Present your analysis to the user and wait for confirmation.**
+### Step 2: Adapt EVERY Imported Teammate
 
-### Phase 2: Evaluate Imported Teammates
+This is the most important step. For EACH imported teammate listed above, you MUST edit their SOUL.md and WISDOM.md to reflect THIS project, not the source project.
 
-For each imported teammate, decide:
-- **KEEP** — their domain or expertise is relevant to this project (even if specific details need updating)
-- **DROP** — their domain doesn't exist here and their skills aren't transferable
+For each teammate's **SOUL.md**:
 
-Also identify **gaps** — major subsystems in this project that none of the imported teammates cover. Propose new teammates for these gaps.
-
-**Present your evaluation as a structured plan and wait for user approval:**
-\`\`\`
-KEEP: @name1, @name2
-DROP: @name3
-CREATE: @newname (role description)
-\`\`\`
-
-### Phase 3: Adapt Kept Teammates
-
-For each KEEP teammate, edit their SOUL.md and WISDOM.md:
-
-1. **Add a "Previous Projects" section** to SOUL.md (place it after Ethics, before any appendix). Compress what the teammate did in the source project into a portable summary:
+1. **Add a "Previous Projects" section** (place it after Ethics). Compress what the teammate did in the source project:
    \`\`\`markdown
    ## Previous Projects
 
-   ### <project-name>
+   ### <source-project-name>
    - **Role**: <one-line summary of what they did>
    - **Stack**: <key technologies they worked with>
    - **Domains**: <what they owned — file patterns or subsystem names>
    - **Key learnings**: <1-3 bullets of notable patterns, decisions, or lessons>
    \`\`\`
 
-2. **Rewrite the rest of SOUL.md** for this project:
+2. **Rewrite project-specific sections** for THIS project:
    - **Preserve**: Identity (name, personality), Core Principles, Ethics
-   - **Rewrite**: Ownership (primary/secondary file globs for THIS project), Boundaries, Capabilities (commands, file patterns, technologies), Routing keywords, Quality Bar
-   - **Update**: Any codebase-specific references (paths, package names, tools, teammate names)
+   - **Rewrite completely**: Ownership (primary/secondary file globs for THIS project's actual files), Boundaries, Capabilities (commands, file patterns, technologies for THIS project), Routing keywords, Quality Bar
+   - **Update**: All codebase-specific references — paths, package names, tools, teammate names must reference THIS project
 
-3. **Update WISDOM.md**:
-   - **Add** a "Previous Projects" section at the top with a compressed note:
-     \`\`\`markdown
-     ## Previous Projects
+For each teammate's **WISDOM.md**:
+- Add a "Previous Projects" note at the top
+- Keep universal wisdom entries (general principles, patterns)
+- Remove entries that reference source project paths, architecture, or tools not used here
+- Adapt entries with transferable knowledge but old-project-specific details
 
-     ### <project-name>
-     - Carried over universal wisdom entries from the source project
-     - Project-specific entries removed or adapted
-     \`\`\`
-   - **Keep** wisdom entries that are universal (general principles, patterns, lessons)
-   - **Remove** entries that reference source project paths, architecture, or tools not used here
-   - **Adapt** entries with transferable knowledge but old-project-specific details
+### Step 3: Evaluate Gaps and Create New Teammates
 
-### Phase 4: Handle Dropped Teammates
-
-For each DROP teammate, delete their directory under \`${teammatesDir}\`.
-
-### Phase 5: Create New Teammates
-
-For each new teammate proposed in Phase 2 (after user approval):
+After adapting all existing teammates, check if THIS project has major subsystems that no teammate covers. If so, create new teammates:
 - Create \`${teammatesDir}/<name>/\` with SOUL.md, WISDOM.md, and \`memory/\`
 - Use the template at \`${teammatesDir}/TEMPLATE.md\` for structure
 - WISDOM.md starts with one creation entry
 
-### Phase 6: Update Framework Files
+If a teammate's domain doesn't exist at all in this project and their skills aren't transferable, delete their directory under \`${teammatesDir}\`.
+
+### Step 4: Update Framework Files
 
 - Update \`${teammatesDir}/README.md\` with the final roster
 - Update \`${teammatesDir}/CROSS-TEAM.md\` ownership table
 
-### Phase 7: Verify
+### Step 5: Verify
 
-- Every kept/new teammate has SOUL.md and WISDOM.md
-- Ownership globs cover the codebase without major gaps
-- Boundaries reference the correct owning teammate
+- Every teammate has SOUL.md and WISDOM.md adapted to THIS project
+- Ownership globs reference actual files in THIS project
+- Boundaries reference correct teammate names
 - Previous Projects sections are present for all imported teammates
-- CROSS-TEAM.md has one row per teammate`;
+- CROSS-TEAM.md has one row per teammate
+
+## Critical Reminder
+
+The PRIMARY goal is adapting the imported teammates. Every SOUL.md must be rewritten so the teammate understands THIS project's codebase, not the source project's. If you only have time for one thing, adapt the existing teammates — that is more important than creating new ones.`;
 }
 
 /**
@@ -407,7 +387,9 @@ function wrapPrompt(onboardingContent: string, projectDir: string): string {
 
 You do NOT need to create the framework files listed above — they're already there.
 
-Follow the onboarding instructions below. Work through each step, pausing after Step 1 and Step 2 to present your analysis and proposed roster to the user for approval before proceeding.
+> **IMPORTANT:** The \`example/\` directory is a **template reference**, NOT a teammate. Do not modify it or treat it as a teammate. Never name a new teammate "example".
+
+Follow the onboarding instructions below. This is a non-interactive session — complete ALL work without pausing. Do not ask for confirmation or wait for user input. Work through each step and make all changes directly.
 
 ---
 
@@ -432,26 +414,22 @@ Identify:
 3. **Key technologies** — languages, frameworks, tools per area
 4. **File patterns** — glob patterns for each domain
 
-**Present your analysis to the user and get confirmation before proceeding.**
-
 ## Step 2: Design the Team
 
-Propose a roster of teammates:
+Based on your analysis, design a roster of teammates:
 - **Aim for 3–7 teammates.** Fewer for small projects, more for monorepos.
 - **Each teammate owns a distinct domain** with minimal overlap.
 - **Pick short, memorable names** — one word, evocative of the domain.
 
-For each proposed teammate, define:
+For each teammate, define:
 - Name and one-line persona
 - Primary ownership (file patterns)
 - Key technologies
 - Boundaries (what they do NOT own)
 
-**Present the proposed roster to the user for approval.**
-
 ## Step 3: Create the Directory Structure
 
-Once approved, create teammate folders under \`.teammates/\`:
+Create teammate folders under \`.teammates/\`:
 
 ### Teammate folders
 For each teammate, create \`.teammates/<name>/\` with:

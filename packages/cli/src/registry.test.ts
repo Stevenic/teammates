@@ -73,6 +73,14 @@ describe("Registry.loadAll", () => {
     await registry.loadAll();
     expect(registry.list()).toEqual(["beacon"]);
   });
+
+  it("skips the example directory even if it has SOUL.md", async () => {
+    await createTeammate("beacon", "# Beacon\n\nPlatform engineer.");
+    await createTeammate("example", "# Example\n\nTemplate reference.");
+    const registry = new Registry(tempDir);
+    await registry.loadAll();
+    expect(registry.list()).toEqual(["beacon"]);
+  });
 });
 
 describe("Registry.loadTeammate", () => {

@@ -18,7 +18,7 @@ import {
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 
@@ -1854,12 +1854,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     console.log();
 
     try {
-      const { teammates, files } = await importTeammates(
+      const { teammates, skipped, files } = await importTeammates(
         sourceDir,
         teammatesDir,
       );
 
-      if (teammates.length === 0) {
+      const allTeammates = [...teammates, ...skipped];
+
+      if (allTeammates.length === 0) {
         console.log(
           chalk.yellow("  No teammates found at ") + chalk.white(sourceDir),
         );
@@ -1871,14 +1873,23 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         return;
       }
 
-      console.log(
-        chalk.green("  ✔") +
-          chalk.white(
-            ` Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: `,
-          ) +
-          chalk.cyan(teammates.join(", ")),
-      );
-      console.log(chalk.gray(`    (${files.length} files copied)`));
+      if (teammates.length > 0) {
+        console.log(
+          chalk.green("  ✔") +
+            chalk.white(
+              ` Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: `,
+            ) +
+            chalk.cyan(teammates.join(", ")),
+        );
+        console.log(chalk.gray(`    (${files.length} files copied)`));
+      }
+      if (skipped.length > 0) {
+        console.log(
+          chalk.gray(
+            `  ${skipped.length} already present: ${skipped.join(", ")} (will re-adapt)`,
+          ),
+        );
+      }
       console.log();
 
       // Copy framework files so the agent has TEMPLATE.md etc. available
@@ -1905,7 +1916,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         await this.runAdaptationAgent(
           this.adapter,
           projectDir,
-          teammates,
+          allTeammates,
           sourceDir,
         );
       } else {
@@ -2522,6 +2533,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       weeklyLogs: [],
       ownership: { primary: [], secondary: [] },
       routingKeywords: [],
+      cwd: dirname(this.teammatesDir),
     });
     // Add status entry (init() already ran, so we add it manually)
     this.orchestrator.getAllStatuses().set(this.adapterName, { state: "idle" });
@@ -3701,22 +3713,34 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       }
 
       try {
-        const { teammates, files } = await importTeammates(
+        const { teammates, skipped, files } = await importTeammates(
           sourceDir,
           teammatesDir,
         );
 
-        if (teammates.length === 0) {
+        // Combine newly imported + already existing for adaptation
+        const allTeammates = [...teammates, ...skipped];
+
+        if (allTeammates.length === 0) {
           this.feedLine(tp.warning(`  No teammates found at ${sourceDir}`));
           this.refreshView();
           return;
         }
 
-        this.feedLine(
-          tp.success(
-            `  Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: ${teammates.join(", ")} (${files.length} files)`,
-          ),
-        );
+        if (teammates.length > 0) {
+          this.feedLine(
+            tp.success(
+              `  Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: ${teammates.join(", ")} (${files.length} files)`,
+            ),
+          );
+        }
+        if (skipped.length > 0) {
+          this.feedLine(
+            tp.muted(
+              `  ${skipped.length} already present: ${skipped.join(", ")} (will re-adapt)`,
+            ),
+          );
+        }
 
         // Copy framework files so the agent has TEMPLATE.md etc. available
         await copyTemplateFiles(teammatesDir);
@@ -3729,7 +3753,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         );
         const prompt = await buildImportAdaptationPrompt(
           teammatesDir,
-          teammates,
+          allTeammates,
           sourceDir,
         );
         this.taskQueue.push({
