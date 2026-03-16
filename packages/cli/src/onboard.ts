@@ -73,7 +73,7 @@ export async function copyTemplateFiles(
   try {
     await stat(gitignoreDest);
   } catch {
-    const gitignoreContent = "USER.md\n.index/\n";
+    const gitignoreContent = "USER.md\n.*/\n";
     const { writeFile } = await import("node:fs/promises");
     await writeFile(gitignoreDest, gitignoreContent, "utf-8");
     copied.push(".gitignore");
@@ -209,7 +209,7 @@ export async function importTeammates(
   try {
     await stat(gitignoreDest);
   } catch {
-    await writeFile(gitignoreDest, "USER.md\n.index/\n", "utf-8");
+    await writeFile(gitignoreDest, "USER.md\n.*/\n", "utf-8");
     files.push(".gitignore");
   }
 

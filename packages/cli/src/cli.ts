@@ -48,7 +48,7 @@ import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import type { AgentAdapter } from "./adapter.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
-import { CopilotAdapter } from "./adapters/copilot.js";
+import type { CopilotAdapterOptions } from "./adapters/copilot.js";
 import { EchoAdapter } from "./adapters/echo.js";
 import {
   findAtMention,
@@ -138,14 +138,16 @@ async function findTeammatesDir(): Promise<string | null> {
   return null;
 }
 
-function resolveAdapter(name: string): AgentAdapter {
+async function resolveAdapter(name: string): Promise<AgentAdapter> {
   if (name === "echo") return new EchoAdapter();
 
-  // GitHub Copilot SDK adapter
+  // GitHub Copilot SDK adapter — lazy-loaded to avoid pulling in
+  // @github/copilot-sdk (and vscode-jsonrpc) when not needed.
   if (name === "copilot") {
+    const { CopilotAdapter } = await import("./adapters/copilot.js");
     return new CopilotAdapter({
       model: modelOverride,
-    });
+    } satisfies CopilotAdapterOptions);
   }
 
   // All other adapters go through the CLI proxy
@@ -2441,7 +2443,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
   async start(): Promise<void> {
     let teammatesDir = await findTeammatesDir();
-    const adapter = resolveAdapter(this.adapterName);
+    const adapter = await resolveAdapter(this.adapterName);
     this.adapter = adapter;
 
     // No .teammates/ found — offer onboarding or solo mode

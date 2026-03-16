@@ -6,7 +6,7 @@
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
   DailyLog,
   OwnershipRules,
@@ -68,6 +68,7 @@ export class Registry {
       weeklyLogs,
       ownership,
       routingKeywords,
+      cwd: dirname(this.teammatesDir),
     };
 
     this.teammates.set(name, config);
