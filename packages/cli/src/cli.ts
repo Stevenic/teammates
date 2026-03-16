@@ -68,6 +68,17 @@ import type {
   TaskResult,
 } from "./types.js";
 
+// ─── Version ─────────────────────────────────────────────────────────
+
+const PKG_VERSION: string = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8"));
+    return pkg.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 // ─── Argument parsing ────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -166,7 +177,8 @@ interface ServiceEntry {
 type QueueEntry =
   | { type: "agent"; teammate: string; task: string }
   | { type: "compact"; teammate: string; task: string }
-  | { type: "retro"; teammate: string; task: string };
+  | { type: "retro"; teammate: string; task: string }
+  | { type: "btw"; teammate: string; task: string };
 
 const SERVICE_REGISTRY: Record<string, ServiceEntry> = {
   recall: {
@@ -259,7 +271,7 @@ class AnimatedBanner extends Control {
   private _charIndex = 0;
   private _builtTop = "";
   private _builtBot = "";
-  private _versionStr = " v0.1.0";
+  private _versionStr = ` v${PKG_VERSION}`;
   private _versionIndex = 0;
 
   // Roster/command reveal state
@@ -318,7 +330,7 @@ class AnimatedBanner extends Control {
         tp.muted(
           ` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`,
         ),
-        tp.muted(" · v0.1.0"),
+        tp.muted(` · v${PKG_VERSION}`),
       ),
     );
     // TM logo row 2 + cwd
@@ -366,9 +378,9 @@ class AnimatedBanner extends Control {
       ["/status", "teammates & queue"],
     ];
     const col2 = [
-      ["/debug", "raw agent output"],
-      ["/log", "last task output"],
-      ["/copy", "copy session"],
+      ["/compact", "compact memory"],
+      ["/retro", "run retrospective"],
+      ["/copy", "copy session text"],
     ];
     const col3 = [
       ["/install", "add a service"],
@@ -796,20 +808,29 @@ class TeammatesREPL {
       }
 
       // Render first line with "User: " label
+      const label = "user: ";
       const first = rendered.shift();
       if (first) {
         if (first.type === "text") {
-          const label = "user: ";
-          const pad = Math.max(0, termW - label.length - first.content.length);
+          const firstWrapW = termW - label.length;
+          const firstWrapped = this.wrapLine(first.content, firstWrapW);
+          // First wrapped segment gets the label
+          const seg0 = firstWrapped.shift() ?? "";
+          const pad0 = Math.max(0, termW - label.length - seg0.length);
           this.chatView.appendStyledToFeed(
             concat(
               pen.fg(t.accent).bg(bg)(label),
-              pen.fg(t.text).bg(bg)(first.content + " ".repeat(pad)),
+              pen.fg(t.text).bg(bg)(seg0 + " ".repeat(pad0)),
             ),
           );
+          // Remaining wrapped segments are indented to align with content
+          for (const wl of firstWrapped) {
+            this.feedUserLine(
+              concat(pen.fg(t.text).bg(bg)(wl)),
+            );
+          }
         } else {
           // First line is a quote (unusual but handle it)
-          const label = "user: ";
           const pad = Math.max(0, termW - label.length);
           this.chatView.appendStyledToFeed(
             concat(pen.fg(t.accent).bg(bg)(label + " ".repeat(pad))),
@@ -835,10 +856,13 @@ class TeammatesREPL {
             );
           }
         } else {
-          const lPad = Math.max(0, termW - entry.content.length);
-          this.chatView.appendStyledToFeed(
-            concat(pen.fg(t.text).bg(bg)(entry.content + " ".repeat(lPad))),
-          );
+          const wrapWidth = termW;
+          const wrapped = this.wrapLine(entry.content, wrapWidth);
+          for (const wl of wrapped) {
+            this.feedUserLine(
+              concat(pen.fg(t.text).bg(bg)(wl)),
+            );
+          }
         }
       }
 
@@ -1562,7 +1586,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     console.log();
     this.printLogo([
-      chalk.bold("Teammates") + chalk.gray(" v0.1.0"),
+      chalk.bold("Teammates") + chalk.gray(` v${PKG_VERSION}`),
       chalk.yellow("No .teammates/ directory found"),
       chalk.gray(cwd),
     ]);
@@ -1813,7 +1837,6 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     {
       assign: new Set([0]),
       handoff: new Set([0, 1]),
-      log: new Set([0]),
       compact: new Set([0]),
       debug: new Set([0]),
       retro: new Set([0]),
@@ -1848,17 +1871,60 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     const teammates = this.orchestrator.listTeammates();
     const lower = partial.toLowerCase();
-    return teammates
-      .filter((n) => n.toLowerCase().startsWith(lower))
-      .map((name) => {
-        const t = this.orchestrator.getRegistry().get(name);
-        const linePrefix = `/${cmdName} ${argsBefore ? argsBefore : ""}`;
-        return {
-          label: name,
-          description: t?.role ?? "",
-          completion: `${linePrefix + name} `,
-        };
+    const items: DropdownItem[] = [];
+
+    // Add "everyone" option at the top (only for first arg position)
+    if (completedArgs === 0 && "everyone".startsWith(lower)) {
+      const linePrefix = `/${cmdName} ${argsBefore ? argsBefore : ""}`;
+      items.push({
+        label: "everyone",
+        description: "all teammates",
+        completion: `${linePrefix}everyone `,
       });
+    }
+
+    for (const name of teammates) {
+      if (!name.toLowerCase().startsWith(lower)) continue;
+      const t = this.orchestrator.getRegistry().get(name);
+      const linePrefix = `/${cmdName} ${argsBefore ? argsBefore : ""}`;
+      items.push({
+        label: name,
+        description: t?.role ?? "",
+        completion: `${linePrefix + name} `,
+      });
+    }
+    return items;
+  }
+
+  /**
+   * Return dim placeholder hint text for the current input value.
+   * e.g. typing "/log" shows " <teammate>", typing "/log b" shows nothing.
+   */
+  private getCommandHint(value: string): string | null {
+    const trimmed = value.trimStart();
+    if (!trimmed.startsWith("/")) return null;
+
+    // Extract command name and what's been typed after it
+    const spaceIdx = trimmed.indexOf(" ");
+    const cmdName = spaceIdx < 0 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
+    const cmd = this.commands.get(cmdName);
+    if (!cmd) return null;
+
+    // Extract placeholder tokens from usage (e.g. "/log [teammate]" → ["[teammate]"])
+    const usageParts = cmd.usage.split(/\s+/).slice(1); // drop the "/command" part
+    if (usageParts.length === 0) return null;
+
+    // Count how many args the user has typed after the command
+    const afterCmd = spaceIdx < 0 ? "" : trimmed.slice(spaceIdx + 1);
+    const typedArgs = afterCmd.trim().split(/\s+/).filter((s) => s.length > 0);
+
+    // Show remaining placeholders
+    const remaining = usageParts.slice(typedArgs.length);
+    if (remaining.length === 0) return null;
+
+    // Add a leading space if the value doesn't already end with one
+    const pad = value.endsWith(" ") ? "" : " ";
+    return pad + remaining.join(" ");
   }
 
   /**
@@ -2137,10 +2203,18 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.input = new PromptInput({
       prompt: chalk.gray("> "),
       borderStyle: (s) => chalk.gray(s),
-      colorize: (value) =>
-        value
-          .replace(/@\w+/g, (m) => chalk.blue(m))
-          .replace(/\/\w+/g, (m) => chalk.blue(m)),
+      colorize: (value) => {
+        const validNames = new Set([
+          ...this.orchestrator.listTeammates(),
+          this.adapterName,
+        ]);
+        return value
+          .replace(/@(\w+)/g, (match, name) =>
+            validNames.has(name) ? chalk.blue(match) : match,
+          )
+          .replace(/^\/\w+/, (m) => chalk.blue(m));
+      },
+      hint: (value) => this.getCommandHint(value),
       onUpDown: (dir) => {
         if (this.wordwheelItems.length === 0) return false;
         if (dir === "up") {
@@ -2212,12 +2286,25 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           new Array(value.length).fill(null);
         const accentStyle = { fg: theme().accent };
         const dimStyle = { fg: theme().textDim };
-        // Colorize /commands (only at start of input) and @mentions (anywhere)
-        const pattern = /(?:^\/[\w-]+|@\w+)/g;
-        let m;
-        while ((m = pattern.exec(value)) !== null) {
+        // Colorize /commands (only at start of input)
+        const cmdPattern = /^\/[\w-]+/;
+        let m = cmdPattern.exec(value);
+        if (m) {
           for (let i = m.index; i < m.index + m[0].length; i++) {
             styles[i] = accentStyle;
+          }
+        }
+        // Colorize @mentions only if they reference a valid teammate or the coding agent
+        const validNames = new Set([
+          ...this.orchestrator.listTeammates(),
+          this.adapterName,
+        ]);
+        const mentionPattern = /@(\w+)/g;
+        while ((m = mentionPattern.exec(value)) !== null) {
+          if (validNames.has(m[1])) {
+            for (let i = m.index; i < m.index + m[0].length; i++) {
+              styles[i] = accentStyle;
+            }
           }
         }
         // Colorize [placeholder] blocks as dim
@@ -2249,15 +2336,17 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         }
         return 1;
       },
+      inputHint: (value: string) => this.getCommandHint(value),
+      inputHintStyle: { fg: t.textDim },
       maxInputHeight: 5,
       separatorStyle: { fg: t.separator },
       progressStyle: { fg: t.progress, italic: true },
       dropdownHighlightStyle: { fg: t.accent },
       dropdownStyle: { fg: t.textMuted },
-      footer: concat(tp.accent(" Teammates"), tp.dim(" v0.1.0")),
+      footer: concat(tp.accent(" Teammates"), tp.dim(` v${PKG_VERSION}`)),
       footerStyle: { fg: t.textDim },
     });
-    this.defaultFooter = concat(tp.accent(" Teammates"), tp.dim(" v0.1.0"));
+    this.defaultFooter = concat(tp.accent(" Teammates"), tp.dim(` v${PKG_VERSION}`));
 
     // Wire ChatView events for input handling
     this.chatView.on("submit", (rawLine: string) => {
@@ -2592,7 +2681,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     }
 
     this.feedLine();
-    this.feedLine(concat(tp.bold("  Teammates"), tp.muted(" v0.1.0")));
+    this.feedLine(concat(tp.bold("  Teammates"), tp.muted(` v${PKG_VERSION}`)));
     this.feedLine(
       concat(
         tp.text(`  ${this.adapterName}`),
@@ -2626,22 +2715,42 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.feedLine();
     this.feedLine(tp.muted("─".repeat(termWidth)));
 
-    // Quick reference — 3 columns
-    const col1 = [
-      ["@mention", "assign to teammate"],
-      ["text", "auto-route task"],
-      ["/status", "teammates & queue"],
-    ];
-    const col2 = [
-      ["/debug", "raw agent output"],
-      ["/log", "last task output"],
-      ["/copy", "copy session"],
-    ];
-    const col3 = [
-      ["/install", "add a service"],
-      ["/help", "all commands"],
-      ["/exit", "exit session"],
-    ];
+    // Quick reference — 3 columns (different set for first run vs normal)
+    let col1: string[][];
+    let col2: string[][];
+    let col3: string[][];
+
+    if (teammates.length === 0) {
+      // First run — no teammates yet
+      col1 = [
+        ["/init", "set up teammates"],
+        ["/install", "add a service"],
+      ];
+      col2 = [
+        ["/help", "all commands"],
+        ["/exit", "exit session"],
+      ];
+      col3 = [
+        ["", ""],
+        ["", ""],
+      ];
+    } else {
+      col1 = [
+        ["@mention", "assign to teammate"],
+        ["text", "auto-route task"],
+        ["[image]", "drag & drop images"],
+      ];
+      col2 = [
+        ["/status", "teammates & queue"],
+        ["/compact", "compact memory"],
+        ["/retro", "run retrospective"],
+      ];
+      col3 = [
+        [recallInstalled ? "/copy" : "/install", recallInstalled ? "copy session text" : "add a service"],
+        ["/help", "all commands"],
+        ["/exit", "exit session"],
+      ];
+    }
 
     for (let i = 0; i < col1.length; i++) {
       this.feedLine(
@@ -2670,13 +2779,6 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         run: () => this.cmdStatus(),
       },
       {
-        name: "log",
-        aliases: ["l"],
-        usage: "/log [teammate]",
-        description: "Show the last task result for a teammate",
-        run: (args) => this.cmdLog(args),
-      },
-      {
         name: "help",
         aliases: ["h", "?"],
         usage: "/help",
@@ -2693,7 +2795,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       {
         name: "cancel",
         aliases: [],
-        usage: "/cancel <n>",
+        usage: "/cancel [n]",
         description: "Cancel a queued task by number",
         run: (args) => this.cmdCancel(args),
       },
@@ -2714,7 +2816,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       {
         name: "install",
         aliases: [],
-        usage: "/install <service>",
+        usage: "/install [service]",
         description: "Install a teammates service (e.g. recall)",
         run: (args) => this.cmdInstall(args),
       },
@@ -2736,8 +2838,22 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         name: "copy",
         aliases: ["cp"],
         usage: "/copy",
-        description: "Copy the last response to clipboard",
+        description: "Copy session text to clipboard",
         run: () => this.cmdCopy(),
+      },
+      {
+        name: "user",
+        aliases: [],
+        usage: "/user [change]",
+        description: "View or update USER.md",
+        run: (args) => this.cmdUser(args),
+      },
+      {
+        name: "btw",
+        aliases: [],
+        usage: "/btw [question]",
+        description: "Ask a quick side question without interrupting the main conversation",
+        run: (args) => this.cmdBtw(args),
       },
       {
         name: "theme",
@@ -2971,84 +3087,51 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.refreshView();
   }
 
-  private async cmdLog(argsStr: string): Promise<void> {
-    const teammate = argsStr.trim();
+  private async cmdDebug(argsStr: string): Promise<void> {
+    const arg = argsStr.trim().replace(/^@/, "");
 
-    if (teammate) {
-      // Show specific teammate's last result
-      const status = this.orchestrator.getStatus(teammate);
-      if (!status) {
-        this.feedLine(tp.warning(`Unknown teammate: ${teammate}`));
+    // Resolve targets
+    let targets: { name: string; result: TaskResult }[];
+    if (arg === "everyone") {
+      targets = [];
+      for (const [name, result] of this.lastResults) {
+        if (name !== this.adapterName && result.rawOutput) {
+          targets.push({ name, result });
+        }
+      }
+      if (targets.length === 0) {
+        this.feedLine(tp.muted("  No raw output available from any teammate."));
         this.refreshView();
         return;
       }
-      this.printTeammateLog(teammate, status);
-    } else if (this.lastResult) {
-      // Show last result globally
-      const status = this.orchestrator.getStatus(this.lastResult.teammate);
-      if (status) this.printTeammateLog(this.lastResult.teammate, status);
     } else {
-      this.feedLine("No task results yet.");
-      this.refreshView();
-    }
-  }
-
-  private printTeammateLog(
-    name: string,
-    status: {
-      lastSummary?: string;
-      lastChangedFiles?: string[];
-      lastTimestamp?: Date;
-    },
-  ): void {
-    this.feedLine();
-    this.feedLine(tp.bold(`  ${name}`));
-
-    if (status.lastSummary) {
-      this.feedLine(concat(tp.text("  Summary: "), pen(status.lastSummary)));
-    }
-    if (status.lastChangedFiles?.length) {
-      this.feedLine(tp.text("  Changed:"));
-      for (const f of status.lastChangedFiles) {
-        this.feedLine(concat(tp.muted("    • "), pen(f)));
+      const result = arg ? this.lastResults.get(arg) : this.lastResult;
+      if (!result?.rawOutput) {
+        this.feedLine(
+          tp.muted(
+            "  No raw output available." +
+              (arg ? "" : " Try: /debug <teammate>"),
+          ),
+        );
+        this.refreshView();
+        return;
       }
-    }
-    if (status.lastTimestamp) {
-      this.feedLine(tp.muted(`  Time: ${relativeTime(status.lastTimestamp)}`));
-    }
-    if (!status.lastSummary) {
-      this.feedLine("  No task results yet.");
-    }
-    this.feedLine();
-    this.refreshView();
-  }
-
-  private async cmdDebug(argsStr: string): Promise<void> {
-    const teammate = argsStr.trim();
-    const result = teammate ? this.lastResults.get(teammate) : this.lastResult;
-
-    if (!result?.rawOutput) {
-      this.feedLine(
-        tp.muted(
-          "  No raw output available." +
-            (teammate ? "" : " Try: /debug <teammate>"),
-        ),
-      );
-      this.refreshView();
-      return;
+      targets = [{ name: result.teammate, result }];
     }
 
-    this.feedLine();
-    this.feedLine(tp.muted(`  ── raw output from ${result.teammate} ──`));
-    this.feedLine();
-    this.feedMarkdown(result.rawOutput);
-    this.feedLine();
-    this.feedLine(tp.muted("  ── end raw output ──"));
+    for (const { name, result } of targets) {
+      this.feedLine();
+      this.feedLine(tp.muted(`  ── raw output from ${name} ──`));
+      this.feedLine();
+      this.feedMarkdown(result.rawOutput!);
+      this.feedLine();
+      this.feedLine(tp.muted("  ── end raw output ──"));
+    }
 
     // [copy] action for the debug output
     if (this.chatView) {
       const t = theme();
-      this.lastCleanedOutput = result.rawOutput;
+      this.lastCleanedOutput = targets.map((t) => t.result.rawOutput!).join("\n\n");
       this.chatView.appendActionList([
         {
           id: "copy",
@@ -3107,13 +3190,18 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (entry.type === "compact") {
           await this.runCompact(entry.teammate);
         } else {
-          const extraContext = this.buildConversationContext();
+          // btw tasks skip conversation context (side question, not part of main thread)
+          const extraContext =
+            entry.type === "btw" ? "" : this.buildConversationContext();
           const result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
             extraContext: extraContext || undefined,
           });
-          this.storeResult(result);
+          // btw results are not stored in conversation history
+          if (entry.type !== "btw") {
+            this.storeResult(result);
+          }
           if (entry.type === "retro") {
             this.handleRetroResult(result);
           }
@@ -3391,9 +3479,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   private async cmdCompact(argsStr: string): Promise<void> {
-    const names = argsStr.trim()
-      ? [argsStr.trim()]
-      : this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
+    const arg = argsStr.trim();
+    const allTeammates = this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
+    const names = !arg || arg === "everyone" ? allTeammates : [arg];
 
     // Validate all names first
     const valid: string[] = [];
@@ -3522,31 +3610,32 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   private async cmdRetro(argsStr: string): Promise<void> {
-    let name = argsStr.trim();
+    let arg = argsStr.trim().replace(/^@/, "");
 
-    // If no teammate specified, use the last one that returned a result
-    if (!name) {
-      if (this.lastResult) {
-        name = this.lastResult.teammate;
-      } else {
-        this.feedLine(
-          tp.warning(
-            "  No teammate specified and no recent task to infer from.",
-          ),
-        );
-        this.feedLine(tp.muted("  Usage: /retro <teammate>"));
+    // Resolve target list
+    const allTeammates = this.orchestrator.listTeammates().filter((n) => n !== this.adapterName);
+    let targets: string[];
+
+    if (arg === "everyone") {
+      targets = allTeammates;
+    } else if (arg) {
+      // Validate teammate exists
+      const names = this.orchestrator.listTeammates();
+      if (!names.includes(arg)) {
+        this.feedLine(tp.warning(`  Unknown teammate: @${arg}`));
         this.refreshView();
         return;
       }
-    }
-
-    // Strip leading @ if present
-    name = name.replace(/^@/, "");
-
-    // Validate teammate exists
-    const names = this.orchestrator.listTeammates();
-    if (!names.includes(name)) {
-      this.feedLine(tp.warning(`  Unknown teammate: @${name}`));
+      targets = [arg];
+    } else if (this.lastResult) {
+      targets = [this.lastResult.teammate];
+    } else {
+      this.feedLine(
+        tp.warning(
+          "  No teammate specified and no recent task to infer from.",
+        ),
+      );
+      this.feedLine(tp.muted("  Usage: /retro <teammate>"));
       this.refreshView();
       return;
     }
@@ -3581,14 +3670,19 @@ Issues that can't be resolved unilaterally — they need input from other teamma
 - No busywork — if everything is working well, say "all good, no changes." That's a valid outcome.
 - Number each proposal (Proposal 1, Proposal 2, etc.) so the user can approve or reject individually.`;
 
+    const label = targets.length > 1
+      ? targets.map((n) => `@${n}`).join(", ")
+      : `@${targets[0]}`;
     this.feedLine();
     this.feedLine(
-      concat(tp.muted("  Queued retro for "), tp.accent(`@${name}`)),
+      concat(tp.muted("  Queued retro for "), tp.accent(label)),
     );
     this.feedLine();
     this.refreshView();
 
-    this.taskQueue.push({ type: "retro", teammate: name, task: retroPrompt });
+    for (const name of targets) {
+      this.taskQueue.push({ type: "retro", teammate: name, task: retroPrompt });
+    }
     this.kickDrain();
   }
 
@@ -3797,6 +3891,79 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     );
     this.feedLine();
     this.refreshView();
+  }
+
+  private async cmdUser(argsStr: string): Promise<void> {
+    const userMdPath = join(this.teammatesDir, "USER.md");
+    const change = argsStr.trim();
+
+    if (!change) {
+      // No args — print current USER.md
+      let content: string;
+      try {
+        content = readFileSync(userMdPath, "utf-8");
+      } catch {
+        this.feedLine(tp.muted("  USER.md not found."));
+        this.feedLine(
+          tp.muted("  Run /init or create .teammates/USER.md manually."),
+        );
+        this.refreshView();
+        return;
+      }
+
+      if (!content.trim()) {
+        this.feedLine(tp.muted("  USER.md is empty."));
+        this.refreshView();
+        return;
+      }
+
+      this.feedLine();
+      this.feedLine(tp.muted("  ── USER.md ──"));
+      this.feedLine();
+      this.feedMarkdown(content);
+      this.feedLine();
+      this.feedLine(tp.muted("  ── end ──"));
+      this.feedLine();
+      this.refreshView();
+      return;
+    }
+
+    // Has args — queue a task to the coding agent to apply the change
+    const task = `Update the file ${userMdPath} with the following change:\n\n${change}\n\nKeep the existing content intact unless the change explicitly replaces something. This is the user's profile — be concise and accurate.`;
+    this.taskQueue.push({ type: "agent", teammate: this.adapterName, task });
+    this.feedLine(
+      concat(
+        tp.muted("  Queued USER.md update → "),
+        tp.accent(`@${this.adapterName}`),
+      ),
+    );
+    this.feedLine();
+    this.refreshView();
+    this.kickDrain();
+  }
+
+  private async cmdBtw(argsStr: string): Promise<void> {
+    const question = argsStr.trim();
+    if (!question) {
+      this.feedLine(tp.muted("  Usage: /btw <question>"));
+      this.refreshView();
+      return;
+    }
+
+    this.taskQueue.push({
+      type: "btw",
+      teammate: this.adapterName,
+      task: question,
+    });
+    this.feedLine(
+      concat(
+        tp.muted("  Side question → "),
+        tp.accent(`@${this.adapterName}`),
+      ),
+    );
+    this.feedLine();
+    this.refreshView();
+    this.kickDrain();
   }
 
   private async cmdTheme(): Promise<void> {

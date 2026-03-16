@@ -31,7 +31,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 ## Quality Bar
 
-- TypeScript compiles cleanly with strict mode in both packages
+- TypeScript compiles cleanly with strict mode in all three packages
 - CLI handles missing directories and empty indexes gracefully with clear error messages
 - Search results are deterministic for the same index state and query
 - Recall has no runtime dependencies beyond vectra and transformers.js
@@ -67,27 +67,31 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 ### CLI REPL Commands
 
-- `/route <task>` — Auto-route a task to the best teammate (keyword matching on ownership + role)
 - `@teammate <task>` — Assign directly via @mention
-- `/status` — Session overview (teammate states, last results)
-- `/teammates` — List all teammates and their roles/ownership
-- `/log [teammate]` — Show the last task result
+- `/status` — Show teammates, active tasks, and queue (aliases: /s, /queue)
 - `/debug [teammate]` — Show raw agent output from the last task
-- `/queue @teammate <task>` — Add tasks to a sequential queue
-- `/cancel <n>` — Cancel a queued task
-- `/install <service>` — Install an optional service (e.g. `recall`)
+- `/cancel [n]` — Cancel a queued task by number
+- `/init` — Run onboarding to set up teammates (aliases: /onboard, /setup)
+- `/clear` — Clear history and reset the session (aliases: /cls, /reset)
+- `/install [service]` — Install a teammates service (e.g. recall)
+- `/compact [teammate]` — Compact daily logs into weekly/monthly summaries
 - `/retro [teammate]` — Run a structured self-retrospective for a teammate
-- `/clear` — Clear conversation history, reset all sessions, reprint banner
-- `/help` — All commands
-- `/exit` — Exit session
+- `/user [change]` — View or update USER.md
+- `/btw [question]` — Ask a quick side question without interrupting the main conversation
+- `/copy` — Copy session text to clipboard (aliases: /cp)
+- `/theme` — Show current theme colors
+- `/help` — All commands (aliases: /h, /?)
+- `/exit` — Exit session (aliases: /q, /quit)
 
 ### File Patterns
 
-- `recall/src/**/*.ts` — Recall TypeScript source files
-- `recall/dist/**/*.js` — Recall compiled output (gitignored)
+- `packages/recall/src/**/*.ts` — Recall TypeScript source files
+- `packages/recall/dist/**/*.js` — Recall compiled output (gitignored)
 - `.teammates/<name>/.index/` — Vector indexes (gitignored, one per teammate)
-- `cli/src/**/*.ts` — CLI TypeScript source files
-- `cli/dist/**/*.js` — CLI compiled output (gitignored)
+- `packages/cli/src/**/*.ts` — CLI TypeScript source files
+- `packages/cli/dist/**/*.js` — CLI compiled output (gitignored)
+- `packages/consolonia/src/**/*.ts` — Consolonia TypeScript source files
+- `packages/consolonia/dist/**/*.js` — Consolonia compiled output (gitignored)
 
 ### Technologies
 
@@ -97,21 +101,23 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - **chalk** — Terminal styling (cli)
 - **ora** — Spinner for agent task progress (cli)
 - **Node.js** — Runtime, minimum v20
+- **Biome** — Linting and formatting (monorepo root, replaces ESLint)
+- **Vitest** — Test framework (all three packages)
 
 ## Ownership
 
 ### Primary
 
-- `recall/src/**` — All recall TypeScript source (CLI, indexer, search, embeddings)
-- `recall/package.json` — Recall package manifest and dependencies
-- `recall/tsconfig.json` — Recall TypeScript configuration
-- `recall/README.md` — Recall package documentation
-- `cli/src/**` — All CLI TypeScript source (REPL, orchestrator, adapters, registry, types)
-- `cli/package.json` — CLI package manifest and dependencies
-- `cli/tsconfig.json` — CLI TypeScript configuration
-- `consolonia/src/**` — Consolonia terminal UI rendering source
-- `consolonia/package.json` — Consolonia package manifest and dependencies
-- `consolonia/tsconfig.json` — Consolonia TypeScript configuration
+- `packages/recall/src/**` — All recall TypeScript source (CLI, indexer, search, embeddings)
+- `packages/recall/package.json` — Recall package manifest and dependencies
+- `packages/recall/tsconfig.json` — Recall TypeScript configuration
+- `packages/recall/README.md` — Recall package documentation
+- `packages/cli/src/**` — All CLI TypeScript source (REPL, orchestrator, adapters, registry, types)
+- `packages/cli/package.json` — CLI package manifest and dependencies
+- `packages/cli/tsconfig.json` — CLI TypeScript configuration
+- `packages/consolonia/src/**` — Consolonia terminal UI rendering source
+- `packages/consolonia/package.json` — Consolonia package manifest and dependencies
+- `packages/consolonia/tsconfig.json` — Consolonia TypeScript configuration
 
 ### Secondary
 
@@ -133,3 +139,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `cli/src/registry.ts` — **Produces** the `Registry` class that discovers and loads teammate configs from `.teammates/`
 - `cli/src/adapters/cli-proxy.ts` — **Produces** the generic `CliProxyAdapter` and agent presets (claude, codex, aider)
 - `cli/src/adapters/echo.ts` — **Produces** the `EchoAdapter` for testing
+- `cli/src/compact.ts` — **Produces** the episodic memory compaction system (`compactDailies`, `compactWeeklies`, `compactEpisodic`)
+- `cli/src/onboard.ts` — **Produces** the onboarding flow (`copyTemplateFiles`, `getOnboardingPrompt`) consumed by `/init`
+- `cli/src/cli-utils.ts` — **Produces** extracted pure functions (`relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`) consumed by cli.ts
+- `cli/src/adapters/copilot.ts` — **Produces** the `CopilotAdapter` for GitHub Copilot integration

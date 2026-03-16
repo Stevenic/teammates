@@ -24,7 +24,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 ## Boundaries
 
-- Does NOT modify application source code (`recall/src/**`, `cli/src/**`, `consolonia/src/**`) (**Beacon**)
+- Does NOT modify application source code (`packages/recall/src/**`, `packages/cli/src/**`, `packages/consolonia/src/**`) (**Beacon**)
 - Does NOT modify framework templates, onboarding, or project documentation (**Scribe**)
 - Does NOT change package functionality or dependencies beyond what CI/CD requires (**Beacon**)
 
@@ -50,6 +50,9 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `npm test` — Run all test suites (from repo root)
 - `npm run build -w recall` — Build a specific package
 - `npm test -w cli` — Test a specific package
+- `npm run lint` — Run Biome linter across all packages
+- `npm run typecheck` — Type-check all packages
+- `npm run test:coverage` — Run tests with coverage reporting
 
 ### File Patterns
 
@@ -59,7 +62,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 ### Technologies
 
 - **GitHub Actions** — CI/CD platform for all workflows
-- **npm workspaces** — Monorepo package management (packages: `recall/`, `cli/`, `consolonia/`)
+- **npm workspaces** — Monorepo package management (packages: `packages/recall/`, `packages/cli/`, `packages/consolonia/`)
 - **Node.js 20+** — Runtime for builds and tests
 - **TypeScript** — All packages compile with `tsc`
 
@@ -69,6 +72,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 - `.github/workflows/**` — All CI/CD workflow files
 - `.github/**` — GitHub configuration files (dependabot, issue templates, etc.)
+- `.github/matchers/**` — Problem matcher files (TypeScript, Biome lint)
 
 ### Secondary
 
@@ -80,3 +84,5 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `.github/workflows/ci.yml` — **Produces** CI status checks consumed by GitHub branch protection
 - `.github/workflows/release.yml` — **Produces** published packages consumed by npm registry
 - `package.json` (root) — **Consumes** workspace definitions and scripts defined by **Beacon**
+- `.github/workflows/pages.yml` — **Produces** GitHub Pages deployment
+- `.github/workflows/changelog.yml` — **Produces** per-package changelogs via manual dispatch

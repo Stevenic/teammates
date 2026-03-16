@@ -38,6 +38,10 @@ export interface TextInputOptions {
   colorize?: InputColorizer;
   /** Optional callback to determine delete size for backspace/delete. */
   deleteSize?: DeleteSizer;
+  /** Optional hint callback. Returns dim text to show after the value (e.g. placeholder params). */
+  hint?: (value: string) => string | null;
+  /** Style for hint text (default: dim/italic). */
+  hintStyle?: TextStyle;
 }
 
 export class TextInput extends Control {
@@ -51,6 +55,8 @@ export class TextInput extends Control {
   private _promptStyle: TextStyle;
   private _colorize: InputColorizer | null;
   private _deleteSize: DeleteSizer | null;
+  private _hint: ((value: string) => string | null) | null;
+  private _hintStyle: TextStyle;
 
   /** Command history entries (most recent last). */
   private _history: string[];
@@ -74,6 +80,8 @@ export class TextInput extends Control {
     this._history = options.history ? [...options.history] : [];
     this._colorize = options.colorize ?? null;
     this._deleteSize = options.deleteSize ?? null;
+    this._hint = options.hint ?? null;
+    this._hintStyle = options.hintStyle ?? { italic: true };
   }
 
   // ── Public properties ─────────────────────────────────────────
@@ -685,6 +693,19 @@ export class TextInput extends Control {
       // Cursor at end of this line (append position)
       if (isFocused && lineIdx === cursorRow && cursorCol >= drawCol) {
         this._drawCursor(ctx, rowX + drawCol, screenY, " ");
+
+        // Draw hint text after cursor (only on the last line, at the end)
+        if (this._hint && lineIdx === lines.length - 1) {
+          const hintText = this._hint(this._value);
+          if (hintText) {
+            const hintX = rowX + drawCol + 1; // +1 for cursor block
+            const maxHintLen = totalWidth - (hintX - bx);
+            const clipped = hintText.slice(0, maxHintLen);
+            for (let hi = 0; hi < clipped.length; hi++) {
+              ctx.drawChar(hintX + hi, screenY, clipped[hi], this._hintStyle);
+            }
+          }
+        }
       }
     }
   }

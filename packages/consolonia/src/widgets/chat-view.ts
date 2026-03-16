@@ -91,6 +91,10 @@ export interface ChatViewOptions {
   inputColorize?: InputColorizer;
   /** Callback to determine delete size for backspace/delete in input. */
   inputDeleteSize?: DeleteSizer;
+  /** Hint callback — returns dim text shown after the cursor (e.g. param placeholders). */
+  inputHint?: (value: string) => string | null;
+  /** Style for input hint text (default: dim). */
+  inputHintStyle?: TextStyle;
   /** Placeholder when input is empty. */
   placeholder?: string;
   /** Style for placeholder text. */
@@ -239,6 +243,8 @@ export class ChatView extends Control {
       history: options.history,
       colorize: options.inputColorize,
       deleteSize: options.inputDeleteSize,
+      hint: options.inputHint,
+      hintStyle: options.inputHintStyle,
     });
     this._input.focusable = true;
     this._input.onFocus();

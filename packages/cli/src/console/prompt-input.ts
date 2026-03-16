@@ -53,6 +53,12 @@ export interface PromptInputOptions {
    * highlighting @mentions and /commands.
    */
   colorize?: (value: string) => string;
+  /**
+   * Return dim placeholder text to show after the current input value.
+   * Called on every refresh. Return null or empty string for no hint.
+   * The returned text is displayed in dim style and is not part of the value.
+   */
+  hint?: (value: string) => string | null;
 }
 
 // ── PromptInput ────────────────────────────────────────────────────
@@ -78,6 +84,7 @@ export class PromptInput extends EventEmitter {
   private _onUpDown: ((direction: "up" | "down") => boolean) | null;
   private _beforeSubmit: ((currentValue: string) => string | undefined) | null;
   private _colorize: ((value: string) => string) | null;
+  private _hint: ((value: string) => string | null) | null;
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private _promptRows = 1; // screen rows occupied by prompt + value
   private _cursorRow = 0; // cursor's row within prompt (0-based)
@@ -94,6 +101,7 @@ export class PromptInput extends EventEmitter {
     this._onUpDown = options.onUpDown ?? null;
     this._beforeSubmit = options.beforeSubmit ?? null;
     this._colorize = options.colorize ?? null;
+    this._hint = options.hint ?? null;
 
     const { processor, events } = createInputProcessor();
     this._processor = processor;
@@ -589,14 +597,20 @@ export class PromptInput extends EventEmitter {
     // Block cursor: inverted character
     const blockCursor = `\x1b[7m${charAtCursor}\x1b[27m`;
 
-    const line = this._prompt + colorBefore + blockCursor + colorAfter;
+    // Dim hint text after the value (e.g. placeholder params)
+    const hintText = this._hint ? this._hint(this._value) ?? "" : "";
+    const dimHint = hintText ? `\x1b[2m${hintText}\x1b[22m` : "";
+
+    const line =
+      this._prompt + colorBefore + blockCursor + colorAfter + dimHint;
     process.stdout.write(line);
 
-    // Calculate geometry — +1 for the cursor block char
+    // Calculate geometry — +1 for the cursor block char, + hint length
     const totalChars =
       this._promptLen +
       this._value.length +
-      (this._cursor >= this._value.length ? 1 : 0);
+      (this._cursor >= this._value.length ? 1 : 0) +
+      hintText.length;
     this._promptRows = totalChars <= cols ? 1 : Math.ceil(totalChars / cols);
 
     const cursorCharPos = this._promptLen + this._cursor;
@@ -689,8 +703,9 @@ export class PromptInput extends EventEmitter {
 
       // Old top border was oldCols chars, now wraps to:
       const topBorderRows = rowsFor(oldCols, newCols);
-      // Old prompt was _promptLen + _value.length chars:
-      const promptChars = this._promptLen + this._value.length;
+      // Old prompt was _promptLen + _value.length + hint chars:
+      const hintLen = this._hint ? (this._hint(this._value) ?? "").length : 0;
+      const promptChars = this._promptLen + this._value.length + hintLen;
       const oldPromptRows = Math.max(1, rowsFor(promptChars, newCols));
       // Old bottom border was also oldCols chars:
       const _botBorderRows = rowsFor(oldCols, newCols);

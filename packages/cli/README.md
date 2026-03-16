@@ -55,16 +55,17 @@ Once inside the REPL, you can interact with teammates using `@mentions`, `/comma
 
 | Command | Aliases | Description |
 |---|---|---|
-| `/route <task>` | `/r` | Auto-route a task to the best teammate |
-| `/status` | `/s` | Show teammate roster and session status |
-| `/teammates` | `/team`, `/t` | List all teammates and their roles |
+| `/status` | `/s`, `/queue`, `/qu` | Show teammates, active tasks, and queue |
 | `/log [teammate]` | `/l` | Show the last task result (optionally for a specific teammate) |
 | `/debug [teammate]` | `/raw` | Show raw agent output from the last task |
-| `/queue @teammate <task>` | `/qu` | Add a task to the background queue |
-| `/queue` | `/qu` | Show the current queue |
 | `/cancel <n>` | | Cancel a queued task by number |
-| `/install <service>` | | Install an optional service (e.g. `recall`) |
-| `/clear` | `/cls`, `/reset` | Clear conversation history, reset all sessions, and reprint banner |
+| `/init` | `/onboard`, `/setup` | Run onboarding to set up teammates for this project |
+| `/install <service>` | | Install a teammates service (e.g. `recall`) |
+| `/compact [teammate]` | | Compact daily logs into weekly/monthly summaries |
+| `/retro [teammate]` | | Run a structured self-retrospective for a teammate |
+| `/copy` | `/cp` | Copy the last response to clipboard |
+| `/theme` | | Show current theme colors |
+| `/clear` | `/cls`, `/reset` | Clear history and reset the session |
 | `/help` | `/h`, `/?` | Show available commands |
 | `/exit` | `/q`, `/quit` | Exit the session |
 
