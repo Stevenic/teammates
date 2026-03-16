@@ -2393,6 +2393,16 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       }
     });
 
+    this.chatView.on("link", (url: string) => {
+      const cmd =
+        process.platform === "darwin"
+          ? "open"
+          : process.platform === "win32"
+            ? "start"
+            : "xdg-open";
+      execCb(`${cmd} ${JSON.stringify(url)}`);
+    });
+
     this.app = new App({
       root: this.chatView,
       alternateScreen: true,

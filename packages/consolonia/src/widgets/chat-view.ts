@@ -43,6 +43,9 @@ import {
   TextInput,
 } from "./text-input.js";
 
+// ── URL detection ──────────────────────────────────────────────────
+const URL_REGEX = /https?:\/\/[^\s)>\]]+/g;
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface DropdownItem {
@@ -129,6 +132,8 @@ export class ChatView extends Control {
   private _hoveredAction: number = -1;
   /** Maps screen Y → feed line index (rebuilt each render). */
   private _screenToFeedLine: Map<number, number> = new Map();
+  /** Maps screen Y → row offset within the feed line (for multi-row wrapped lines). */
+  private _screenToFeedRow: Map<number, number> = new Map();
   private _bottomSeparator: _Separator;
   private _progressText: StyledText;
   private _input: TextInput;
@@ -151,6 +156,10 @@ export class ChatView extends Control {
   private _totalContentH: number = 0;
   private _maxInputH: number;
   private _feedScrollOffset: number = 0;
+
+  // ── Feed geometry (cached from last render for hit-testing) ──
+  private _feedX: number = 0;
+  private _contentWidth: number = 0;
 
   // ── Scrollbar state ───────────────────────────────────────────
   /** Cached from last render for hit-testing. */
@@ -657,6 +666,29 @@ export class ChatView extends Control {
         }
       }
 
+      // Ctrl+click to open URLs in browser
+      if (me.type === "press" && me.button === "left" && me.ctrl) {
+        const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
+        if (feedLineIdx >= 0) {
+          const text = this._extractFeedLineText(feedLineIdx);
+          URL_REGEX.lastIndex = 0;
+          const urls = [...text.matchAll(URL_REGEX)];
+          if (urls.length === 1) {
+            this.emit("link", urls[0][0]);
+            return true;
+          }
+          if (urls.length > 1) {
+            // Try to resolve which URL based on click position
+            const row = this._screenToFeedRow.get(me.y) ?? 0;
+            const col = me.x - this._feedX;
+            const charOffset = row * this._contentWidth + col;
+            const hit = this._findUrlAtOffset(text, charOffset);
+            this.emit("link", hit ?? urls[0][0]);
+            return true;
+          }
+        }
+      }
+
       // Action hover/click in feed area
       if (this._feedActions.size > 0) {
         const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
@@ -698,6 +730,33 @@ export class ChatView extends Control {
 
     // Delegate to input
     return this._input.handleInput(event);
+  }
+
+  /** Extract the plain text content of a feed line. */
+  private _extractFeedLineText(idx: number): string {
+    const styledText = this._feedLines[idx];
+    if (!styledText) return "";
+    return styledText.lines
+      .map((line) => {
+        if (typeof line === "string") return line;
+        return line.map((seg) => seg.text).join("");
+      })
+      .join("\n");
+  }
+
+  /** Find the URL at the given character offset, if any. */
+  private _findUrlAtOffset(
+    text: string,
+    charOffset: number,
+  ): string | null {
+    URL_REGEX.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = URL_REGEX.exec(text)) !== null) {
+      if (charOffset >= match.index && charOffset < match.index + match[0].length) {
+        return match[0];
+      }
+    }
+    return null;
   }
 
   /** Resolve which action item the mouse x-position falls on. */
@@ -876,6 +935,8 @@ export class ChatView extends Control {
     // Build the list of scrollable items: banner + separator + feed lines
     // Each item is { control, height } measured against content width.
     const contentWidth = width - 1; // reserve 1 col for scrollbar
+    this._feedX = x;
+    this._contentWidth = contentWidth;
 
     interface ScrollItem {
       render: (cx: number, cy: number, cw: number, ch: number) => void;
@@ -959,16 +1020,18 @@ export class ChatView extends Control {
 
     // Render visible items and build screen→feedLine map
     this._screenToFeedLine.clear();
+    this._screenToFeedRow.clear();
     let cy = y - (this._feedScrollOffset - skippedRows);
     for (let i = startIdx; i < items.length && cy < y + height; i++) {
       const item = items[i];
       item.render(x, cy, contentWidth, item.height);
-      // Map screen rows to feed line index for action hit-testing
+      // Map screen rows to feed line index + row offset for hit-testing
       if (item.feedLineIdx >= 0) {
         for (let row = 0; row < item.height; row++) {
           const screenY = cy + row;
           if (screenY >= y && screenY < y + height) {
             this._screenToFeedLine.set(screenY, item.feedLineIdx);
+            this._screenToFeedRow.set(screenY, row);
           }
         }
       }
