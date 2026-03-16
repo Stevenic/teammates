@@ -516,12 +516,13 @@ function renderTable(
   token: Tokens.Table,
   lines: Line[],
   theme: MarkdownTheme,
-  _width: number,
+  width: number,
   indent: string,
 ): void {
   const numCols = token.header.length;
+  const avail = width - indent.length;
 
-  // Compute column widths from content
+  // Compute natural column widths from content
   const colWidths: number[] = token.header.map(
     (h) => plainText(h.tokens).length,
   );
@@ -537,6 +538,56 @@ function renderTable(
     colWidths[c] = Math.max(3, colWidths[c]) + 2;
   }
 
+  // Shrink columns if total table width exceeds available width
+  // Total = sum(colWidths) + numCols + 1 (for │ borders)
+  const MIN_COL = 6; // minimum inner width to be readable
+  const totalBorders = numCols + 1;
+  const totalNatural = colWidths.reduce((a, b) => a + b, 0) + totalBorders;
+  if (totalNatural > avail && avail > totalBorders + numCols * MIN_COL) {
+    const budgetForCols = avail - totalBorders;
+    const naturalSum = colWidths.reduce((a, b) => a + b, 0);
+    // Proportional shrink, respecting minimum
+    let remaining = budgetForCols;
+    const fixed: boolean[] = new Array(numCols).fill(false);
+    // First pass: clamp small columns to their natural width
+    for (let c = 0; c < numCols; c++) {
+      const share = Math.floor((colWidths[c] / naturalSum) * budgetForCols);
+      if (share >= colWidths[c]) {
+        // Column already fits — no shrinking needed
+        fixed[c] = true;
+        remaining -= colWidths[c];
+      }
+    }
+    // Second pass: distribute remaining budget proportionally among shrinkable columns
+    const shrinkSum = colWidths
+      .filter((_w, i) => !fixed[i])
+      .reduce((a, b) => a + b, 0);
+    if (shrinkSum > 0) {
+      let distributed = 0;
+      const shrinkable = colWidths.map((_w, i) => !fixed[i]);
+      for (let c = 0; c < numCols; c++) {
+        if (shrinkable[c]) {
+          const share = Math.max(
+            MIN_COL,
+            Math.floor((colWidths[c] / shrinkSum) * remaining),
+          );
+          colWidths[c] = share;
+          distributed += share;
+        }
+      }
+      // Give any leftover pixels to the last shrinkable column
+      const leftover = remaining - distributed;
+      if (leftover !== 0) {
+        for (let c = numCols - 1; c >= 0; c--) {
+          if (shrinkable[c]) {
+            colWidths[c] += leftover;
+            break;
+          }
+        }
+      }
+    }
+  }
+
   const border = theme.tableBorder;
 
   // Helper to build a horizontal rule
@@ -545,20 +596,58 @@ function renderTable(
     return left + parts.join(mid) + right;
   };
 
-  // Helper to build a data row
-  const dataRow = (cells: Tokens.TableCell[], style: TextStyle): Line => {
-    const segs: Seg[] = [
-      { text: indent, style: theme.text },
-      { text: "│", style: border },
-    ];
+  // Word-wrap text to fit within a column width (breaks on spaces)
+  const wrapCellText = (text: string, maxW: number): string[] => {
+    if (maxW <= 0) return [text];
+    if (text.length <= maxW) return [text];
+    const wrapped: string[] = [];
+    let rest = text;
+    while (rest.length > maxW) {
+      // Find last space within the limit
+      let breakAt = rest.lastIndexOf(" ", maxW);
+      if (breakAt <= 0) {
+        // No space — hard break
+        breakAt = maxW;
+        wrapped.push(rest.slice(0, breakAt));
+        rest = rest.slice(breakAt);
+      } else {
+        wrapped.push(rest.slice(0, breakAt));
+        rest = rest.slice(breakAt + 1); // skip the space
+      }
+    }
+    if (rest.length > 0) wrapped.push(rest);
+    return wrapped;
+  };
+
+  // Helper to build a (possibly multi-line) data row
+  const dataRows = (cells: Tokens.TableCell[], style: TextStyle): Line[] => {
+    // Get wrapped lines for each cell
+    const cellLines: string[][] = [];
+    let maxLines = 1;
     for (let c = 0; c < numCols; c++) {
       const cellText = cells[c] ? plainText(cells[c].tokens) : "";
-      const align = token.header[c]?.align;
-      const padded = padCell(cellText, colWidths[c], align);
-      segs.push({ text: padded, style });
-      segs.push({ text: "│", style: border });
+      const innerW = colWidths[c] - 2; // 1 char padding each side
+      const wrapped = wrapCellText(cellText, innerW);
+      cellLines.push(wrapped);
+      if (wrapped.length > maxLines) maxLines = wrapped.length;
     }
-    return segs;
+
+    const result: Line[] = [];
+    for (let row = 0; row < maxLines; row++) {
+      const segs: Seg[] = [
+        { text: indent, style: theme.text },
+        { text: "│", style: border },
+      ];
+      for (let c = 0; c < numCols; c++) {
+        const lineText = row < cellLines[c].length ? cellLines[c][row] : "";
+        const align = token.header[c]?.align;
+        const padded = padCell(lineText, colWidths[c], align);
+        segs.push({ text: padded, style });
+        segs.push({ text: "│", style: border });
+      }
+      result.push(segs);
+    }
+    return result;
   };
 
   // Top border
@@ -567,8 +656,10 @@ function renderTable(
     { text: hRule("┌", "┬", "┐"), style: border },
   ]);
 
-  // Header row
-  lines.push(dataRow(token.header, theme.tableHeader));
+  // Header row (may be multi-line)
+  for (const line of dataRows(token.header, theme.tableHeader)) {
+    lines.push(line);
+  }
 
   // Header separator
   lines.push([
@@ -576,9 +667,11 @@ function renderTable(
     { text: hRule("├", "┼", "┤"), style: border },
   ]);
 
-  // Data rows
+  // Data rows (may be multi-line each)
   for (const row of token.rows) {
-    lines.push(dataRow(row, theme.text));
+    for (const line of dataRows(row, theme.text)) {
+      lines.push(line);
+    }
   }
 
   // Bottom border
