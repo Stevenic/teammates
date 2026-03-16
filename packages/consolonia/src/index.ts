@@ -153,6 +153,11 @@ export {
   type DropdownItem,
   type FeedActionItem,
 } from "./widgets/chat-view.js";
+export {
+  Interview,
+  type InterviewOptions,
+  type InterviewQuestion,
+} from "./widgets/interview.js";
 export { Panel, type PanelOptions } from "./widgets/panel.js";
 export { ScrollView, type ScrollViewOptions } from "./widgets/scroll-view.js";
 export {

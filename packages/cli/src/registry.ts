@@ -27,9 +27,7 @@ export class Registry {
     const entries = await readdir(this.teammatesDir, { withFileTypes: true });
     const dirs = entries.filter(
       (e) =>
-        e.isDirectory() &&
-        !e.name.startsWith(".") &&
-        !e.name.startsWith("_"),
+        e.isDirectory() && !e.name.startsWith(".") && !e.name.startsWith("_"),
     );
 
     for (const dir of dirs) {

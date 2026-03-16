@@ -598,7 +598,7 @@ export class PromptInput extends EventEmitter {
     const blockCursor = `\x1b[7m${charAtCursor}\x1b[27m`;
 
     // Dim hint text after the value (e.g. placeholder params)
-    const hintText = this._hint ? this._hint(this._value) ?? "" : "";
+    const hintText = this._hint ? (this._hint(this._value) ?? "") : "";
     const dimHint = hintText ? `\x1b[2m${hintText}\x1b[22m` : "";
 
     const line =

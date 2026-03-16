@@ -141,7 +141,7 @@ function wrapText(text: string, width: number): string[] {
         current = word;
       }
     } else if (current.length + 1 + word.length <= width) {
-      current += " " + word;
+      current += ` ${word}`;
     } else {
       lines.push(current);
       // Force-break words longer than width

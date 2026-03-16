@@ -153,11 +153,7 @@ export class ChatView extends Control {
   private _separatorChar: string;
   private _dropdownHighlightStyle: TextStyle;
   private _dropdownStyle: TextStyle;
-  private _dropdownLabelStyle: TextStyle;
   private _footerStyle: TextStyle;
-  private _lastWidth: number = 0;
-  private _lastHeight: number = 0;
-  private _totalContentH: number = 0;
   private _maxInputH: number;
   private _feedScrollOffset: number = 0;
 
@@ -179,7 +175,8 @@ export class ChatView extends Control {
   /** The Y offset within the thumb where the drag started. */
   private _dragOffsetY: number = 0;
 
-  // ── Double buffer ──────────────────────────────────────────────
+  /** Optional widget that replaces the input area (e.g. Interview). */
+  private _inputOverride: Control | null = null;
 
   constructor(options: ChatViewOptions = {}) {
     super();
@@ -192,8 +189,6 @@ export class ChatView extends Control {
       bold: true,
     };
     this._dropdownStyle = options.dropdownStyle ?? {};
-    this._dropdownLabelStyle =
-      options.dropdownLabelStyle ?? this._dropdownStyle;
     this._footerStyle = options.footerStyle ?? {};
     this._maxInputH = options.maxInputHeight ?? 1;
 
@@ -567,6 +562,48 @@ export class ChatView extends Control {
     return this._dropdownIndex;
   }
 
+  // ── Public API: Input Override ─────────────────────────────────
+
+  /**
+   * Replace the normal input/footer area with a custom widget
+   * (e.g. an Interview). While an override is active the normal
+   * input, separator, footer and dropdown are hidden and input
+   * events are routed to the override widget.
+   *
+   * Pass `null` to remove the override and restore normal input.
+   */
+  setInputOverride(widget: Control | null): void {
+    // Remove previous override
+    if (this._inputOverride) {
+      this.removeChild(this._inputOverride);
+    }
+
+    this._inputOverride = widget;
+
+    if (widget) {
+      this.addChild(widget);
+      // Hide normal input chrome
+      this._input.visible = false;
+      this._input.focusable = false;
+      this._inputSeparator.visible = false;
+      this._footer.visible = false;
+    } else {
+      // Restore normal input chrome
+      this._input.visible = true;
+      this._input.focusable = true;
+      this._input.onFocus();
+      this._inputSeparator.visible = true;
+      this._footer.visible = true;
+    }
+
+    this.invalidate();
+  }
+
+  /** Get the current input override widget, or null. */
+  get inputOverride(): Control | null {
+    return this._inputOverride;
+  }
+
   // ── Input handling ─────────────────────────────────────────────
 
   override handleInput(event: InputEvent): boolean {
@@ -734,7 +771,10 @@ export class ChatView extends Control {
       }
     }
 
-    // Delegate to input
+    // Delegate to override widget or normal input
+    if (this._inputOverride) {
+      return this._inputOverride.handleInput(event);
+    }
     return this._input.handleInput(event);
   }
 
@@ -751,14 +791,14 @@ export class ChatView extends Control {
   }
 
   /** Find the URL at the given character offset, if any. */
-  private _findUrlAtOffset(
-    text: string,
-    charOffset: number,
-  ): string | null {
+  private _findUrlAtOffset(text: string, charOffset: number): string | null {
     URL_REGEX.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = URL_REGEX.exec(text)) !== null) {
-      if (charOffset >= match.index && charOffset < match.index + match[0].length) {
+      if (
+        charOffset >= match.index &&
+        charOffset < match.index + match[0].length
+      ) {
         return match[0];
       }
     }
@@ -810,9 +850,6 @@ export class ChatView extends Control {
   // ── Layout ─────────────────────────────────────────────────────
 
   override measure(constraint: Constraint): Size {
-    this._lastWidth = constraint.maxWidth;
-    this._lastHeight = constraint.maxHeight;
-
     // ChatView always fills the full available space
     const size: Size = {
       width: constraint.maxWidth,
@@ -847,6 +884,63 @@ export class ChatView extends Control {
 
     // Bottom separator: 1 row
     const botSepH = 1;
+
+    // When an input override is active, it replaces input + inputSep + footer
+    if (this._inputOverride) {
+      // Measure the override widget
+      const overrideSize = this._inputOverride.measure({
+        minWidth: 0,
+        maxWidth: W,
+        minHeight: 0,
+        maxHeight: Math.max(1, Math.floor(H / 2)), // up to half the screen
+      });
+      const overrideH = overrideSize.height;
+      const chromeH = botSepH + progressH + overrideH;
+      const feedH = Math.max(0, H - chromeH);
+
+      let y = b.y;
+
+      // 1. Feed area
+      if (feedH > 0) {
+        this._renderFeed(ctx, b.x, y, W, feedH);
+        y += feedH;
+      }
+
+      // 2. Progress text
+      if (progressH > 0) {
+        this._progressText.measure({
+          minWidth: 0,
+          maxWidth: W,
+          minHeight: 0,
+          maxHeight: 1,
+        });
+        this._progressText.arrange({
+          x: b.x,
+          y,
+          width: W,
+          height: progressH,
+        });
+        this._progressText.render(ctx);
+        y += progressH;
+      }
+
+      // 3. Bottom separator
+      this._bottomSeparator.arrange({ x: b.x, y, width: W, height: 1 });
+      this._bottomSeparator.render(ctx);
+      y += 1;
+
+      // 4. Override widget (replaces input + inputSep + footer)
+      this._inputOverride.arrange({
+        x: b.x,
+        y,
+        width: W,
+        height: overrideH,
+      });
+      this._inputOverride.render(ctx);
+      return;
+    }
+
+    // ── Normal input mode ────────────────────────────────────
 
     // Input: measure to get wrapped height (up to maxInputH rows)
     const inputSize = this._input.measure({
@@ -1066,7 +1160,6 @@ export class ChatView extends Control {
       this._feedH = height;
       this._thumbPos = thumbPos;
       this._thumbSize = thumbSize;
-      this._totalContentH = totalContentH;
       this._maxScroll = maxScroll;
       this._scrollbarVisible = true;
 

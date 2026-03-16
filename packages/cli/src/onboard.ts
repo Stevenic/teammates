@@ -108,7 +108,9 @@ export async function copyTemplateFiles(
  */
 const NON_TEAMMATE_NAMES = new Set(["example", "services.json"]);
 function isNonTeammateEntry(name: string): boolean {
-  return name.startsWith(".") || name.startsWith("_") || NON_TEAMMATE_NAMES.has(name);
+  return (
+    name.startsWith(".") || name.startsWith("_") || NON_TEAMMATE_NAMES.has(name)
+  );
 }
 
 /**
