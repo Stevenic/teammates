@@ -2855,6 +2855,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       }
     });
 
+    this.chatView.on("copy", (text: string) => {
+      this.doCopy(text);
+    });
+
     this.chatView.on("link", (url: string) => {
       const quoted = JSON.stringify(url);
       const cmd =

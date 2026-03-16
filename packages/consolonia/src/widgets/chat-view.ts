@@ -46,6 +46,9 @@ import {
 // ── URL detection ──────────────────────────────────────────────────
 const URL_REGEX = /https?:\/\/[^\s)>\]]+/g;
 
+// ── Selection highlight color ─────────────────────────────────────
+const SELECTION_BG = { r: 60, g: 100, b: 180, a: 255 };
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface DropdownItem {
@@ -174,6 +177,13 @@ export class ChatView extends Control {
   private _dragging: boolean = false;
   /** The Y offset within the thumb where the drag started. */
   private _dragOffsetY: number = 0;
+
+  // ── Selection state ──────────────────────────────────────────
+  private _selAnchor: { x: number; y: number } | null = null;
+  private _selEnd: { x: number; y: number } | null = null;
+  private _selecting: boolean = false;
+  /** DrawingContext reference from the last render (for text extraction). */
+  private _ctx: DrawingContext | null = null;
 
   /** Optional widget that replaces the input area (e.g. Interview). */
   private _inputOverride: Control | null = null;
@@ -610,10 +620,25 @@ export class ChatView extends Control {
     if (event.type === "key") {
       const ke = event.event;
 
-      // Ctrl+C → emit for the app to handle
+      // Ctrl+C: if selection active, copy; otherwise emit for the app
       if (ke.key === "c" && ke.ctrl && !ke.alt && !ke.shift) {
+        if (this._hasSelection()) {
+          this._copySelection();
+          return true;
+        }
         this.emit("ctrlc");
         return true;
+      }
+
+      // Enter: if selection active, copy; otherwise fall through
+      if (ke.key === "enter" && this._hasSelection()) {
+        this._copySelection();
+        return true;
+      }
+
+      // Any key clears active selection
+      if (this._hasSelection()) {
+        this.clearSelection();
       }
 
       // Dropdown navigation
@@ -651,7 +676,7 @@ export class ChatView extends Control {
       }
     }
 
-    // Mouse events: wheel scrolling + scrollbar drag
+    // Mouse events: wheel scrolling, scrollbar drag, selection, actions
     if (event.type === "mouse") {
       const me = event.event;
       if (me.type === "wheelup") {
@@ -663,24 +688,24 @@ export class ChatView extends Control {
         return true;
       }
 
+      // Precompute scrollbar hit for reuse
+      const onScrollbar =
+        this._scrollbarVisible &&
+        me.x === this._scrollbarX &&
+        me.y >= this._feedY &&
+        me.y < this._feedY + this._feedH;
+
       // Scrollbar drag
       if (this._scrollbarVisible) {
-        const onScrollbar =
-          me.x === this._scrollbarX &&
-          me.y >= this._feedY &&
-          me.y < this._feedY + this._feedH;
-
         if (me.type === "press" && me.button === "left" && onScrollbar) {
           const relY = me.y - this._feedY;
           if (
             relY >= this._thumbPos &&
             relY < this._thumbPos + this._thumbSize
           ) {
-            // Clicked on thumb — start dragging
             this._dragging = true;
             this._dragOffsetY = relY - this._thumbPos;
           } else {
-            // Clicked on track — jump to that position
             const ratio = relY / this._feedH;
             this._feedScrollOffset = Math.round(ratio * this._maxScroll);
             this._feedScrollOffset = Math.max(
@@ -721,7 +746,6 @@ export class ChatView extends Control {
             return true;
           }
           if (urls.length > 1) {
-            // Try to resolve which URL based on click position
             const row = this._screenToFeedRow.get(me.y) ?? 0;
             const col = me.x - this._feedX;
             const charOffset = row * this._contentWidth + col;
@@ -730,6 +754,49 @@ export class ChatView extends Control {
             return true;
           }
         }
+      }
+
+      // Text selection: start on left press in feed area
+      if (
+        me.type === "press" &&
+        me.button === "left" &&
+        !me.ctrl &&
+        !onScrollbar
+      ) {
+        const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
+        const isAction =
+          feedLineIdx >= 0 && this._feedActions.has(feedLineIdx);
+        if (!isAction) {
+          this._selAnchor = { x: me.x, y: me.y };
+          this._selEnd = { x: me.x, y: me.y };
+          this._selecting = true;
+          this.invalidate();
+          return true;
+        }
+      }
+
+      // Text selection: extend on move
+      if (me.type === "move" && this._selecting) {
+        this._selEnd = { x: me.x, y: me.y };
+        this.invalidate();
+        return true;
+      }
+
+      // Text selection: finalize on release
+      if (me.type === "release" && this._selecting) {
+        this._selecting = false;
+        // If anchor == end (just a click, no drag), clear selection
+        if (
+          this._selAnchor &&
+          this._selEnd &&
+          this._selAnchor.x === this._selEnd.x &&
+          this._selAnchor.y === this._selEnd.y
+        ) {
+          this._selAnchor = null;
+          this._selEnd = null;
+        }
+        this.invalidate();
+        return true;
       }
 
       // Action hover/click in feed area
@@ -744,14 +811,12 @@ export class ChatView extends Control {
             newHover !== this._hoveredAction ||
             (entry && entry.items.length > 1)
           ) {
-            // Restore previous hover
             if (this._hoveredAction >= 0) {
               const prev = this._feedActions.get(this._hoveredAction);
               if (prev) {
                 this._feedLines[this._hoveredAction].lines = [prev.normalStyle];
               }
             }
-            // Apply new hover — highlight only the hovered action item
             if (entry && newHover >= 0) {
               const hitItem = this._resolveActionItem(entry, me.x);
               const hoverLine = this._buildHoverLine(entry, hitItem);
@@ -760,7 +825,6 @@ export class ChatView extends Control {
             this._hoveredAction = newHover;
             this.invalidate();
           }
-          // Don't consume — let other handlers run too
         }
 
         if (me.type === "press" && me.button === "left" && entry) {
@@ -868,6 +932,7 @@ export class ChatView extends Control {
   // ── Render ─────────────────────────────────────────────────────
 
   override render(ctx: DrawingContext): void {
+    this._ctx = ctx;
     const b = this.bounds;
     if (!b || b.width < 1 || b.height < 3) return;
 
@@ -1176,6 +1241,11 @@ export class ChatView extends Control {
       this._scrollbarVisible = false;
     }
 
+    // Render selection highlight overlay
+    if (this._selAnchor && this._selEnd) {
+      this._renderSelection(ctx, x, y, width, height);
+    }
+
     ctx.popClip();
   }
 
@@ -1201,6 +1271,98 @@ export class ChatView extends Control {
       const truncated = text.length > width ? text.slice(0, width) : text;
       ctx.drawText(x, y + i, truncated, style);
     }
+  }
+
+  // ── Selection ──────────────────────────────────────────────────
+
+  /** Whether a non-zero text selection is active. */
+  private _hasSelection(): boolean {
+    return (
+      this._selAnchor !== null &&
+      this._selEnd !== null &&
+      (this._selAnchor.x !== this._selEnd.x ||
+        this._selAnchor.y !== this._selEnd.y)
+    );
+  }
+
+  /** Copy the selected text and clear the selection. */
+  private _copySelection(): void {
+    const text = this._getSelectedText();
+    if (text) {
+      this.emit("copy", text);
+    }
+    this.clearSelection();
+  }
+
+  /** Extract the plain text within the current selection from the pixel buffer. */
+  private _getSelectedText(): string {
+    if (!this._selAnchor || !this._selEnd || !this._ctx) return "";
+
+    let startY = this._selAnchor.y;
+    let startX = this._selAnchor.x;
+    let endY = this._selEnd.y;
+    let endX = this._selEnd.x;
+
+    if (startY > endY || (startY === endY && startX > endX)) {
+      [startY, endY] = [endY, startY];
+      [startX, endX] = [endX, startX];
+    }
+
+    const lines: string[] = [];
+    for (let row = startY; row <= endY; row++) {
+      const colStart = row === startY ? startX : this._feedX;
+      const colEnd =
+        row === endY ? endX : this._feedX + this._contentWidth - 1;
+      let line = "";
+      for (let col = colStart; col <= colEnd; col++) {
+        const ch = this._ctx.readCharAbsolute(col, row);
+        line += ch || " ";
+      }
+      lines.push(line.trimEnd());
+    }
+
+    return lines.join("\n");
+  }
+
+  /** Render the selection highlight overlay within the feed area. */
+  private _renderSelection(
+    ctx: DrawingContext,
+    feedX: number,
+    feedY: number,
+    feedW: number,
+    feedH: number,
+  ): void {
+    if (!this._selAnchor || !this._selEnd) return;
+
+    let startY = this._selAnchor.y;
+    let startX = this._selAnchor.x;
+    let endY = this._selEnd.y;
+    let endX = this._selEnd.x;
+
+    if (startY > endY || (startY === endY && startX > endX)) {
+      [startY, endY] = [endY, startY];
+      [startX, endX] = [endX, startX];
+    }
+
+    // Clamp to feed area
+    startY = Math.max(startY, feedY);
+    endY = Math.min(endY, feedY + feedH - 1);
+
+    for (let row = startY; row <= endY; row++) {
+      const colStart = row === startY ? startX : feedX;
+      const colEnd = row === endY ? endX : feedX + feedW - 2;
+      for (let col = colStart; col <= colEnd; col++) {
+        ctx.highlightCell(col, row, SELECTION_BG);
+      }
+    }
+  }
+
+  /** Clear any active text selection. */
+  clearSelection(): void {
+    this._selAnchor = null;
+    this._selEnd = null;
+    this._selecting = false;
+    this.invalidate();
   }
 
   // ── Auto-scroll ────────────────────────────────────────────────

@@ -379,4 +379,19 @@ export class DrawingContext {
     if (!this.isVisible(x, y)) return;
     this.bufSet(x, y, blendPixel(pixel, this.bufGet(x, y)));
   }
+
+  // ── Selection helpers ─────────────────────────────────────────
+
+  /** Replace the background color of an existing cell. Respects clip. */
+  highlightCell(x: number, y: number, bgColor: Color): void {
+    if (!this.isVisible(x, y)) return;
+    const existing = this.bufGet(x, y);
+    const newBg = background(bgColor);
+    this.bufSet(x, y, { foreground: existing.foreground, background: newBg });
+  }
+
+  /** Read the character at absolute buffer coordinates (ignores translate). */
+  readCharAbsolute(x: number, y: number): string {
+    return this.buffer.get(x, y).foreground.symbol.text;
+  }
 }
