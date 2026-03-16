@@ -1454,13 +1454,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   private queueTask(input: string): void {
+    const allNames = this.orchestrator.listTeammates();
+
     // Check for @everyone — queue to all teammates except the coding agent
     const everyoneMatch = input.match(/^@everyone\s+([\s\S]+)$/i);
     if (everyoneMatch) {
       const task = everyoneMatch[1];
-      const names = this.orchestrator
-        .listTeammates()
-        .filter((n) => n !== this.adapterName);
+      const names = allNames.filter((n) => n !== this.adapterName);
       for (const teammate of names) {
         this.taskQueue.push({ type: "agent", teammate, task });
       }
@@ -1478,54 +1478,37 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       return;
     }
 
-    // Check for @mention
-    const mentionMatch = input.match(/^@(\S+)\s+([\s\S]+)$/);
-    if (mentionMatch) {
-      const [, teammate, task] = mentionMatch;
-      const names = this.orchestrator.listTeammates();
-      if (names.includes(teammate)) {
-        const bg = this._userBg;
-        const t = theme();
-        this.feedUserLine(
-          concat(
-            pen.fg(t.textMuted).bg(bg)("  → "),
-            pen.fg(t.accent).bg(bg)(`@${teammate}`),
-          ),
-        );
-        this.feedLine();
-        this.refreshView();
-        this.taskQueue.push({ type: "agent", teammate, task });
-        this.kickDrain();
-        return;
+    // Collect all @mentioned teammates anywhere in the input
+    const mentionRegex = /@(\S+)/g;
+    let m: RegExpExecArray | null;
+    const mentioned: string[] = [];
+    while ((m = mentionRegex.exec(input)) !== null) {
+      const name = m[1];
+      if (allNames.includes(name) && !mentioned.includes(name)) {
+        mentioned.push(name);
       }
     }
 
-    // Check for inline @mention
-    const inlineMention = input.match(/@(\S+)/);
-    if (inlineMention) {
-      const teammate = inlineMention[1];
-      const names = this.orchestrator.listTeammates();
-      if (names.includes(teammate)) {
-        const task = input.replace(/@\S+\s*/, "").trim();
-        if (task) {
-          const bg = this._userBg;
-          const t = theme();
-          this.feedUserLine(
-            concat(
-              pen.fg(t.textMuted).bg(bg)("  → "),
-              pen.fg(t.accent).bg(bg)(`@${teammate}`),
-            ),
-          );
-          this.feedLine();
-          this.refreshView();
-          this.taskQueue.push({ type: "agent", teammate, task });
-          this.kickDrain();
-          return;
-        }
+    if (mentioned.length > 0) {
+      // Queue a copy of the full message to every mentioned teammate
+      for (const teammate of mentioned) {
+        this.taskQueue.push({ type: "agent", teammate, task: input });
       }
+      const bg = this._userBg;
+      const t = theme();
+      this.feedUserLine(
+        concat(
+          pen.fg(t.textMuted).bg(bg)("  → "),
+          pen.fg(t.accent).bg(bg)(mentioned.map((n) => `@${n}`).join(", ")),
+        ),
+      );
+      this.feedLine();
+      this.refreshView();
+      this.kickDrain();
+      return;
     }
 
-    // Auto-route: resolve teammate synchronously if possible, else use default
+    // No mentions — auto-route: resolve teammate synchronously if possible, else use default
     let match = this.orchestrator.route(input);
     if (!match) {
       // Fall back to adapter name — avoid blocking for agent routing
