@@ -28,6 +28,7 @@
 
 import type { TextStyle } from "./drawing/context.js";
 import type { Color } from "./pixel/color.js";
+import { charWidth } from "./pixel/symbol.js";
 import {
   BLACK,
   BLACK_BRIGHT,
@@ -94,9 +95,15 @@ export function spanText(s: StyledSpan): string {
   return s.map((seg) => seg.text).join("");
 }
 
-/** Get the visible length of a StyledSpan. */
+/** Get the visible display width of a StyledSpan (accounts for wide characters). */
 export function spanLength(s: StyledSpan): number {
-  return s.reduce((len, seg) => len + seg.text.length, 0);
+  let width = 0;
+  for (const seg of s) {
+    for (const ch of seg.text) {
+      width += charWidth(ch.codePointAt(0)!);
+    }
+  }
+  return width;
 }
 
 // ── Named colors ─────────────────────────────────────────────────

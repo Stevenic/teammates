@@ -13,6 +13,7 @@
 import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import { Control } from "../layout/control.js";
 import type { Constraint, Size } from "../layout/types.js";
+import { charWidth, stringDisplayWidth } from "../pixel/symbol.js";
 import { type StyledSegment, type StyledSpan, spanLength } from "../styled.js";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -141,7 +142,7 @@ export class StyledText extends Control {
 // ── Helpers ──────────────────────────────────────────────────────
 
 function lineLength(line: StyledLine): number {
-  if (typeof line === "string") return line.length;
+  if (typeof line === "string") return stringDisplayWidth(line);
   return spanLength(line);
 }
 
@@ -199,10 +200,21 @@ function wrapStyledLine(line: StyledLine, maxWidth: number): StyledLine[] {
 }
 
 function wrapPlainLine(text: string, maxWidth: number): string[] {
-  if (text.length <= maxWidth) return [text];
+  if (stringDisplayWidth(text) <= maxWidth) return [text];
   const result: string[] = [];
-  for (let i = 0; i < text.length; i += maxWidth) {
-    result.push(text.slice(i, i + maxWidth));
+  let current = "";
+  let currentWidth = 0;
+  for (const char of text) {
+    const w = charWidth(char.codePointAt(0)!);
+    if (currentWidth + w > maxWidth && current.length > 0) {
+      result.push(current);
+      current = char;
+      currentWidth = w;
+    } else {
+      current += char;
+      currentWidth += w;
+    }
   }
+  if (current) result.push(current);
   return result;
 }

@@ -75,6 +75,7 @@ export {
 export {
   charWidth,
   EMPTY_SYMBOL,
+  stringDisplayWidth,
   type Symbol,
   sym,
 } from "./pixel/symbol.js";
