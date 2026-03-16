@@ -4,6 +4,8 @@
 
 A framework for defining persistent AI personas with memory, file ownership, and cross-team protocols. Works with any agentic coding tool.
 
+**[Documentation](https://stevenic.github.io/teammates)**
+
 ## The Problem
 
 AI coding agents lose context between sessions. They don't know your project's architecture, ownership boundaries, or lessons learned. Each session starts from zero.
