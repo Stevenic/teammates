@@ -79,6 +79,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `/btw [question]` — Ask a quick side question without interrupting the main conversation
 - `/copy` — Copy session text to clipboard (aliases: /cp)
 - `/theme` — Show current theme colors
+- `/configure [service]` — Configure external services like GitHub (aliases: /config)
 - `/help` — All commands (aliases: /h, /?)
 - `/exit` — Exit session (aliases: /q, /quit)
 

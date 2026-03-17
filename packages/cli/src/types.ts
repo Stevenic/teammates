@@ -109,3 +109,20 @@ export type OrchestratorEvent =
   | { type: "task_assigned"; assignment: TaskAssignment }
   | { type: "task_completed"; result: TaskResult }
   | { type: "error"; teammate: string; error: string };
+
+/** A task queue entry — either an agent task or an internal operation. */
+export type QueueEntry =
+  | { type: "agent"; teammate: string; task: string }
+  | { type: "compact"; teammate: string; task: string }
+  | { type: "retro"; teammate: string; task: string }
+  | { type: "btw"; teammate: string; task: string }
+  | { type: "debug"; teammate: string; task: string };
+
+/** A registered slash command. */
+export interface SlashCommand {
+  name: string;
+  aliases: string[];
+  usage: string;
+  description: string;
+  run: (args: string) => Promise<void>;
+}

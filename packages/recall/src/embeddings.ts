@@ -41,7 +41,15 @@ export class LocalEmbeddings implements EmbeddingsModel {
   private async _getExtractor(): Promise<any> {
     if (!this._extractor) {
       const { pipeline } = await import("@huggingface/transformers");
-      this._extractor = await pipeline("feature-extraction", this._model);
+      const origWarn = console.warn;
+      console.warn = () => {};
+      try {
+        this._extractor = await pipeline("feature-extraction", this._model, {
+          dtype: "fp32",
+        });
+      } finally {
+        console.warn = origWarn;
+      }
     }
     return this._extractor;
   }

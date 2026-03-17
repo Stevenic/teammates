@@ -112,3 +112,24 @@ export function colorToHex(c: Color): string {
   const b = c.b.toString(16).padStart(2, "0");
   return `#${r}${g}${b}`.toUpperCase();
 }
+
+// ── Themed pen shortcuts ────────────────────────────────────────────
+//
+// Thin wrappers that read from the active theme() at call time, so
+// every styled span picks up the current palette automatically.
+
+import { pen } from "@teammates/consolonia";
+
+export const tp = {
+  accent: (s: string) => pen.fg(theme().accent)(s),
+  accentBright: (s: string) => pen.fg(theme().accentBright)(s),
+  accentDim: (s: string) => pen.fg(theme().accentDim)(s),
+  text: (s: string) => pen.fg(theme().text)(s),
+  muted: (s: string) => pen.fg(theme().textMuted)(s),
+  dim: (s: string) => pen.fg(theme().textDim)(s),
+  success: (s: string) => pen.fg(theme().success)(s),
+  warning: (s: string) => pen.fg(theme().warning)(s),
+  error: (s: string) => pen.fg(theme().error)(s),
+  info: (s: string) => pen.fg(theme().info)(s),
+  bold: (s: string) => pen.bold.fg(theme().text)(s),
+};

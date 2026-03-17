@@ -9,46 +9,39 @@
  *   teammates --dir <path>        Override .teammates/ location
  */
 
-import {
-  type ChildProcess,
-  spawn as cpSpawn,
-  exec as execCb,
-} from "node:child_process";
+import { exec as execCb, execSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
-
-
 import {
   App,
   ChatView,
   type Color,
-  type Constraint,
-  Control,
   concat,
-  type DrawingContext,
   type DropdownItem,
   esc,
   Interview,
   pen,
-  type Rect,
   renderMarkdown,
-  type Size,
-  type StyledLine,
   type StyledSpan,
-  StyledText,
   stripAnsi,
 } from "@teammates/consolonia";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import type { AgentAdapter } from "./adapter.js";
 import { syncRecallIndex } from "./adapter.js";
-import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
-import type { CopilotAdapterOptions } from "./adapters/copilot.js";
-import { EchoAdapter } from "./adapters/echo.js";
+import { AnimatedBanner, type ServiceInfo, type ServiceStatus } from "./banner.js";
+import {
+  type CliArgs,
+  findTeammatesDir,
+  PKG_VERSION,
+  parseCliArgs,
+  printUsage,
+  resolveAdapter,
+} from "./cli-args.js";
 import {
   findAtMention,
   isImagePath,
@@ -65,485 +58,18 @@ import {
   importTeammates,
 } from "./onboard.js";
 import { Orchestrator } from "./orchestrator.js";
-import { colorToHex, theme } from "./theme.js";
+import { colorToHex, theme, tp } from "./theme.js";
 import type {
   HandoffEnvelope,
   OrchestratorEvent,
+  QueueEntry,
+  SlashCommand,
   TaskResult,
 } from "./types.js";
 
-// ─── Version ─────────────────────────────────────────────────────────
+// ─── Parsed CLI arguments ────────────────────────────────────────────
 
-const PKG_VERSION: string = (() => {
-  try {
-    const pkg = JSON.parse(
-      readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
-    );
-    return pkg.version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
-
-// ─── Argument parsing ────────────────────────────────────────────────
-
-const args = process.argv.slice(2);
-
-function getFlag(name: string): boolean {
-  const idx = args.indexOf(`--${name}`);
-  if (idx >= 0) {
-    args.splice(idx, 1);
-    return true;
-  }
-  return false;
-}
-
-function getOption(name: string): string | undefined {
-  const idx = args.indexOf(`--${name}`);
-  if (idx >= 0 && idx + 1 < args.length) {
-    const val = args[idx + 1];
-    args.splice(idx, 2);
-    return val;
-  }
-  return undefined;
-}
-
-const showHelp = getFlag("help");
-const modelOverride = getOption("model");
-const dirOverride = getOption("dir");
-// First remaining positional arg is the agent name (default: echo)
-const adapterName = args.shift() ?? "echo";
-// Everything left passes through to the agent CLI
-const agentPassthrough = [...args];
-args.length = 0;
-
-// ─── Helpers ─────────────────────────────────────────────────────────
-
-async function findTeammatesDir(): Promise<string | null> {
-  if (dirOverride) return resolve(dirOverride);
-  let dir = process.cwd();
-  while (true) {
-    const candidate = join(dir, ".teammates");
-    try {
-      const s = await stat(candidate);
-      if (s.isDirectory()) return candidate;
-    } catch {
-      /* keep looking */
-    }
-    const parent = resolve(dir, "..");
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
-}
-
-async function resolveAdapter(name: string): Promise<AgentAdapter> {
-  if (name === "echo") return new EchoAdapter();
-
-  // GitHub Copilot SDK adapter — lazy-loaded to avoid pulling in
-  // @github/copilot-sdk (and vscode-jsonrpc) when not needed.
-  if (name === "copilot") {
-    const { CopilotAdapter } = await import("./adapters/copilot.js");
-    return new CopilotAdapter({
-      model: modelOverride,
-    } satisfies CopilotAdapterOptions);
-  }
-
-  // All other adapters go through the CLI proxy
-  if (PRESETS[name]) {
-    return new CliProxyAdapter({
-      preset: name,
-      model: modelOverride,
-      extraFlags: agentPassthrough,
-    });
-  }
-
-  const available = ["echo", "copilot", ...Object.keys(PRESETS)].join(", ");
-  console.error(chalk.red(`Unknown adapter: ${name}`));
-  console.error(`Available adapters: ${available}`);
-  process.exit(1);
-}
-
-// relativeTime is now imported from ./cli-utils.js
-
-/** A task queue entry — either an agent task or an internal operation. */
-type QueueEntry =
-  | { type: "agent"; teammate: string; task: string }
-  | { type: "compact"; teammate: string; task: string }
-  | { type: "retro"; teammate: string; task: string }
-  | { type: "btw"; teammate: string; task: string }
-  | { type: "debug"; teammate: string; task: string };
-
-// ─── Slash commands ──────────────────────────────────────────────────
-
-interface SlashCommand {
-  name: string;
-  aliases: string[];
-  usage: string;
-  description: string;
-  run: (args: string) => Promise<void>;
-}
-
-// WordwheelItem is now DropdownItem from @teammates/consolonia
-
-// ── Themed pen shortcuts ────────────────────────────────────────────
-//
-// Thin wrappers that read from the active theme() at call time, so
-// every styled span picks up the current palette automatically.
-
-const tp = {
-  accent: (s: string) => pen.fg(theme().accent)(s),
-  accentBright: (s: string) => pen.fg(theme().accentBright)(s),
-  accentDim: (s: string) => pen.fg(theme().accentDim)(s),
-  text: (s: string) => pen.fg(theme().text)(s),
-  muted: (s: string) => pen.fg(theme().textMuted)(s),
-  dim: (s: string) => pen.fg(theme().textDim)(s),
-  success: (s: string) => pen.fg(theme().success)(s),
-  warning: (s: string) => pen.fg(theme().warning)(s),
-  error: (s: string) => pen.fg(theme().error)(s),
-  info: (s: string) => pen.fg(theme().info)(s),
-  bold: (s: string) => pen.bold.fg(theme().text)(s),
-};
-
-// ─── Animated banner widget ─────────────────────────────────────────
-
-interface BannerInfo {
-  adapterName: string;
-  teammateCount: number;
-  cwd: string;
-  teammates: { name: string; role: string }[];
-}
-
-/**
- * Custom banner widget that plays a reveal animation inside the
- * consolonia rendering loop (alternate screen already active).
- *
- * Phases:
- *  1. Reveal "teammates" letter by letter in block font
- *  2. Collapse to "TM" + stats panel
- *  3. Fade in teammate roster
- *  4. Fade in command reference
- */
-class AnimatedBanner extends Control {
-  private _lines: StyledLine[] = [];
-  private _info: BannerInfo;
-  private _phase:
-    | "idle"
-    | "spelling"
-    | "version"
-    | "pause"
-    | "compact"
-    | "roster"
-    | "roster-held"
-    | "commands"
-    | "done" = "idle";
-  private _inner: StyledText;
-  private _timer: ReturnType<typeof setTimeout> | null = null;
-  private _onDirty: (() => void) | null = null;
-
-  // Spelling state
-  private _word = "teammates";
-  private _charIndex = 0;
-  private _builtTop = "";
-  private _builtBot = "";
-  private _versionStr = ` v${PKG_VERSION}`;
-  private _versionIndex = 0;
-
-  // Roster/command reveal state
-  private _revealIndex = 0;
-
-  /** When true, the animation pauses after roster reveal (before commands). */
-  private _held = false;
-
-  // The final lines (built once, revealed progressively)
-  private _finalLines: StyledLine[] = [];
-
-  // Line index where roster starts and commands start
-  private _rosterStart = 0;
-  private _commandsStart = 0;
-
-  private static GLYPHS: Record<string, [string, string]> = {
-    t: ["▀█▀", " █ "],
-    e: ["█▀▀", "██▄"],
-    a: ["▄▀█", "█▀█"],
-    m: ["█▀▄▀█", "█ ▀ █"],
-    s: ["█▀", "▄█"],
-  };
-
-  constructor(info: BannerInfo) {
-    super();
-    this._info = info;
-    this._inner = new StyledText({ lines: [], wrap: true });
-    this.addChild(this._inner);
-    this._buildFinalLines();
-  }
-
-  /** Set a callback that fires when the banner needs a re-render. */
-  set onDirty(fn: () => void) {
-    this._onDirty = fn;
-  }
-
-  /** Start the animation sequence. */
-  start(): void {
-    this._phase = "spelling";
-    this._charIndex = 0;
-    this._builtTop = "";
-    this._builtBot = "";
-    this._tick();
-  }
-
-  private _buildFinalLines(): void {
-    const info = this._info;
-    const [tmTop, tmBot] = buildTitle("tm");
-    const tmPad = " ".repeat(tmTop.length);
-    const gap = "   ";
-
-    const lines: StyledLine[] = [];
-
-    // TM logo row 1 + adapter info
-    lines.push(
-      concat(
-        tp.accent(tmTop),
-        tp.text(gap + info.adapterName),
-        tp.muted(
-          ` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`,
-        ),
-        tp.muted(` · v${PKG_VERSION}`),
-      ),
-    );
-    // TM logo row 2 + cwd
-    lines.push(concat(tp.accent(tmBot), tp.muted(gap + info.cwd)));
-    // Recall status (bundled as dependency)
-    lines.push(
-      concat(
-        tp.text(tmPad + gap),
-        tp.success("● "),
-        tp.success("recall"),
-        tp.muted(" bundled"),
-      ),
-    );
-
-    // blank
-    lines.push("");
-    this._rosterStart = lines.length;
-
-    // Teammate roster
-    for (const t of info.teammates) {
-      lines.push(
-        concat(
-          tp.accent("  ● "),
-          tp.accent(`@${t.name}`.padEnd(14)),
-          tp.muted(t.role),
-        ),
-      );
-    }
-
-    // blank
-    lines.push("");
-    this._commandsStart = lines.length;
-
-    // Command reference (must match printBanner normal-mode layout)
-    const col1 = [
-      ["@mention", "assign to teammate"],
-      ["text", "auto-route task"],
-      ["[image]", "drag & drop images"],
-    ];
-    const col2 = [
-      ["/status", "teammates & queue"],
-      ["/compact", "compact memory"],
-      ["/retro", "run retrospective"],
-    ];
-    const col3 = [
-      ["/copy", "copy session text"],
-      ["/help", "all commands"],
-      ["/exit", "exit session"],
-    ];
-    for (let i = 0; i < col1.length; i++) {
-      lines.push(
-        concat(
-          tp.accent(`  ${col1[i][0].padEnd(12)}`),
-          tp.muted(col1[i][1].padEnd(22)),
-          tp.accent(col2[i][0].padEnd(12)),
-          tp.muted(col2[i][1].padEnd(22)),
-          tp.accent(col3[i][0].padEnd(12)),
-          tp.muted(col3[i][1]),
-        ),
-      );
-    }
-
-    this._finalLines = lines;
-  }
-
-  private _tick(): void {
-    switch (this._phase) {
-      case "spelling": {
-        const ch = this._word[this._charIndex];
-        const g = AnimatedBanner.GLYPHS[ch];
-        if (g) {
-          if (this._builtTop.length > 0) {
-            this._builtTop += " ";
-            this._builtBot += " ";
-          }
-          this._builtTop += g[0];
-          this._builtBot += g[1];
-        }
-        this._lines = [
-          concat(tp.accent(this._builtTop)),
-          concat(tp.accent(this._builtBot)),
-        ];
-        this._apply();
-        this._charIndex++;
-        if (this._charIndex >= this._word.length) {
-          this._phase = "version";
-          this._versionIndex = 0;
-          this._schedule(60);
-        } else {
-          this._schedule(60);
-        }
-        break;
-      }
-
-      case "version": {
-        // Type out version string character by character on the bottom row
-        this._versionIndex++;
-        const partial = this._versionStr.slice(0, this._versionIndex);
-        this._lines = [
-          concat(tp.accent(this._builtTop)),
-          concat(tp.accent(this._builtBot), tp.muted(partial)),
-        ];
-        this._apply();
-        if (this._versionIndex >= this._versionStr.length) {
-          this._phase = "pause";
-          this._schedule(600);
-        } else {
-          this._schedule(60);
-        }
-        break;
-      }
-
-      case "pause": {
-        // Brief pause before transitioning to compact view
-        this._phase = "compact";
-        this._schedule(800);
-        break;
-      }
-
-      case "compact": {
-        // Switch to TM + stats — show first 4 lines of final
-        this._lines = this._finalLines.slice(0, 4);
-        this._apply();
-        this._phase = "roster";
-        this._revealIndex = 0;
-        this._schedule(80);
-        break;
-      }
-
-      case "roster": {
-        // Reveal roster lines one at a time
-        const end = this._rosterStart + this._revealIndex + 1;
-        this._lines = [
-          ...this._finalLines.slice(0, this._rosterStart),
-          ...this._finalLines.slice(this._rosterStart, end),
-        ];
-        this._apply();
-        this._revealIndex++;
-        const rosterCount = this._commandsStart - 1 - this._rosterStart; // -1 for blank line
-        if (this._revealIndex >= rosterCount) {
-          if (this._held) {
-            // Pause here until releaseHold() is called
-            this._phase = "roster-held";
-          } else {
-            this._phase = "commands";
-            this._revealIndex = 0;
-            this._schedule(80);
-          }
-        } else {
-          this._schedule(40);
-        }
-        break;
-      }
-
-      case "commands": {
-        // Add the blank line between roster and commands, then reveal commands
-        const rosterEnd = this._commandsStart; // includes the blank line
-        const cmdEnd = this._commandsStart + this._revealIndex + 1;
-        this._lines = [
-          ...this._finalLines.slice(0, rosterEnd),
-          ...this._finalLines.slice(this._commandsStart, cmdEnd),
-        ];
-        this._apply();
-        this._revealIndex++;
-        const cmdCount = this._finalLines.length - this._commandsStart;
-        if (this._revealIndex >= cmdCount) {
-          this._phase = "done";
-        } else {
-          this._schedule(30);
-        }
-        break;
-      }
-    }
-  }
-
-  private _apply(): void {
-    this._inner.lines = this._lines;
-    this.invalidate();
-    if (this._onDirty) this._onDirty();
-  }
-
-  private _schedule(ms: number): void {
-    this._timer = setTimeout(() => {
-      this._timer = null;
-      this._tick();
-    }, ms);
-  }
-
-  /**
-   * Hold the animation — it will pause after the roster phase and
-   * not reveal the command reference until releaseHold() is called.
-   */
-  hold(): void {
-    this._held = true;
-  }
-
-  /**
-   * Release the hold and continue to the commands phase.
-   * If the animation already reached the hold point, it resumes immediately.
-   */
-  releaseHold(): void {
-    this._held = false;
-    // If we're waiting at the hold point, resume
-    if (this._phase === "roster-held") {
-      this._phase = "commands";
-      this._revealIndex = 0;
-      this._schedule(80);
-    }
-  }
-
-  /** Cancel any pending animation timer. */
-  dispose(): void {
-    if (this._timer) {
-      clearTimeout(this._timer);
-      this._timer = null;
-    }
-  }
-
-  // ── Layout delegation ───────────────────────────────────────────
-
-  override measure(constraint: Constraint): Size {
-    const size = this._inner.measure(constraint);
-    this.desiredSize = size;
-    return size;
-  }
-
-  override arrange(rect: Rect): void {
-    this.bounds = rect;
-    this._inner.arrange(rect);
-  }
-
-  override render(ctx: DrawingContext): void {
-    this._inner.render(ctx);
-  }
-}
+const cliArgs: CliArgs = parseCliArgs();
 
 // ─── REPL ────────────────────────────────────────────────────────────
 
@@ -601,7 +127,6 @@ class TeammatesREPL {
   /** Last task prompt per teammate — for /debug analysis. */
   private lastTaskPrompts: Map<string, string> = new Map();
 
-
   /** Pending handoffs awaiting user approval. */
   private pendingHandoffs: {
     id: string;
@@ -627,6 +152,8 @@ class TeammatesREPL {
   /** Quoted reply text to expand on next submit. */
   private _pendingQuotedReply: string | null = null;
   private defaultFooter: StyledSpan | null = null; // cached default footer content
+  /** Cached service statuses for banner + /configure. */
+  private serviceStatuses: ServiceInfo[] = [];
 
   // ── Animated status tracker ─────────────────────────────────────
   private activeTasks: Map<string, { teammate: string; task: string }> =
@@ -2159,6 +1686,22 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     argsBefore: string,
     partial: string,
   ): DropdownItem[] {
+    // Service name completion for /configure
+    if (cmdName === "configure" || cmdName === "config") {
+      const completedArgs = argsBefore.trim()
+        ? argsBefore.trim().split(/\s+/).length
+        : 0;
+      if (completedArgs > 0) return [];
+      const lower = partial.toLowerCase();
+      return TeammatesREPL.CONFIGURABLE_SERVICES
+        .filter((s) => s.startsWith(lower))
+        .map((s) => ({
+          label: s,
+          description: `configure ${s}`,
+          completion: `/${cmdName} ${s} `,
+        }));
+    }
+
     const positions = TeammatesREPL.TEAMMATE_ARG_POSITIONS[cmdName];
     if (!positions) return [];
 
@@ -2422,8 +1965,11 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   // ─── Lifecycle ────────────────────────────────────────────────────
 
   async start(): Promise<void> {
-    let teammatesDir = await findTeammatesDir();
-    const adapter = await resolveAdapter(this.adapterName);
+    let teammatesDir = await findTeammatesDir(cliArgs.dirOverride);
+    const adapter = await resolveAdapter(this.adapterName, {
+      modelOverride: cliArgs.modelOverride,
+      agentPassthrough: cliArgs.agentPassthrough,
+    });
     this.adapter = adapter;
 
     // No .teammates/ found — offer onboarding or solo mode
@@ -2527,6 +2073,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       },
     });
 
+    // ── Detect service statuses ────────────────────────────────────────
+
+    this.serviceStatuses = this.detectServices();
+
     // ── Build animated banner for ChatView ─────────────────────────────
 
     const names = this.orchestrator.listTeammates();
@@ -2539,6 +2089,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         const t = reg.get(name);
         return { name, role: t?.role ?? "" };
       }),
+      services: this.serviceStatuses,
     });
 
     // ── Create ChatView and Consolonia App ────────────────────────────
@@ -2982,7 +2533,20 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       ),
     );
     this.feedLine(`  ${process.cwd()}`);
-    this.feedLine(concat(tp.success("  ● recall"), tp.muted(" bundled")));
+    // Service status rows
+    for (const svc of this.serviceStatuses) {
+      const ok = svc.status === "bundled" || svc.status === "configured";
+      const icon = ok ? "● " : svc.status === "not-configured" ? "◐ " : "○ ";
+      const color = ok ? tp.success : tp.warning;
+      const label = svc.status === "bundled"
+        ? "bundled"
+        : svc.status === "configured"
+          ? "configured"
+          : svc.status === "not-configured"
+            ? `not configured — /configure ${svc.name.toLowerCase()}`
+            : `missing — /configure ${svc.name.toLowerCase()}`;
+      this.feedLine(concat(tp.text("  "), color(icon), color(svc.name), tp.muted(` ${label}`)));
+    }
 
     // Roster
     this.feedLine();
@@ -3054,6 +2618,215 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     this.feedLine();
     this.refreshView();
+  }
+
+  // ─── Service detection ────────────────────────────────────────────
+
+  private detectGitHub(): ServiceStatus {
+    try {
+      execSync("gh --version", { stdio: "pipe" });
+    } catch {
+      return "missing";
+    }
+    try {
+      execSync("gh auth status", { stdio: "pipe" });
+      return "configured";
+    } catch {
+      return "not-configured";
+    }
+  }
+
+  private detectServices(): ServiceInfo[] {
+    return [
+      { name: "recall", status: "bundled" },
+      { name: "GitHub", status: this.detectGitHub() },
+    ];
+  }
+
+  // ─── /configure command ─────────────────────────────────────────
+
+  private static readonly CONFIGURABLE_SERVICES = ["github"];
+
+  private async cmdConfigure(argsStr: string): Promise<void> {
+    const serviceName = argsStr.trim().toLowerCase();
+
+    if (!serviceName) {
+      // Show status table
+      this.feedLine();
+      this.feedLine(tp.bold("  Services:"));
+      for (const svc of this.serviceStatuses) {
+        const ok = svc.status === "bundled" || svc.status === "configured";
+        const icon = ok ? "● " : svc.status === "not-configured" ? "◐ " : "○ ";
+        const color = ok ? tp.success : tp.warning;
+        const label = svc.status === "bundled"
+          ? "bundled"
+          : svc.status === "configured"
+            ? "configured"
+            : svc.status === "not-configured"
+              ? "not configured"
+              : "missing";
+        this.feedLine(concat(tp.text("    "), color(icon), color(svc.name.padEnd(12)), tp.muted(label)));
+      }
+      this.feedLine();
+      this.feedLine(tp.muted("  Use /configure [service] to set up a service"));
+      this.feedLine();
+      this.refreshView();
+      return;
+    }
+
+    if (serviceName === "github") {
+      await this.configureGitHub();
+    } else {
+      this.feedLine(tp.warning(`  Unknown service: ${serviceName}`));
+      this.feedLine(tp.muted(`  Available: ${TeammatesREPL.CONFIGURABLE_SERVICES.join(", ")}`));
+      this.refreshView();
+    }
+  }
+
+  private async configureGitHub(): Promise<void> {
+    // Step 1: Check if gh is installed
+    let ghInstalled = false;
+    try {
+      execSync("gh --version", { stdio: "pipe" });
+      ghInstalled = true;
+    } catch {
+      // not installed
+    }
+
+    if (!ghInstalled) {
+      this.feedLine();
+      this.feedLine(tp.warning("  GitHub CLI is not installed."));
+      this.feedLine();
+
+      const plat = process.platform;
+      let installCmd: string;
+      let installLabel: string;
+      if (plat === "win32") {
+        installCmd = "winget install --id GitHub.cli";
+        installLabel = "winget install --id GitHub.cli";
+      } else if (plat === "darwin") {
+        installCmd = "brew install gh";
+        installLabel = "brew install gh";
+      } else {
+        installCmd = "sudo apt install gh";
+        installLabel = "sudo apt install gh  (or see https://cli.github.com)";
+      }
+
+      this.feedLine(tp.text(`  Install:  ${installLabel}`));
+      this.feedLine();
+
+      // Ask user
+      const answer = await this.askInput("Run install command? [Y/n] ");
+      if (answer.toLowerCase() === "n") {
+        this.feedLine(tp.muted("  Skipped. Install manually and re-run /configure github"));
+        this.refreshView();
+        return;
+      }
+
+      // Spawn install in a visible subprocess
+      this.feedLine(tp.muted(`  Running: ${installCmd}`));
+      this.refreshView();
+
+      const installSuccess = await new Promise<boolean>((res) => {
+        const parts = installCmd.split(" ");
+        const child = spawn(parts[0], parts.slice(1), {
+          stdio: "inherit",
+          shell: true,
+        });
+        child.on("error", () => res(false));
+        child.on("exit", (code) => res(code === 0));
+      });
+
+      if (!installSuccess) {
+        this.feedLine(tp.error("  Install failed. Please install manually from https://cli.github.com"));
+        this.refreshView();
+        return;
+      }
+
+      // Re-check
+      try {
+        execSync("gh --version", { stdio: "pipe" });
+        ghInstalled = true;
+        this.feedLine(tp.success("  ✓ GitHub CLI installed"));
+      } catch {
+        this.feedLine(tp.error("  GitHub CLI still not found after install. You may need to restart your terminal."));
+        this.refreshView();
+        return;
+      }
+    } else {
+      this.feedLine();
+      this.feedLine(tp.success("  ✓ GitHub CLI installed"));
+    }
+
+    // Step 2: Check auth
+    let authed = false;
+    try {
+      execSync("gh auth status", { stdio: "pipe" });
+      authed = true;
+    } catch {
+      // not authenticated
+    }
+
+    if (!authed) {
+      this.feedLine(tp.muted("  Authentication needed — this will open your browser for GitHub OAuth."));
+      this.feedLine();
+
+      const answer = await this.askInput("Start authentication? [Y/n] ");
+      if (answer.toLowerCase() === "n") {
+        this.feedLine(tp.muted("  Skipped. Run /configure github when ready."));
+        this.refreshView();
+        this.updateServiceStatus("GitHub", "not-configured");
+        return;
+      }
+
+      this.feedLine(tp.muted("  Starting auth flow..."));
+      this.refreshView();
+
+      const authSuccess = await new Promise<boolean>((res) => {
+        const child = spawn("gh", ["auth", "login", "--web", "--git-protocol", "https"], {
+          stdio: "inherit",
+          shell: true,
+        });
+        child.on("error", () => res(false));
+        child.on("exit", (code) => res(code === 0));
+      });
+
+      if (!authSuccess) {
+        this.feedLine(tp.error("  Authentication failed. Try again with /configure github"));
+        this.refreshView();
+        this.updateServiceStatus("GitHub", "not-configured");
+        return;
+      }
+
+      // Verify
+      try {
+        execSync("gh auth status", { stdio: "pipe" });
+        authed = true;
+      } catch {
+        this.feedLine(tp.error("  Authentication could not be verified. Try again with /configure github"));
+        this.refreshView();
+        this.updateServiceStatus("GitHub", "not-configured");
+        return;
+      }
+    }
+
+    // Get username for confirmation
+    let username = "";
+    try {
+      username = execSync("gh api user --jq .login", { stdio: "pipe", encoding: "utf-8" }).trim();
+    } catch {
+      // non-critical
+    }
+
+    this.feedLine(tp.success(`  ✓ GitHub configured${username ? ` — authenticated as @${username}` : ""}`));
+    this.feedLine();
+    this.refreshView();
+    this.updateServiceStatus("GitHub", "configured");
+  }
+
+  private updateServiceStatus(name: string, status: ServiceStatus): void {
+    const svc = this.serviceStatuses.find((s) => s.name === name);
+    if (svc) svc.status = status;
   }
 
   private registerCommands(): void {
@@ -3144,13 +2917,20 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         run: () => this.cmdTheme(),
       },
       {
+        name: "configure",
+        aliases: ["config"],
+        usage: "/configure [service]",
+        description: "Configure external services (github)",
+        run: (args) => this.cmdConfigure(args),
+      },
+      {
         name: "exit",
         aliases: ["q", "quit"],
         usage: "/exit",
         description: "Exit the session",
         run: async () => {
           this.feedLine(tp.muted("Shutting down..."));
-  
+
           if (this.app) this.app.stop();
           await this.orchestrator.shutdown();
           process.exit(0);
@@ -3265,9 +3045,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
               );
             }
             if (diag.debugFile) {
-              this.feedLine(
-                tp.muted(`  Debug log: ${diag.debugFile}`),
-              );
+              this.feedLine(tp.muted(`  Debug log: ${diag.debugFile}`));
             }
           }
         }
@@ -3459,12 +3237,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     ].join("\n");
 
     // Show the debug log path — ctrl+click to open
-    this.feedLine(
-      concat(
-        tp.muted("  Debug log: "),
-        tp.accent(debugFile),
-      ),
-    );
+    this.feedLine(concat(tp.muted("  Debug log: "), tp.accent(debugFile)));
     this.feedLine(tp.muted("  Queuing analysis…"));
     this.refreshView();
 
@@ -3613,9 +3386,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (diag) {
           lines.push("");
           lines.push("### Process");
-          lines.push(
-            `**Exit code:** ${diag.exitCode ?? "(killed by signal)"}`,
-          );
+          lines.push(`**Exit code:** ${diag.exitCode ?? "(killed by signal)"}`);
           if (diag.signal) lines.push(`**Signal:** ${diag.signal}`);
           if (diag.timedOut) lines.push(`**Timed out:** yes`);
           if (diag.debugFile) {
@@ -4447,47 +4218,15 @@ Issues that can't be resolved unilaterally — they need input from other teamma
   }
 }
 
-// ─── Usage (non-interactive) ─────────────────────────────────────────
-
-function printUsage(): void {
-  console.log(
-    `
-${chalk.bold("@teammates/cli")} — Agent-agnostic teammate orchestrator
-
-${chalk.bold("Usage:")}
-  teammates <agent>          Launch session with an agent
-  teammates claude           Use Claude Code
-  teammates codex            Use OpenAI Codex
-  teammates aider            Use Aider
-
-${chalk.bold("Options:")}
-  --model <model>            Override the agent model
-  --dir <path>               Override .teammates/ location
-
-${chalk.bold("Agents:")}
-  claude     Claude Code CLI (requires 'claude' on PATH)
-  codex      OpenAI Codex CLI (requires 'codex' on PATH)
-  aider      Aider CLI (requires 'aider' on PATH)
-  echo       Test adapter — echoes prompts (no external agent)
-
-${chalk.bold("In-session:")}
-  @teammate <task>           Assign directly via @mention
-  <text>                     Auto-route to the best teammate
-  /status                    Session overview
-  /help                      All commands
-`.trim(),
-  );
-}
-
 // ─── Main ────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  if (showHelp) {
+  if (cliArgs.showHelp) {
     printUsage();
     process.exit(0);
   }
 
-  const repl = new TeammatesREPL(adapterName);
+  const repl = new TeammatesREPL(cliArgs.adapterName);
   await repl.start();
 }
 

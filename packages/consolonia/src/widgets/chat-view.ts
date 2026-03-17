@@ -184,6 +184,10 @@ export class ChatView extends Control {
   private _selAnchor: { x: number; y: number } | null = null;
   private _selEnd: { x: number; y: number } | null = null;
   private _selecting: boolean = false;
+  /** Timer for auto-scrolling the feed during drag-to-select. */
+  private _selScrollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Direction of auto-scroll: -1 = up, 1 = down, 0 = none. */
+  private _selScrollDir: number = 0;
   /** DrawingContext reference from the last render (for text extraction). */
   private _ctx: DrawingContext | null = null;
 
@@ -787,9 +791,18 @@ export class ChatView extends Control {
         }
       }
 
-      // Text selection: extend on move
+      // Text selection: extend on move (with auto-scroll at edges)
       if (me.type === "move" && this._selecting) {
         this._selEnd = { x: me.x, y: me.y };
+        const feedTop = this._feedY;
+        const feedBot = this._feedY + this._feedH;
+        if (me.y < feedTop) {
+          this._startSelScroll(-1);
+        } else if (me.y >= feedBot) {
+          this._startSelScroll(1);
+        } else {
+          this._stopSelScroll();
+        }
         this.invalidate();
         return true;
       }
@@ -797,6 +810,7 @@ export class ChatView extends Control {
       // Text selection: finalize on release
       if (me.type === "release" && this._selecting) {
         this._selecting = false;
+        this._stopSelScroll();
         // If anchor == end (just a click, no drag), clear selection
         if (
           this._selAnchor &&
@@ -1374,10 +1388,40 @@ export class ChatView extends Control {
     this._selAnchor = null;
     this._selEnd = null;
     this._selecting = false;
+    this._stopSelScroll();
     this.invalidate();
   }
 
   // ── Auto-scroll ────────────────────────────────────────────────
+
+  /** Start interval-based scroll during drag-to-select at feed edges. */
+  private _startSelScroll(dir: number): void {
+    if (this._selScrollDir === dir && this._selScrollTimer) return;
+    this._stopSelScroll();
+    this._selScrollDir = dir;
+    this._selScrollTimer = setInterval(() => {
+      this.scrollFeed(this._selScrollDir * 3);
+      // Move selEnd to keep extending the selection while scrolling
+      if (this._selEnd) {
+        this._selEnd = {
+          x: this._selEnd.x,
+          y:
+            this._selScrollDir < 0
+              ? this._feedY
+              : this._feedY + this._feedH - 1,
+        };
+      }
+    }, 80);
+  }
+
+  /** Stop auto-scroll timer. */
+  private _stopSelScroll(): void {
+    if (this._selScrollTimer) {
+      clearInterval(this._selScrollTimer);
+      this._selScrollTimer = null;
+    }
+    this._selScrollDir = 0;
+  }
 
   private _autoScrollToBottom(): void {
     // Set scroll to a very large value; it will be clamped during render

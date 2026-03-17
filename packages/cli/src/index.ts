@@ -19,18 +19,25 @@ export {
   PRESETS,
 } from "./adapters/cli-proxy.js";
 export { EchoAdapter } from "./adapters/echo.js";
+export type { BannerInfo, ServiceInfo, ServiceStatus } from "./banner.js";
+export { AnimatedBanner } from "./banner.js";
+export type { CliArgs } from "./cli-args.js";
+export { findTeammatesDir, PKG_VERSION, parseCliArgs } from "./cli-args.js";
 export {
   Orchestrator,
   type OrchestratorConfig,
   type TeammateStatus,
 } from "./orchestrator.js";
 export { Registry } from "./registry.js";
+export { tp } from "./theme.js";
 export type {
   DailyLog,
   HandoffEnvelope,
   OrchestratorEvent,
   OwnershipRules,
+  QueueEntry,
   SandboxLevel,
+  SlashCommand,
   TaskAssignment,
   TaskResult,
   TeammateConfig,

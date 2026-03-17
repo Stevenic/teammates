@@ -28,3 +28,8 @@ When adding a new teammate, add a row to this table.
 - **[Retrospective Format](scribe/docs/RETRO-FORMAT.md)** — `/retro` command design: four-section self-review (Working / Not Working / Proposed Changes / Questions). Needs CLI implementation by Beacon. _(added 2026-03-15)_
 - **[Cookbook](../docs/cookbook.md)** — Concrete recipes for common workflows: adding teammates, handoffs, retros, compaction, decisions, etc. _(added 2026-03-15)_
 - **[Decision Log](DECISIONS.md)** — Shared decision log (ADR-lite). All teammates can record decisions here. _(added 2026-03-15)_
+- **[S16 — Hooks Spec](scribe/docs/specs/S16-hooks.md)** — Lifecycle events and shell hook system. For Beacon implementation. _(added 2026-03-17)_
+- **[S17 — Non-Interactive Mode Spec](scribe/docs/specs/S17-non-interactive.md)** — Headless `-p` flag for CI/scripts. For Beacon implementation. _(added 2026-03-17)_
+- **[S26 — MCP Passthrough Spec](scribe/docs/specs/S26-mcp-passthrough.md)** — MCP server config and per-agent passthrough. For Beacon implementation. _(added 2026-03-17)_
+- **[F1 — Temporal Awareness Spec](scribe/docs/specs/F1-temporal-awareness.md)** — `/catchup` command: "What happened?" queries with lens-based rendering. For Beacon implementation. _(added 2026-03-17)_
+- **[F3 — Decision Synthesis Spec](scribe/docs/specs/F3-decision-synthesis.md)** — Cross-teammate search with authority ranking + `/decision` command. For Beacon implementation. _(added 2026-03-17)_
