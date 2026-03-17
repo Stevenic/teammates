@@ -48,6 +48,7 @@ That's it. Your agent reads the onboarding instructions and does the rest.
 
 ## Documentation
 
+- [Working with Teammates](working-with-teammates) — Day-to-day workflows: standups, retros, task routing, and more
 - [Adoption Guide](adoption-guide) — How to introduce teammates to an existing team
 - [Cookbook](cookbook) — Concrete recipes for common workflows
 - [Memory System](teammates-memory) — Memory system design and comparison

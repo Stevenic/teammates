@@ -43,8 +43,10 @@ import {
   TextInput,
 } from "./text-input.js";
 
-// ── URL detection ──────────────────────────────────────────────────
+// ── URL / file path detection ───────────────────────────────────────
 const URL_REGEX = /https?:\/\/[^\s)>\]]+/g;
+const FILE_PATH_REGEX =
+  /(?:[A-Za-z]:[/\\]|\/)[^\s:*?"<>|)>\]]*[^\s:*?"<>|)>\].,:;!]/g;
 
 // ── Selection highlight color ─────────────────────────────────────
 const SELECTION_BG = { r: 60, g: 100, b: 180, a: 255 };
@@ -734,23 +736,33 @@ export class ChatView extends Control {
         }
       }
 
-      // Ctrl+click to open URLs in browser
+      // Ctrl+click to open URLs or file paths
       if (me.type === "press" && me.button === "left" && me.ctrl) {
         const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
         if (feedLineIdx >= 0) {
           const text = this._extractFeedLineText(feedLineIdx);
+          // Collect all clickable targets: URLs and absolute file paths
           URL_REGEX.lastIndex = 0;
+          FILE_PATH_REGEX.lastIndex = 0;
           const urls = [...text.matchAll(URL_REGEX)];
-          if (urls.length === 1) {
-            this.emit("link", urls[0][0]);
+          const paths = [...text.matchAll(FILE_PATH_REGEX)];
+          const allTargets = [
+            ...urls.map((m) => ({ index: m.index!, text: m[0], type: "link" as const })),
+            ...paths.map((m) => ({ index: m.index!, text: m[0], type: "file" as const })),
+          ].sort((a, b) => a.index - b.index);
+          if (allTargets.length === 1) {
+            this.emit(allTargets[0].type, allTargets[0].text);
             return true;
           }
-          if (urls.length > 1) {
+          if (allTargets.length > 1) {
             const row = this._screenToFeedRow.get(me.y) ?? 0;
             const col = me.x - this._feedX;
             const charOffset = row * this._contentWidth + col;
-            const hit = this._findUrlAtOffset(text, charOffset);
-            this.emit("link", hit ?? urls[0][0]);
+            const hit = allTargets.find(
+              (t) => charOffset >= t.index && charOffset < t.index + t.text.length,
+            );
+            const target = hit ?? allTargets[0];
+            this.emit(target.type, target.text);
             return true;
           }
         }

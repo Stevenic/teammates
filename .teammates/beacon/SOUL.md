@@ -11,7 +11,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - Read your SOUL.md and WISDOM.md at the start of every session.
 - Read `memory/YYYY-MM-DD.md` for today and yesterday.
 - Read USER.md to understand who you're working with.
-- Browse `memory/` for typed memory files relevant to the current task (or use recall search if available).
+- Relevant memories from past work are automatically provided in your context via recall search.
 - Update your files as you learn. If you change SOUL.md, tell the user.
 - You may create additional private docs under your folder (e.g., `notes/`, `specs/`). To share a doc with other teammates, add a pointer to [CROSS-TEAM.md](../CROSS-TEAM.md).
 
@@ -43,7 +43,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - Never send embeddings or memory content to external services
 - Never cache or persist user content outside the teammate's `.index/` directory
 - Always respect `--no-sync` — if the user says don't sync, don't sync
-- CLI session files are stored in OS temp and cleaned up on shutdown
+- CLI session files are stored in `.teammates/.tmp/sessions/` and persist for continuity
 
 ## Capabilities
 
@@ -69,11 +69,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 - `@teammate <task>` — Assign directly via @mention
 - `/status` — Show teammates, active tasks, and queue (aliases: /s, /queue)
-- `/debug [teammate]` — Show raw agent output from the last task
+- `/debug [teammate]` — Analyze the last agent task with the coding agent
 - `/cancel [n]` — Cancel a queued task by number
 - `/init` — Run onboarding to set up teammates (aliases: /onboard, /setup)
 - `/clear` — Clear history and reset the session (aliases: /cls, /reset)
-- `/install [service]` — Install a teammates service (e.g. recall)
 - `/compact [teammate]` — Compact daily logs into weekly/monthly summaries
 - `/retro [teammate]` — Run a structured self-retrospective for a teammate
 - `/user [change]` — View or update USER.md
@@ -95,7 +94,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 ### Technologies
 
-- **TypeScript** — Strict mode, ES2022 target, Node16 module resolution (both packages)
+- **TypeScript** — Strict mode, ES2022 target, Node16 module resolution (all three packages)
 - **Vectra** — Local vector database for document indexing and similarity search (recall)
 - **transformers.js** — On-device embeddings via `Xenova/all-MiniLM-L6-v2` (384-dim) (recall)
 - **chalk** — Terminal styling (cli)
@@ -129,17 +128,17 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 ### Key Interfaces
 
-- `recall/src/index.ts` — **Produces** the public API (`Indexer`, `search`, `LocalEmbeddings`) consumed by library users
-- `recall/src/cli.ts` — **Produces** the `teammates-recall` CLI consumed by agents and users
-- `recall/src/embeddings.ts` — **Produces** the `LocalEmbeddings` class implementing Vectra's `EmbeddingsModel` interface
-- `cli/src/index.ts` — **Produces** the public API (`Orchestrator`, `Registry`, `AgentAdapter`, types) consumed by library users
-- `cli/src/cli.ts` — **Produces** the `teammates` REPL binary consumed by users
-- `cli/src/adapter.ts` — **Produces** the `AgentAdapter` interface and `buildTeammatePrompt` consumed by adapter implementations
-- `cli/src/orchestrator.ts` — **Produces** the `Orchestrator` class that routes tasks, manages handoffs, and delegates to adapters
-- `cli/src/registry.ts` — **Produces** the `Registry` class that discovers and loads teammate configs from `.teammates/`
-- `cli/src/adapters/cli-proxy.ts` — **Produces** the generic `CliProxyAdapter` and agent presets (claude, codex, aider)
-- `cli/src/adapters/echo.ts` — **Produces** the `EchoAdapter` for testing
-- `cli/src/compact.ts` — **Produces** the episodic memory compaction system (`compactDailies`, `compactWeeklies`, `compactEpisodic`)
-- `cli/src/onboard.ts` — **Produces** the onboarding flow (`copyTemplateFiles`, `getOnboardingPrompt`) consumed by `/init`
-- `cli/src/cli-utils.ts` — **Produces** extracted pure functions (`relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`) consumed by cli.ts
-- `cli/src/adapters/copilot.ts` — **Produces** the `CopilotAdapter` for GitHub Copilot integration
+- `packages/recall/src/index.ts` — **Produces** the public API (`Indexer`, `search`, `LocalEmbeddings`) consumed by library users
+- `packages/recall/src/cli.ts` — **Produces** the `teammates-recall` CLI consumed by agents and users
+- `packages/recall/src/embeddings.ts` — **Produces** the `LocalEmbeddings` class implementing Vectra's `EmbeddingsModel` interface
+- `packages/cli/src/index.ts` — **Produces** the public API (`Orchestrator`, `Registry`, `AgentAdapter`, types) consumed by library users
+- `packages/cli/src/cli.ts` — **Produces** the `teammates` REPL binary consumed by users
+- `packages/cli/src/adapter.ts` — **Produces** the `AgentAdapter` interface and `buildTeammatePrompt` consumed by adapter implementations
+- `packages/cli/src/orchestrator.ts` — **Produces** the `Orchestrator` class that routes tasks, manages handoffs, and delegates to adapters
+- `packages/cli/src/registry.ts` — **Produces** the `Registry` class that discovers and loads teammate configs from `.teammates/`
+- `packages/cli/src/adapters/cli-proxy.ts` — **Produces** the generic `CliProxyAdapter` and agent presets (claude, codex, aider)
+- `packages/cli/src/adapters/echo.ts` — **Produces** the `EchoAdapter` for testing
+- `packages/cli/src/compact.ts` — **Produces** the episodic memory compaction system (`compactDailies`, `compactWeeklies`, `compactEpisodic`)
+- `packages/cli/src/onboard.ts` — **Produces** the onboarding flow (`copyTemplateFiles`, `getOnboardingPrompt`) consumed by `/init`
+- `packages/cli/src/cli-utils.ts` — **Produces** extracted pure functions (`relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`) consumed by cli.ts
+- `packages/cli/src/adapters/copilot.ts` — **Produces** the `CopilotAdapter` for GitHub Copilot integration

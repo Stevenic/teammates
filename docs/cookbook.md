@@ -18,7 +18,7 @@ Concrete recipes for common workflows. Each recipe is self-contained — read th
 - [Run a retrospective](#run-a-retrospective)
 - [Run memory compaction](#run-memory-compaction)
 - [Record a decision](#record-a-decision)
-- [Add a service (recall, etc.)](#add-a-service)
+- [Add a service](#add-a-service)
 - [Update templates after a framework change](#update-templates-after-a-framework-change)
 - [Resolve an ownership conflict](#resolve-an-ownership-conflict)
 - [Onboard a new human team member](#onboard-a-new-human-team-member)
@@ -218,7 +218,9 @@ See the [decision log template](../template/DECISIONS.md) for the full format.
 
 ## Add a service
 
-**When:** You want to enable an optional service like `teammates-recall` for semantic memory search.
+**When:** You want to enable an optional service beyond the built-in recall search.
+
+**Note:** Recall (semantic memory search) is bundled with the CLI and works automatically — no setup needed. This recipe is for adding other optional services.
 
 **Steps:**
 
@@ -230,16 +232,11 @@ See the [decision log template](../template/DECISIONS.md) for the full format.
 2. Add the service to `.teammates/services.json`:
    ```json
    {
-     "recall": {}
+     "<service-name>": {}
    }
    ```
 
 3. The CLI automatically detects services from `services.json` and injects their capabilities into teammate prompts.
-
-4. Verify the service works:
-   ```bash
-   teammates-recall status    # for recall
-   ```
 
 ---
 

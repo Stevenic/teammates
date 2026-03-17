@@ -1,149 +1,153 @@
 ---
 name: Beacon Goals — March 2026
-description: Current goals and priorities for @teammates/recall, @teammates/cli, and @teammates/consolonia
+description: Current goals for @teammates/recall, @teammates/cli, and @teammates/consolonia — stack-ranked across all tracks
 type: project
 ---
 
 # Beacon Goals
 
-Updated: 2026-03-15
+Updated: 2026-03-17
 
-## Current State Summary (updated 2026-03-15 evening)
+## Vision
 
-| Package | Source Files | LOC (src) | Test Suites | Tests | Untested LOC |
-|---------|-------------|-----------|-------------|-------|-------------|
-| @teammates/cli | 25 | ~8,200 | 10 | 155 | ~2,900 (73%) |
-| @teammates/consolonia | 50 | ~8,200 | 9 | 561 | ~3,500 (4 big widgets) |
-| @teammates/recall | 5 | 812 | 3 | 47 | ~460 |
+Two tracks running in parallel:
 
-All three packages compile cleanly with strict TypeScript. Zero TODO/FIXME/HACK markers across the entire codebase. cli.ts is 3,963 lines — still the largest file in the repo.
+1. **Claude Code Parity** — Universal and Enhanced features that close the gap with single-agent tools (hooks, print mode, MCP, skills).
+2. **Team-Unique Features** — Novel capabilities that only a persistent multi-agent team with shared memory can deliver. These are our differentiators — no single-agent tool is doing them.
 
----
-
-## @teammates/cli — Goals
-
-### ~~P0 — Test coverage for cli.ts~~ DONE
-Extracted pure functions to `cli-utils.ts` (relativeTime, wrapLine, findAtMention, isImagePath). 33 tests in `cli-utils.test.ts`.
-
-### ~~P0 — Test coverage for compact.ts~~ DONE
-14 tests covering compactDailies, compactWeeklies, compactEpisodic.
-
-### ~~P1 — Test coverage for console/ utilities~~ DONE
-4 test suites (49 tests): ansi.test.ts (15), file-drop.test.ts (21), markdown-table.test.ts (7), startup.test.ts (6).
-
-### ~~P1 — Configurable routing~~ DONE
-Added `### Routing` section parsing in SOUL.md. Teammates declare explicit routing keywords that get primary weight (2pts) in `route()`. Registry parses `routingKeywords` from SOUL.md; orchestrator scores them before ownership patterns. 4 new tests.
-
-### P2 — Session persistence across restarts
-Session files are created but lost on CLI restart. Investigate restoring session context (conversation history, last results) from the session file on startup.
-
-### P2 — Improve output parsing resilience
-`cli-proxy.ts` file detection regex only catches `diff --git` and a few verb patterns. Agent-specific parsers or a more flexible pattern set would reduce missed file detections.
-
-### P2 — Theme persistence
-Theme is a mutable singleton that resets on restart. Should persist to `services.json` or a dedicated config file.
-
-### P3 — Daily log loading limits
-Registry loads all daily logs without size limits. A teammate with 100+ logs could bloat the prompt. Cap at 7 (already done in adapter.ts) but also cap in registry discovery.
+Our edge is the combination: persistent memory across teammates, agent-agnostic orchestration, ownership-aware routing, and local-first recall search. The brainstormed features leverage all of these.
 
 ---
 
-## @teammates/recall — Goals
+## Stack-Ranked Goals
 
-### ~~P0 — Add test suite~~ DONE
-3 test suites, 47 tests: indexer.test.ts (18), search.test.ts (6), cli.test.ts (23).
+Single priority list across all tracks. Ranking factors: dependency chains (blockers go first), team-voted impact (pts), effort/LOC, and how much each goal unlocks downstream.
 
-### ~~P1 — Search CLI flags~~ DONE
-Added --max-chunks, --max-tokens, --recency-depth, --typed-memory-boost flags. All pass through to search API.
-
-### P2 — Index health check
-No way to verify index integrity or detect corruption. A `teammates-recall check` command would help.
-
-### P2 — Progress reporting
-CLI commands print nothing during long operations. Add spinners or progress indicators for full index rebuilds.
-
-### P3 — Batch search API
-No way to search multiple queries without repeated sync checks. Would improve performance for multi-query workflows.
-
----
-
-## @teammates/consolonia — Goals
-
-### P1 — Hit-testing framework
-Each widget reimplements mouse handling independently. A standardized hit-testing system would reduce duplication and bugs in mouse-interactive widgets.
-
-### P1 — Virtual scrolling for ChatView
-ChatView stores all feed items in memory. With 10k+ items, performance will degrade. Windowed rendering would cap memory usage.
-
-### P2 — Flex grow/shrink in Row/Column
-Layout engine lacks CSS-like flex factors. Currently all children get equal space or fixed sizes. Proportional sizing would enable more sophisticated layouts.
-
-### P2 — Undo/redo for TextInput
-No undo stack in TextInput. Common expectation for text editing widgets.
-
-### P3 — Clipboard write support
-TextInput handles paste but has no copy/cut. Would need platform-specific clipboard access.
-
-### P3 — Additional syntax highlighters
-Only JS/TS, Python, and C# are built in. Adding Go, Rust, and shell would cover most teammate output.
+| Rank | ID | Goal | Track | LOC | Why this rank |
+|------|----|------|-------|-----|---------------|
+| **1** | N1 | Decompose cli.ts (~4,800 lines) | Existing | ~500 | Unblocks CP1 (hooks need clean event points). Every future CLI feature is harder until this is done. |
+| **2** | CP2 | Non-Interactive Print Mode (`-p`) | Parity | ~150 | Unlocks CI/CD, scripting, SDK use. **Prerequisite for TF4** (code review). Quick win. |
+| **3** | N2 | Error observability — replace silent catches | Existing | ~30 | 6 `.catch(() => {})` patterns. Tiny effort, immediate debugging payoff for everything below. |
+| **4** | AI1 | Preset Capabilities Declaration | Infra | ~50 | `capabilities` field on `AgentPreset`. Tiny, unblocks **all EP\* goals**. |
+| **5** | CP1 | Hooks / Lifecycle Events | Parity | ~300 | Foundation for plugins, automation, custom workflows. Needs N1 done first. |
+| **6** | TF2 | Decision & Memory Synthesis (14pts) | Unique | ~400 | Cross-teammate semantic query engine. **Foundation for TF1, TF4, TF5** — the linchpin. |
+| **7** | TF1 | Temporal Awareness Engine (19pts) | Unique | ~700 | Highest-voted feature. `/catchup`, `/history`, `/standup`. Depends on TF2. |
+| **8** | TF3 | Proactive Ownership Awareness (16pts) | Unique | ~200 | Pre/post-task ownership scanning. Independent of TF2 — can start anytime after N1. |
+| **9** | N3 | cli-proxy.ts test suite (~690 lines) | Existing | ~300 | Safety net before all the adapter changes coming from EP\* goals. |
+| **10** | CP3 | User-Defined Skills / Commands | Parity | ~200 | `.teammates/_skills/` with markdown prompts. Good differentiator vs single-agent tools. |
+| **11** | CP5 | Structured Output (`--json-schema`) | Parity | ~100 | Essential for CP2 consumers. JSON schema validation on `-p` output. |
+| **12** | TF4 | Memory-Informed Code Review (14pts) | Unique | ~250 | Recall-augmented PR review. Depends on TF2 + CP2. |
+| **13** | AI2 | Settings-Based Agent Config | Infra | ~100 | Per-agent config in `settings.json`. Prerequisite for EP1, EP3. |
+| **14** | EP1 | MCP Integration | Enhanced | ~200 | Config-driven MCP server passthrough. Biggest Enhanced unlock. Needs AI1 + AI2. |
+| **15** | CP4 | Session Resume (`-c`, `-r`) | Parity | ~100 | `--resume` reads last session file. Small effort, nice UX. |
+| **16** | EP2 | Worktree Isolation | Enhanced | ~150 | Native `--worktree` for Claude, sandbox for Codex. |
+| **17** | EP3 | Permission Mode Mapping | Enhanced | ~100 | `SandboxLevel` → agent-native flags. Needs AI2. |
+| **18** | N6 | End-to-end integration tests | Existing | ~400 | CLI → orchestrator → adapter → agent → result. Important but lower urgency. |
+| **19** | N7 | Consolonia widget tests | Existing | ~600 | ChatView, Markdown, Syntax, TextInput — 3,900+ untested lines. |
+| **20** | CP6 | Budget / Turn Limits | Parity | ~30 | `--max-turns`, `--max-duration`. Tiny. |
+| **21** | CP7 | System Prompt Override | Parity | ~30 | `--append-system-prompt`. Tiny. |
+| **22** | TF5 | Teammate Drift & Alignment (4pts) | Unique | ~300 | Pairwise contradiction detection + `/align`. Depends on TF2. Low votes. |
+| **23** | EP4 | Effort Levels | Enhanced | ~50 | Prompt baseline + native flag passthrough. |
+| **24** | EP5 | Native Tool Restrictions for Skills | Enhanced | ~50 | `allowed_tools` → Claude's `--allowedTools`. Depends on CP3. |
+| **25** | EP6 | Browser / Playwright | Enhanced | ~30 | `--chrome` passthrough. Trivial. |
+| **26** | CP8 | Shared Task Lists | Parity | ~200 | `.teammates/_tasks/backlog.md`. Low demand. |
+| **27** | TF6 | Cross-Session Task Continuity (1pt) | Unique | ~150 | Structured checkpoints + `/resume`. Depends on CP4. Lowest votes. |
 
 ---
 
-## New Goals (2026-03-15)
+## Dependency Graph (critical path)
 
-### N1 — Decompose cli.ts (3,963 lines) ⭐
-The single largest file in the monorepo. Extract `handleEvent()` switch arms, `AnimatedBanner`, retro/handoff approval UI, and `/debug`/`/log`/`/status` renderers into focused modules. Unlocks testability for the ~73% of CLI source that's currently untested. **Impact: high. Effort: large.**
+```
+N1 (decompose cli.ts)
+ └→ CP1 (hooks)
 
-### N2 — Error observability — replace 6 silent catches ⭐
-6 `.catch(() => {})` patterns in cli.ts silently swallow failures. Two are on critical paths (startup maintenance line ~2120, adapter calls line ~3326). Add structured logging so background failures are debuggable. **Impact: high. Effort: small.**
+CP2 (print mode)
+ └→ TF4 (code review) ← also needs TF2
 
-### N3 — cli-proxy.ts test suite (603 lines, zero tests) ⭐
-The subprocess adapter that spawns agents — handles process streaming, temp file I/O, output capture, handoff block parsing. No tests at all. Mock `child_process.spawn` and test the output parser, timeout handling, and handoff extraction. **Impact: high. Effort: medium.**
+TF2 (memory synthesis)
+ ├→ TF1 (temporal engine)
+ ├→ TF4 (code review)
+ └→ TF5 (drift & alignment)
 
-### N4 — prompt-input.ts test suite (719 lines, zero tests)
-Consolonia-based readline replacement handling raw input, paste events, history, multi-row wrapping. Complex behavior, no tests. **Impact: medium. Effort: medium.**
+AI1 (capabilities)
+ └→ all EP* goals
 
-### N5 — onboard.ts test suite (215 lines, zero tests)
-Template copying, directory creation, agent prompt generation. Testable pure functions. **Impact: medium. Effort: small.**
+AI2 (settings config)
+ ├→ EP1 (MCP)
+ └→ EP3 (permissions)
 
-### N6 — End-to-end integration tests
-No cross-package tests exercising CLI → orchestrator → adapter → agent → result parsing → handoff. Would catch interaction regressions. **Impact: high. Effort: medium.**
+CP3 (skills)
+ └→ EP5 (tool restrictions)
 
-### N7 — Consolonia widget tests: ChatView (1,096 lines), Markdown (880), Syntax (800), TextInput (712)
-4 large widgets with zero dedicated tests (3,488 lines total). Only generic widget tests exist in `widgets.test.ts`. Markdown and Syntax are the biggest untested surfaces in consolonia. **Impact: high. Effort: large.**
+CP4 (session resume)
+ └→ TF6 (cross-session continuity)
+```
 
-### N8 — Adapter binary validation
-`cli-proxy.ts` spawns agent subprocesses without checking if the binary exists first. Add a preflight `which`/`where` check with clear "install X to use this adapter" messaging. **Impact: medium. Effort: small.**
+**Optimal execution order:** N1 → CP2 → N2 → AI1 in parallel. Then CP1 + TF2 in parallel. Then TF1 + TF3 + N3. Then the rest flows naturally.
 
-### N9 — Search quality improvements (recall)
-- Token estimation uses `text.slice(0, maxTokens * 4)` — a proper tiktoken-style estimator would be more accurate
-- Content classification is path-based only — reading frontmatter `type:` field would be more reliable
-- Temporal decay — older results at same semantic score should rank lower
-- Query normalization — no stemming or case handling currently
-**Impact: medium. Effort: medium.**
+---
 
-### N10 — Pre-commit hooks (Husky + lint-staged)
-No pre-commit hooks configured. A hook running `biome check` and `tsc --noEmit` on staged files would catch issues before CI. **Impact: medium. Effort: small.**
+## Team-Unique Feature Details
 
-### N11 — Root `clean` script
-No way to wipe all `dist/` directories at once. Minor but useful for fresh rebuilds. **Impact: low. Effort: tiny.**
+### TF1 — Temporal Awareness Engine (19pts)
+**Authors:** Scribe, Beacon
 
-### N12 — paste-handler.ts test suite (243 lines, zero tests)
-Handles multi-line paste detection and processing. Testable logic. **Impact: low. Effort: small.**
+A "what happened?" engine that reconstructs timelines across any scope — team-wide catch-up after time away, file-specific narratives, or daily standups. One underlying engine, three lenses.
 
-### N13 — wordwheel.ts + dropdown.ts tests (244 lines combined, zero tests)
-Autocomplete and dropdown rendering logic. **Impact: low. Effort: small.**
+**How it works:**
+- Query all teammates' daily logs, weekly summaries, and typed memories for a given time range
+- Cross-reference with `git log` to correlate memory entries with actual code changes
+- Synthesize a coherent narrative ordered by time, grouped by teammate or by topic
+- Three access modes:
+  - `/catchup [since]` — "What happened since Monday?" Scans all teammates' logs, groups by topic, highlights decisions and blockers
+  - `/history <file-or-topic>` — "What's the story of auth middleware?" Traces a subject across all teammates' memories and git history
+  - `/standup` — Last-24h summary from each teammate, formatted as a team standup
+
+**Beacon's role:** Build the cross-teammate temporal query engine in `@teammates/recall` (multi-index time-range search, git log correlation). Add the `/catchup`, `/history`, `/standup` commands to `@teammates/cli`. Consolonia renders the timeline UI.
+
+### TF2 — Decision & Memory Synthesis (14pts)
+**Authors:** Scribe, Beacon
+
+A cross-teammate semantic query engine — search all recall indexes simultaneously, deduplicate results, rank by ownership authority. "Decision archaeology" is a query pattern on top: find where and when a decision was made, who made it, and what the reasoning was.
+
+**Beacon's role:** This lives almost entirely in Beacon's packages. Extend `@teammates/recall` search API with multi-index aggregation, deduplication, and authority ranking. Add CLI commands. **Foundation for TF1, TF4, and TF5.**
+
+### TF3 — Proactive Ownership Awareness (16pts)
+**Authors:** Beacon, Pipeline/Scribe
+
+Pre- and post-coding ownership scanning. Before coding: "who should I coordinate with?" After coding: "who needs to know?" Uses the existing `Registry` ownership data and `Orchestrator.route()` scoring.
+
+**Beacon's role:** Build the ownership scanning logic in `@teammates/cli`. Wire pre-task warnings into `drainAgentQueue`. Wire post-task notifications into `handleEvent` on `task_completed`. Pipeline owns the CI version.
+
+### TF4 — Memory-Informed Code Review (14pts)
+**Authors:** Beacon, Pipeline
+
+Route diffs to owning teammates for review against their WISDOM.md and accumulated memories. The reviewer sees not just the code change but the relevant context from their memory.
+
+**Beacon's role:** Build the diff-to-ownership mapping and recall-augmented review prompt in `@teammates/cli`. Depends on TF2 + CP2.
+
+### TF5 — Teammate Drift & Alignment (4pts)
+**Authors:** Beacon, Scribe
+
+Detect contradictions and style divergence across teammates' memories, then propose fixes. `/align` command.
+
+**Beacon's role:** Build the comparison engine in `@teammates/recall`. Depends on TF2.
+
+### TF6 — Cross-Session Task Continuity (1pt)
+**Authors:** Beacon
+
+Structured checkpoints for interrupted work. `/resume` command. Depends on CP4.
 
 ---
 
 ## Completed Goals
 
-### ~~Linting & formatting~~ DONE
-Biome configured at repo root. 0 errors, 18 warnings. `npm run lint` and `npm run lint:fix` scripts.
-
-### ~~P0 — Test coverage for cli.ts~~ DONE
-### ~~P0 — Test coverage for compact.ts~~ DONE
-### ~~P1 — Test coverage for console/ utilities~~ DONE
-### ~~P1 — Configurable routing~~ DONE
-### ~~P0 — Recall test suite~~ DONE
-### ~~P1 — Search CLI flags~~ DONE
+- ~~P0 — Test coverage for cli.ts~~ (extracted cli-utils.ts, 33 tests)
+- ~~P0 — Test coverage for compact.ts~~ (14 tests)
+- ~~P0 — Recall test suite~~ (3 suites, 47 tests)
+- ~~P1 — Console utility tests~~ (4 suites, 49 tests)
+- ~~P1 — Configurable routing~~ (routing keywords in SOUL.md)
+- ~~P1 — Search CLI flags~~ (--max-chunks, --max-tokens, --recency-depth, --typed-memory-boost)
+- ~~Linting & formatting~~ (Biome, 0 errors)
+- ~~Recall bundled as CLI dependency~~
+- ~~/install command removed~~

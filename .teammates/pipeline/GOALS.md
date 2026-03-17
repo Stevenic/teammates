@@ -1,6 +1,6 @@
 # Pipeline — Goals
 
-Updated: 2026-03-15 (session 3)
+Updated: 2026-03-17
 
 ## Current State Assessment
 
@@ -58,41 +58,105 @@ Updated: 2026-03-15 (session 3)
 16. ~~**Release pre-publish validation**~~ ✅ Done — Release workflow split into validate (lint+typecheck+build+test) → publish jobs.
 17. ~~**Dependency vulnerability remediation**~~ ✅ Done — Beacon upgraded vectra 0.9.0→0.12.3, resolving all 3 high-severity transitive vulns (axios CSRF/SSRF/DoS). `npm audit` now shows 0 vulnerabilities.
 
-### P5 — Future / Nice-to-have
+### P5 — Team Governance CI (UNBLOCKED — Pipeline ships these now)
 
-18. **Build performance monitoring** — Track CI run times over time to catch regressions.
-19. **Preview environments** — If/when the project ships a web UI, add preview deploys on PRs.
-20. **CodeQL security scanning** — Static analysis for security vulnerabilities in source code.
-21. **Test result artifacts** — Upload JUnit XML test results as workflow artifacts for failure debugging.
+These are the highest-value goals Pipeline can ship *right now* with no dependencies on Beacon. They emerged from the team brainstorm as Pipeline's unique contribution and are foundational for later features (#61, #62). Ranked by dependency chain: #59 first (ownership graph), then #60 (uses same graph), then #47 (independent but high-value).
 
-### P6 — Brainstormed (2026-03-15) — Needs prioritization
+59. **Boundary Violation Detector** ⭐ 9pts — A CI check that parses each teammate's SOUL.md to extract declared ownership patterns (glob-based Primary and Secondary ownership), then compares every file changed in a PR against those patterns. If a teammate's commit touches files outside their declared ownership, the check flags the violation with a clear annotation: which teammate owns the file, which teammate changed it, and what the ownership declaration says. **Foundation for #61 and #62.** Full Pipeline ownership.
+    - Parse `SOUL.md` → `### Primary` / `### Secondary` sections → extract glob patterns → build ownership map
+    - On PR: diff changed files against ownership map → annotate violations
+    - Allow secondary ownership edits with warning (not block), flag unowned files
 
-**Developer Experience**
-22. **Local CI simulation script** — A `npm run ci` script that mirrors the full CI pipeline locally (lint → typecheck → build → test), so devs can catch failures before pushing.
-23. **PR template with CI checklist** — `.github/PULL_REQUEST_TEMPLATE.md` with checkboxes for "CI passes", "coverage not decreased", "no new lint warnings".
-24. **Commit message linting** — Add commitlint or similar to enforce conventional commits, enabling automated changelogs and semantic versioning.
+60. **Memory & Ownership CI** ⭐ 8pts — CI job that validates teammate memory health + ownership coverage. Two sub-checks: (1) **Memory integrity** — scan `memory/` dirs for orphaned files, stale memories, broken cross-references, missing SOUL.md/WISDOM.md, malformed frontmatter. (2) **Ownership gap detection** — walk repo tree, match against all ownership patterns, report gaps (unowned files) and overlaps (multi-owned without co-ownership declaration). Full Pipeline ownership.
+    - Output as CI step summary (markdown table) + annotations for violations
+    - Configurable thresholds: max memory age, allowed unowned paths (root config files)
+
+47. **Changesets integration** — Replace manual version bumping with `@changesets/cli`. Each PR includes a changeset file describing the change. CI validates changesets exist for code changes. Release workflow consumes changesets to auto-bump versions and generate changelogs.
+
+### P6 — Quick Wins & Developer Experience (UNBLOCKED)
+
+Small, immediately actionable goals that improve developer experience and CI hygiene. No external dependencies.
+
+5. **Add CI status badge to README** — Needs Scribe to add badge to README (Pipeline provides badge markdown).
+63. **Local CI simulation script** — `npm run ci` mirroring the full pipeline locally.
+64. **PR template with CI checklist** — `.github/PULL_REQUEST_TEMPLATE.md`.
+39. **Workflow linting** — `actionlint` for workflow YAML validation.
+45. **CLI binary packaging** — Package CLI as standalone binary (via `pkg` or `esbuild`) for non-Node environments.
+
+### P7 — Team Feature Roadmap: Blocked on Beacon (HIGH VALUE)
+
+These brainstorm features scored highest in voting (14-16pts) but require Beacon to ship headless mode (`-p`) before Pipeline can build the CI infrastructure. Pipeline's prep work (#59 ownership graph) should be done first.
+
+61. **Memory-Informed Code Review** ⭐ 14pts — CI workflow that identifies which teammates own changed files (using #59's ownership graph), dispatches owning teammates via headless mode to review the diff against their accumulated knowledge (WISDOM.md, typed memories, recall search). Posts review comments as PR comments with teammate attribution. **Blocked on:** #59 (ownership graph) + Beacon shipping print mode (`-p`). Pipeline builds workflow; Beacon builds headless execution + recall integration.
+
+62. **Proactive Ownership Awareness** ⭐ 16pts — Two-phase ownership scanning: (1) Pre-coding impact analysis (CLI command, Beacon owns), (2) Post-coding handoff suggestions (CI step on PR, Pipeline owns). Post-coding phase scans changed files against ownership map and posts handoff suggestions with relevant memories from owning teammates. **Blocked on:** #59 + Beacon shipping print mode. Pipeline builds the PR workflow step; Beacon builds pre-coding CLI; Scribe defines handoff protocol.
+
+### P8 — Cross-Agent CI Infrastructure (Blocked on Beacon features)
+
+CI/CD infrastructure to support cross-agent features Beacon is building for Claude parity. Pipeline doesn't build these features — Pipeline ensures they're tested, validated, and releasable. Most are blocked on Beacon shipping the corresponding features.
+
+**Integration Testing Infrastructure**
+40. **E2E integration test workflow** — Headless teammate sessions in CI validating full orchestrator → adapter → agent pipeline. Blocked on: Beacon shipping print mode (`-p`).
+41. **Adapter compatibility matrix** — E2E tests across multiple adapter backends. Blocked on: #40 + adapters existing.
+42. **Hook validation in CI** — Dry-run lifecycle hooks to catch errors before runtime. Blocked on: Beacon shipping hooks system.
+
+**Structured Output & Schema Validation**
+43. **JSON schema validation step** — Validate structured output from print mode against JSON schemas. Blocked on: Beacon shipping structured output.
+44. **Skill/command lint step** — Validate user-defined skills format, fields, arguments. Blocked on: Beacon shipping skills system.
+
+**Release & Packaging**
+46. **Plugin packaging workflow** — Validate and package teammate plugins. Blocked on: Beacon shipping plugin system.
+
+**Headless / Automation Support**
+48. **Budget enforcement in CI** — Max turn count, wall-clock time, output size limits for headless runs. Blocked on: Beacon shipping budget/turn limits.
+49. **Worktree-aware CI testing** — Test worktree isolation in CI. Blocked on: Beacon shipping worktree support.
+50. **Headless smoke test on release** — Pre-publish `teammates -p "hello"` sanity check. Blocked on: Beacon shipping print mode.
+
+### P8b — Agent-Specific (Enhanced Tier) CI Infrastructure (Blocked on Beacon features)
+
+Validates adapter passthrough, capability declarations, and graceful degradation for agent-specific features.
+
+**MCP & External Tools**
+51. **MCP config validation in CI** — Parse and validate MCP server config. Blocked on: Beacon shipping MCP passthrough.
+52. **MCP adapter passthrough test** — Verify adapters map MCP config to native flags. Blocked on: #40 + MCP passthrough.
+
+**Worktree Isolation**
+53. **Worktree lifecycle CI test** — Full worktree lifecycle validation. Blocked on: Beacon shipping worktree support.
+54. **Parallel worktree conflict detection** — Multi-worktree isolation testing. Blocked on: #53.
+
+**Permission Mode Mapping**
+55. **Permission mode passthrough validation** — Validate SandboxLevel mapping to adapter-specific flags. Blocked on: Beacon shipping permission mode mapping.
+
+**Browser / Playwright**
+56. **Browser integration smoke test** — Validate `--chrome` passthrough. Blocked on: Beacon shipping browser passthrough.
+
+**Capability Declaration**
+57. **Adapter capability matrix CI** — Generate compatibility matrix from adapter capabilities. Blocked on: Beacon adding `capabilities` to `AgentPreset`.
+58. **Capability degradation warnings** — Validate clean degradation when config uses unsupported features. Blocked on: #57.
+
+### P9 — Backlog
 
 **Reliability & Observability**
-25. **Workflow failure notifications** — Slack/Discord/email notifications on CI failures on `main` (not PRs), so broken main is caught immediately.
-26. **Flaky test detection** — Re-run failed tests once before marking CI as failed. Track tests that flip between pass/fail across runs.
-27. **CI health dashboard** — GitHub Actions workflow run history with pass/fail rates, avg duration, cache hit rates. Could be a scheduled workflow that writes to step summary or a simple script.
+25. **Workflow failure notifications** — Slack/Discord alerts on `main` CI failures.
+26. **Flaky test detection** — Re-run failed tests once before marking CI failed.
+27. **CI health dashboard** — Pass/fail rates, duration trends, cache hit rates.
 
 **Security & Compliance**
-28. **SBOM generation** — Generate Software Bill of Materials (SPDX/CycloneDX) as a release artifact. Increasingly required for enterprise/government consumers.
-29. **License compliance check** — Scan dependencies for incompatible licenses (GPL in an MIT project, etc.). Can use `license-checker` or similar.
-30. **Signed releases** — npm provenance or cosign for published packages, proving packages were built in CI from the expected source.
-
-**Release & Versioning**
-31. **Automated version bumping** — Use changesets or similar to manage version bumps across the monorepo, replacing manual version edits.
-32. **Release-please integration** — Automate release PRs with changelogs based on conventional commits. Replaces the manual changelog workflow.
-33. **Pre-release / canary publishes** — Publish pre-release versions from feature branches or PRs for testing before merge.
+28. **SBOM generation** — CycloneDX/SPDX as release artifact.
+29. **License compliance check** — Scan for incompatible licenses.
+30. **Signed releases** — npm provenance for published packages.
+65. **Commit message linting** — Conventional commits enforcement. (Superseded by #47 changesets if adopted.)
 
 **Scaling & Performance**
-34. **Selective workspace testing** — Only run tests for packages affected by changed files (using `turbo` or custom change detection). Currently all tests run on every change.
-35. **Build artifact caching** — Cache `dist/` outputs between CI runs when source hasn't changed, skipping redundant rebuilds.
-36. **Node.js version matrix expansion** — Add Node 23 (current) to the test matrix to catch upcoming breaking changes early. Drop Node 20 when it leaves LTS (April 2026).
+34. **Selective workspace testing** — Only test packages affected by changed files.
+35. **Build artifact caching** — Cache `dist/` when source unchanged.
+36. **Node.js version matrix expansion** — Add Node 23, drop Node 20 when LTS ends (April 2026).
 
 **Infrastructure**
-37. **Reusable workflow extraction** — Extract common CI patterns (checkout → setup → cache → install) into a reusable workflow, reducing duplication between ci.yml, release.yml, and changelog.yml.
-38. **Self-hosted runner evaluation** — Evaluate whether self-hosted runners would improve CI speed or reduce costs as the project scales.
-39. **Workflow linting** — Add `actionlint` to validate workflow YAML syntax and catch common mistakes before they hit CI.
+37. **Reusable workflow extraction** — Common CI patterns as reusable workflows.
+38. **Self-hosted runner evaluation** — Evaluate speed/cost improvements.
+
+**Other**
+18. **Build performance monitoring** — Track CI run times over time.
+20. **CodeQL security scanning** — Static analysis for security vulns.
+21. **Test result artifacts** — Upload JUnit XML as workflow artifacts.

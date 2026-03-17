@@ -44,15 +44,20 @@ Each teammate has its own memory under `.teammates/<name>/`:
         └── YYYY-MM.md            # Monthly summaries (Tier 1b)
 ```
 
-## Session Startup — Read Order
+## Context Window — What Gets Injected
 
-When a teammate wakes up, it reads files in this order:
+The CLI automatically builds each teammate's context before every task. The prompt stack (in order):
 
 1. **SOUL.md** — identity, principles, boundaries
 2. **WISDOM.md** — distilled principles from compacted memories
-3. **Daily logs** — today's and yesterday's `memory/YYYY-MM-DD.md`
-4. **USER.md** — who the user is and how they prefer to work
-5. **Typed memories** — browsed or searched on-demand as the task requires
+3. **Relevant memories from recall** — automatically queried using the task prompt; returns matching episodic summaries and typed memories from the vector index
+4. **Last 7 daily logs** — recent session notes
+5. **Weekly summaries** — most recent episodic summaries
+6. **Session history** — prior task results from the current CLI session
+7. **Roster** — all teammates and their roles
+8. **Conversation history + task** — the user's message and prior exchanges
+
+Teammates do not need to manually read these files or run recall searches — the CLI handles all context assembly automatically.
 
 ## Tier 1 — Daily Logs
 
@@ -170,30 +175,23 @@ The `/compact` command runs two independent pipelines:
 - Anything already in WISDOM.md
 - Ephemeral task details — use daily logs
 
-## Recall — Vector Search Service (Optional)
+## Recall — Automatic Vector Search
 
-The `teammates-recall` service adds a local vector database with semantic search across all teammate memory files. It uses [Vectra](https://github.com/Stevenic/vectra) as the vector store and [transformers.js](https://huggingface.co/docs/transformers.js) for on-device embeddings (`Xenova/all-MiniLM-L6-v2`, 384 dimensions). Zero cloud dependencies — everything runs locally.
+`@teammates/recall` is bundled as a direct dependency of the CLI. It provides a local vector database with semantic search across all teammate memory files, queried **automatically before every task**. It uses [Vectra](https://github.com/Stevenic/vectra) as the vector store and [transformers.js](https://huggingface.co/docs/transformers.js) for on-device embeddings (`Xenova/all-MiniLM-L6-v2`, 384 dimensions). Zero cloud dependencies — everything runs locally.
+
+### How it works
+
+The CLI queries the recall index before every task, using the task prompt as the search query. Relevant episodic summaries and typed memories are injected into the teammate's context window automatically — no manual search needed.
+
+- **Automatic query** — Before every task, the CLI calls `queryRecallContext()` with the task prompt as the query. Results are injected into the prompt between WISDOM.md and the daily logs.
+- **Automatic sync** — After every task completes and after `/compact`, the CLI calls `syncRecallIndex()` to pick up any new or changed files.
+- **In-process** — Recall is imported as a library, not spawned as a subprocess. Queries run in-process for speed.
 
 ### What it provides
 
 - **Vector database** — Per-teammate Vectra indexes stored at `.teammates/<name>/.index/` (gitignored, rebuildable)
 - **On-device embeddings** — Text is chunked and embedded using transformers.js. Model downloads automatically on first run (~23 MB), cached locally. No API keys required.
-- **Hybrid retrieval** — Multi-pass search combining keyword matching, semantic similarity, and recency:
-  - **BM25 + vector search** — Vectra natively supports hybrid BM25 keyword matching and vector similarity search, combining exact term matches with semantic embeddings for higher-quality results than either approach alone
-  - **Recency pass** — Always returns the 2–3 most recent weekly summaries (by file date, not query relevance), giving agents a sense of recent activity beyond the 7 daily logs already in context
-  - **Merge + dedup** — Results from all passes are combined, deduplicated by URI, and trimmed to a token budget
-- **Type-based priority boost** — Typed memories (pre-extracted knowledge) score higher than episodic summaries at the same semantic similarity, since distilled facts are more actionable than narrative
-- **Auto-sync** — Every search call detects new or changed memory files and indexes them before returning results. Agents write markdown, then search — no manual sync step needed.
-
-### Commands
-
-```bash
-teammates-recall search "query"                    # Search all memories
-teammates-recall search "query" --teammate beacon  # Scoped to one teammate
-teammates-recall sync                              # Incremental index update
-teammates-recall index                             # Full rebuild from scratch
-teammates-recall status                            # Index health and stats
-```
+- **Hybrid retrieval** — BM25 + vector search combining keyword matching and semantic similarity, with type-based priority boosting (typed memories rank above episodic summaries)
 
 ### What gets indexed
 
@@ -261,7 +259,7 @@ Both systems provide hybrid BM25+vector search with embeddings. Teammates levera
 |---|---|---|
 | Philosophy | Structure through convention | Power through infrastructure |
 | Complexity | Low — plain Markdown, no config | High — SQLite, embeddings, dual backends, 98+ source files |
-| Dependencies | None required; recall adds Vectra + transformers.js (all local) | SQLite, embedding providers, optional QMD sidecar |
+| Dependencies | Recall bundled (Vectra + transformers.js, all local) | SQLite, embedding providers, optional QMD sidecar |
 | Cloud requirements | None | Optional (remote embedding providers) |
 | Configuration surface | Minimal (file naming conventions) | Extensive (chunking, weights, batch indexing, caching, scoping) |
 | Multi-agent coordination | Built-in (CROSS-TEAM.md, handoffs, ownership) | Per-agent isolation |
@@ -272,7 +270,7 @@ OpenClaw prioritizes search quality and retrieval sophistication. It invests hea
 
 ### Summary
 
-- **Teammates** is a convention-based system with optional vector search: structured file layout, typed memories, compaction pipelines, wisdom distillation, and a local vector DB (Vectra + transformers.js) via the recall service. The base memory system works with any AI tool that can read files; adding recall layers on hybrid BM25+vector search, recency-aware retrieval, on-device embeddings, and type-aware ranking — all fully offline.
+- **Teammates** is a convention-based system with built-in vector search: structured file layout, typed memories, compaction pipelines, wisdom distillation, and a bundled local vector DB (Vectra + transformers.js) that is automatically queried before every task. The recall index provides hybrid BM25+vector search, on-device embeddings, and type-aware ranking — all fully offline.
 - **OpenClaw** is an infrastructure-based system: SQLite vector indexes, hybrid BM25+vector search, multiple embedding backends, automatic memory flush, and extensive tuning knobs. The memory system is tightly integrated with its runtime.
 
-Both systems store Markdown as the source of truth and both provide hybrid BM25+vector search with embeddings. Teammates adds semantic structure on top (types, tiers, compaction rules) and keeps search optional with zero-config local operation. OpenClaw adds more search infrastructure (MMR, temporal decay, multiple providers) and offers finer-grained tuning at the cost of a larger configuration surface.
+Both systems store Markdown as the source of truth and both provide hybrid BM25+vector search with embeddings. Teammates adds semantic structure on top (types, tiers, compaction rules) with automatic recall queries bundled into the CLI — zero configuration, fully local. OpenClaw adds more search infrastructure (MMR, temporal decay, multiple providers) and offers finer-grained tuning at the cost of a larger configuration surface.

@@ -1,7 +1,17 @@
 // Public API for @teammates/cli
 
-export type { AgentAdapter, InstalledService, RosterEntry } from "./adapter.js";
-export { buildTeammatePrompt, formatHandoffContext } from "./adapter.js";
+export type {
+  AgentAdapter,
+  InstalledService,
+  RecallContext,
+  RosterEntry,
+} from "./adapter.js";
+export {
+  buildTeammatePrompt,
+  formatHandoffContext,
+  queryRecallContext,
+  syncRecallIndex,
+} from "./adapter.js";
 export {
   type AgentPreset,
   CliProxyAdapter,

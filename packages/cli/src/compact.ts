@@ -324,3 +324,109 @@ export async function compactEpisodic(
     weekliesRemoved: weeklyResult.removed,
   };
 }
+
+/**
+ * Build a prompt that tells a teammate to distill their WISDOM.md
+ * from typed memories, daily logs, and weekly summaries.
+ *
+ * Returns null if there are no typed memories to distill from.
+ */
+export async function buildWisdomPrompt(
+  teammateDir: string,
+  teammateName: string,
+): Promise<string | null> {
+  const memoryDir = join(teammateDir, "memory");
+  const wisdomPath = join(teammateDir, "WISDOM.md");
+
+  // Read current WISDOM.md
+  let currentWisdom = "";
+  try {
+    currentWisdom = await readFile(wisdomPath, "utf-8");
+  } catch {
+    // No WISDOM.md yet — that's fine, we'll create one
+  }
+
+  // Read typed memory files (anything in memory/ that isn't a daily log)
+  const typedMemories: { file: string; content: string }[] = [];
+  try {
+    const entries = await readdir(memoryDir);
+    for (const entry of entries) {
+      if (!entry.endsWith(".md")) continue;
+      // Skip daily logs (YYYY-MM-DD.md)
+      if (/^\d{4}-\d{2}-\d{2}\.md$/.test(entry)) continue;
+      // Skip subdirectories (weekly/, monthly/) — readdir only returns files here
+      const content = await readFile(join(memoryDir, entry), "utf-8");
+      typedMemories.push({ file: entry, content });
+    }
+  } catch {
+    // No memory dir
+  }
+
+  // Read recent daily logs (current week)
+  const recentDailies: { date: string; content: string }[] = [];
+  try {
+    const entries = await readdir(memoryDir);
+    for (const entry of entries) {
+      if (!entry.endsWith(".md")) continue;
+      const stem = basename(entry, ".md");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(stem)) continue;
+      const content = await readFile(join(memoryDir, entry), "utf-8");
+      recentDailies.push({ date: stem, content });
+    }
+    recentDailies.sort((a, b) => b.date.localeCompare(a.date));
+  } catch {
+    // No memory dir
+  }
+
+  // If there's nothing to distill from, skip
+  if (typedMemories.length === 0 && recentDailies.length === 0) {
+    return null;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const parts: string[] = [];
+  parts.push("# Wisdom Distillation Task\n");
+  parts.push("Update your WISDOM.md by distilling durable knowledge from your typed memories, recent daily logs, and weekly summaries.\n");
+
+  parts.push("## Rules\n");
+  parts.push("- WISDOM.md contains **distilled principles and patterns** — not a changelog or task list");
+  parts.push("- Each entry should be a reusable insight: a convention, decision, pattern, gotcha, or codebase fact");
+  parts.push("- Keep entries concise (2-4 lines each) with a bold title");
+  parts.push("- Remove entries that are outdated or no longer accurate");
+  parts.push("- Update entries whose details have changed (e.g., line counts, file counts)");
+  parts.push("- Add new entries for durable knowledge not yet captured");
+  parts.push(`- Set \`Last compacted: ${today}\` at the top`);
+  parts.push("- Do NOT include task-specific details, conversation history, or ephemeral state");
+  parts.push("- Do NOT include anything already in your SOUL.md (ownership, routing, technologies, etc.)\n");
+
+  if (currentWisdom) {
+    parts.push("## Current WISDOM.md\n");
+    parts.push("```markdown");
+    parts.push(currentWisdom.trim());
+    parts.push("```\n");
+  }
+
+  if (typedMemories.length > 0) {
+    parts.push("## Typed Memories\n");
+    for (const mem of typedMemories) {
+      parts.push(`### ${mem.file}\n`);
+      parts.push(mem.content.trim());
+      parts.push("");
+    }
+  }
+
+  if (recentDailies.length > 0) {
+    parts.push("## Recent Daily Logs\n");
+    for (const daily of recentDailies.slice(0, 7)) {
+      parts.push(`### ${daily.date}\n`);
+      parts.push(daily.content.trim());
+      parts.push("");
+    }
+  }
+
+  parts.push("\n## Instructions\n");
+  parts.push(`Read your current WISDOM.md at \`.teammates/${teammateName}/WISDOM.md\` and rewrite it with updated, distilled entries. Write the file directly — this is the one time you are allowed to edit WISDOM.md.`);
+
+  return parts.join("\n");
+}

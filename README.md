@@ -179,6 +179,7 @@ teammates/
     package.json        # @teammates/recall package
     README.md           # Recall documentation
   docs/                 # Vision and design documents
+    working-with-teammates.md  # Day-to-day workflows: standups, retros, routing
     adoption-guide.md   # How to introduce teammates to an existing team
     cookbook.md          # Concrete recipes for common workflows
     teammates-vision.md # Architecture and Microsoft Teams roadmap

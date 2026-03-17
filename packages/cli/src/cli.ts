@@ -13,16 +13,14 @@ import {
   type ChildProcess,
   spawn as cpSpawn,
   exec as execCb,
-  execSync,
 } from "node:child_process";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { promisify } from "node:util";
 
-const execAsync = promisify(execCb);
+
 
 import {
   App,
@@ -47,6 +45,7 @@ import {
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import type { AgentAdapter } from "./adapter.js";
+import { syncRecallIndex } from "./adapter.js";
 import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
 import type { CopilotAdapterOptions } from "./adapters/copilot.js";
 import { EchoAdapter } from "./adapters/echo.js";
@@ -56,7 +55,7 @@ import {
   relativeTime,
   wrapLine,
 } from "./cli-utils.js";
-import { compactEpisodic } from "./compact.js";
+import { buildWisdomPrompt, compactEpisodic } from "./compact.js";
 import { PromptInput } from "./console/prompt-input.js";
 import { buildTitle } from "./console/startup.js";
 import {
@@ -167,46 +166,13 @@ async function resolveAdapter(name: string): Promise<AgentAdapter> {
 
 // relativeTime is now imported from ./cli-utils.js
 
-// ─── Service registry ────────────────────────────────────────────────
-
-interface ServiceEntry {
-  /** npm package to install globally */
-  package: string;
-  /** Command to verify the service binary exists */
-  checkCmd: string[];
-  /** Command to build the initial index after install */
-  indexCmd?: string[];
-  /** Human-readable description */
-  description: string;
-  /** Task to give the coding agent after install to wire the service into the project */
-  wireupTask?: string;
-}
-
 /** A task queue entry — either an agent task or an internal operation. */
 type QueueEntry =
   | { type: "agent"; teammate: string; task: string }
   | { type: "compact"; teammate: string; task: string }
   | { type: "retro"; teammate: string; task: string }
-  | { type: "btw"; teammate: string; task: string };
-
-const SERVICE_REGISTRY: Record<string, ServiceEntry> = {
-  recall: {
-    package: "@teammates/recall",
-    checkCmd: ["teammates-recall", "--help"],
-    indexCmd: ["teammates-recall", "index"],
-    description: "Local semantic search for teammate memory",
-    wireupTask: [
-      "The `teammates-recall` service was just installed globally.",
-      "Wire it up so every teammate knows it's available:",
-      "",
-      "1. Verify `teammates-recall --help` works. If it does, great. If not, figure out the correct path to the binary (check recall/package.json bin field) and note it.",
-      "2. Read .teammates/PROTOCOL.md and .teammates/CROSS-TEAM.md.",
-      '3. If recall is not already documented there, add a short section explaining that `teammates-recall` is now available for semantic memory search, with basic usage (e.g. `teammates-recall search "query"`).',
-      "4. Check each teammate's SOUL.md (under .teammates/*/SOUL.md). If a teammate's role involves memory or search, note in their SOUL.md that recall is installed and available.",
-      "5. Do NOT modify code files — only update .teammates/ markdown files.",
-    ].join("\n"),
-  },
-};
+  | { type: "btw"; teammate: string; task: string }
+  | { type: "debug"; teammate: string; task: string };
 
 // ─── Slash commands ──────────────────────────────────────────────────
 
@@ -245,7 +211,6 @@ interface BannerInfo {
   adapterName: string;
   teammateCount: number;
   cwd: string;
-  recallInstalled: boolean;
   teammates: { name: string; role: string }[];
 }
 
@@ -348,21 +313,14 @@ class AnimatedBanner extends Control {
     );
     // TM logo row 2 + cwd
     lines.push(concat(tp.accent(tmBot), tp.muted(gap + info.cwd)));
-    // Recall status (indented to align with info above)
+    // Recall status (bundled as dependency)
     lines.push(
-      info.recallInstalled
-        ? concat(
-            tp.text(tmPad + gap),
-            tp.success("● "),
-            tp.success("recall"),
-            tp.muted(" installed"),
-          )
-        : concat(
-            tp.text(tmPad + gap),
-            tp.warning("○ "),
-            tp.warning("recall"),
-            tp.muted(" not installed"),
-          ),
+      concat(
+        tp.text(tmPad + gap),
+        tp.success("● "),
+        tp.success("recall"),
+        tp.muted(" bundled"),
+      ),
     );
 
     // blank
@@ -396,10 +354,7 @@ class AnimatedBanner extends Control {
       ["/retro", "run retrospective"],
     ];
     const col3 = [
-      [
-        info.recallInstalled ? "/copy" : "/install",
-        info.recallInstalled ? "copy session text" : "add a service",
-      ],
+      ["/copy", "copy session text"],
       ["/help", "all commands"],
       ["/exit", "exit session"],
     ];
@@ -624,7 +579,6 @@ class TeammatesREPL {
   }
   private adapterName: string;
   private teammatesDir!: string;
-  private recallWatchProcess: ChildProcess | null = null;
   private taskQueue: QueueEntry[] = [];
   /** Per-agent active tasks — one per agent running in parallel. */
   private agentActive: Map<string, QueueEntry> = new Map();
@@ -642,35 +596,12 @@ class TeammatesREPL {
   private lastCleanedOutput = ""; // last teammate output for clipboard copy
   private dispatching = false;
   private autoApproveHandoffs = false;
+  /** Last debug log file path per teammate — for /debug analysis. */
+  private lastDebugFiles: Map<string, string> = new Map();
+  /** Last task prompt per teammate — for /debug analysis. */
+  private lastTaskPrompts: Map<string, string> = new Map();
 
-  /** Read .teammates/settings.json (returns { version, services, ... } or defaults). */
-  private readSettings(): { version: number; services: { name: string;[key: string]: unknown }[];[key: string]: unknown } {
-    try {
-      const raw = JSON.parse(
-        readFileSync(join(this.teammatesDir, "settings.json"), "utf-8"),
-      );
-      return {
-        version: raw.version ?? 1,
-        services: Array.isArray(raw.services) ? raw.services : [],
-        ...raw,
-      };
-    } catch {
-      return { version: 1, services: [] };
-    }
-  }
 
-  /** Write .teammates/settings.json. */
-  private writeSettings(settings: { version: number; services: { name: string;[key: string]: unknown }[];[key: string]: unknown }): void {
-    writeFileSync(
-      join(this.teammatesDir, "settings.json"),
-      `${JSON.stringify(settings, null, 2)}\n`,
-    );
-  }
-
-  /** Check whether a specific service is installed. */
-  private isServiceInstalled(name: string): boolean {
-    return this.readSettings().services.some((s) => s.name === name);
-  }
   /** Pending handoffs awaiting user approval. */
   private pendingHandoffs: {
     id: string;
@@ -1600,11 +1531,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       return;
     }
 
-    // No mentions — auto-route: resolve teammate synchronously if possible, else use default
-    let match = this.orchestrator.route(input);
+    // No mentions — default to the teammate you're chatting with, then try auto-route
+    let match: string | null = null;
+    if (this.lastResult) {
+      match = this.lastResult.teammate;
+    }
     if (!match) {
-      // Fall back to adapter name — avoid blocking for agent routing
-      match = this.adapterName;
+      match = this.orchestrator.route(input) ?? this.adapterName;
     }
     {
       const bg = this._userBg;
@@ -2226,18 +2159,6 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     argsBefore: string,
     partial: string,
   ): DropdownItem[] {
-    // Service-name completions for /install
-    if (cmdName === "install" && !argsBefore.trim()) {
-      const lower = partial.toLowerCase();
-      return Object.entries(SERVICE_REGISTRY)
-        .filter(([name]) => name.startsWith(lower))
-        .map(([name, svc]) => ({
-          label: name,
-          description: svc.description,
-          completion: `/install ${name} `,
-        }));
-    }
-
     const positions = TeammatesREPL.TEAMMATE_ARG_POSITIONS[cmdName];
     if (!positions) return [];
 
@@ -2551,24 +2472,6 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         });
     }
 
-    // Detect installed services from settings.json and tell the adapter
-    if ("services" in this.adapter) {
-      const services: { name: string; description: string; usage: string }[] =
-        [];
-      if (this.isServiceInstalled("recall")) {
-        services.push({
-          name: "recall",
-          description:
-            "Local semantic search across teammate memories and daily logs. Use this to find relevant context before starting a task.",
-          usage: 'teammates-recall search "your query" --dir .teammates',
-        });
-      }
-      (this.adapter as any).services = services;
-    }
-
-    // Start recall watch mode if recall is installed
-    this.startRecallWatch();
-
     // Background maintenance: compact stale dailies + sync recall indexes
     this.startupMaintenance().catch(() => {});
 
@@ -2585,6 +2488,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         const validNames = new Set([
           ...this.orchestrator.listTeammates(),
           this.adapterName,
+          "everyone",
         ]);
         return value
           .replace(/@(\w+)/g, (match, name) =>
@@ -2627,13 +2531,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     const names = this.orchestrator.listTeammates();
     const reg = this.orchestrator.getRegistry();
-    const hasRecall = this.isServiceInstalled("recall");
-
     const bannerWidget = new AnimatedBanner({
       adapterName: this.adapterName,
       teammateCount: names.length,
       cwd: process.cwd(),
-      recallInstalled: hasRecall,
       teammates: names.map((name) => {
         const t = reg.get(name);
         return { name, role: t?.role ?? "" };
@@ -2668,6 +2569,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         const validNames = new Set([
           ...this.orchestrator.listTeammates(),
           this.adapterName,
+          "everyone",
         ]);
         const mentionPattern = /@(\w+)/g;
         while ((m = mentionPattern.exec(value)) !== null) {
@@ -2814,7 +2716,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           this.ctrlcTimer = null;
         }
         this.chatView.setFooter(this.defaultFooter!);
-        this.stopRecallWatch();
+
         if (this.app) this.app.stop();
         this.orchestrator.shutdown().then(() => process.exit(0));
         return;
@@ -2861,6 +2763,17 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     this.chatView.on("link", (url: string) => {
       const quoted = JSON.stringify(url);
+      const cmd =
+        process.platform === "darwin"
+          ? `open ${quoted}`
+          : process.platform === "win32"
+            ? `start "" ${quoted}`
+            : `xdg-open ${quoted}`;
+      execCb(cmd, () => {});
+    });
+
+    this.chatView.on("file", (filePath: string) => {
+      const quoted = JSON.stringify(filePath);
       const cmd =
         process.platform === "darwin"
           ? `open ${quoted}`
@@ -3058,9 +2971,6 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     const registry = this.orchestrator.getRegistry();
     const termWidth = process.stdout.columns || 100;
 
-    // Detect recall from settings.json
-    const recallInstalled = this.isServiceInstalled("recall");
-
     this.feedLine();
     this.feedLine(concat(tp.bold("  Teammates"), tp.muted(` v${PKG_VERSION}`)));
     this.feedLine(
@@ -3072,11 +2982,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       ),
     );
     this.feedLine(`  ${process.cwd()}`);
-    this.feedLine(
-      recallInstalled
-        ? tp.success("  ● recall installed")
-        : tp.warning("  ○ recall not installed"),
-    );
+    this.feedLine(concat(tp.success("  ● recall"), tp.muted(" bundled")));
 
     // Roster
     this.feedLine();
@@ -3105,11 +3011,11 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       // First run — no teammates yet
       col1 = [
         ["/init", "set up teammates"],
-        ["/install", "add a service"],
+        ["/help", "all commands"],
       ];
       col2 = [
-        ["/help", "all commands"],
         ["/exit", "exit session"],
+        ["", ""],
       ];
       col3 = [
         ["", ""],
@@ -3127,10 +3033,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         ["/retro", "run retrospective"],
       ];
       col3 = [
-        [
-          recallInstalled ? "/copy" : "/install",
-          recallInstalled ? "copy session text" : "add a service",
-        ],
+        ["/copy", "copy session text"],
         ["/help", "all commands"],
         ["/exit", "exit session"],
       ];
@@ -3173,7 +3076,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         name: "debug",
         aliases: ["raw"],
         usage: "/debug [teammate]",
-        description: "Show raw agent output from the last task",
+        description: "Analyze the last agent task with the coding agent",
         run: (args) => this.cmdDebug(args),
       },
       {
@@ -3196,13 +3099,6 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         usage: "/clear",
         description: "Clear history and reset the session",
         run: () => this.cmdClear(),
-      },
-      {
-        name: "install",
-        aliases: [],
-        usage: "/install [service]",
-        description: "Install a teammates service (e.g. recall)",
-        run: (args) => this.cmdInstall(args),
       },
       {
         name: "compact",
@@ -3254,7 +3150,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         description: "Exit the session",
         run: async () => {
           this.feedLine(tp.muted("Shutting down..."));
-          this.stopRecallWatch();
+  
           if (this.app) this.app.stop();
           await this.orchestrator.shutdown();
           process.exit(0);
@@ -3355,6 +3251,25 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
               `  Use /debug ${event.result.teammate} to view full output`,
             ),
           );
+          // Show diagnostic hints for empty responses
+          const diag = event.result.diagnostics;
+          if (diag) {
+            if (diag.exitCode !== 0 && diag.exitCode !== null) {
+              this.feedLine(
+                tp.warning(`  ⚠ Process exited with code ${diag.exitCode}`),
+              );
+            }
+            if (diag.signal) {
+              this.feedLine(
+                tp.warning(`  ⚠ Process killed by signal: ${diag.signal}`),
+              );
+            }
+            if (diag.debugFile) {
+              this.feedLine(
+                tp.muted(`  Debug log: ${diag.debugFile}`),
+              );
+            }
+          }
         }
 
         // Render handoffs
@@ -3475,22 +3390,27 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   private async cmdDebug(argsStr: string): Promise<void> {
     const arg = argsStr.trim().replace(/^@/, "");
 
-    // Resolve which teammates to show debug info for
-    let targetNames: string[];
+    // Resolve which teammate to debug
+    let targetName: string;
     if (arg === "everyone") {
-      targetNames = [];
-      for (const [name] of this.lastResults) {
-        if (name !== this.adapterName) targetNames.push(name);
+      // Pick all teammates with debug files, queue one analysis per teammate
+      const names: string[] = [];
+      for (const [name] of this.lastDebugFiles) {
+        if (name !== this.adapterName) names.push(name);
       }
-      if (targetNames.length === 0) {
+      if (names.length === 0) {
         this.feedLine(tp.muted("  No debug info available from any teammate."));
         this.refreshView();
         return;
       }
+      for (const name of names) {
+        this.queueDebugAnalysis(name);
+      }
+      return;
     } else if (arg) {
-      targetNames = [arg];
+      targetName = arg;
     } else if (this.lastResult) {
-      targetNames = [this.lastResult.teammate];
+      targetName = this.lastResult.teammate;
     } else {
       this.feedLine(
         tp.muted("  No debug info available. Try: /debug [teammate]"),
@@ -3499,75 +3419,61 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       return;
     }
 
-    let debugText = "";
-    for (const name of targetNames) {
-      this.feedLine();
-      this.feedLine(tp.muted(`  ── debug for ${name} ──`));
-
-      // Read the last debug entry from the session file
-      const sessionEntry = this.readLastDebugEntry(name);
-      if (sessionEntry) {
-        this.feedLine();
-        this.feedMarkdown(sessionEntry);
-        debugText += (debugText ? "\n\n" : "") + sessionEntry;
-      } else {
-        // Fall back to raw output from lastResults
-        const result = this.lastResults.get(name);
-        if (result?.rawOutput) {
-          this.feedLine();
-          this.feedMarkdown(result.rawOutput);
-          debugText += (debugText ? "\n\n" : "") + result.rawOutput;
-        } else {
-          this.feedLine(tp.muted("  No debug info available."));
-        }
-      }
-
-      this.feedLine();
-      this.feedLine(tp.muted("  ── end debug ──"));
-    }
-
-    // [copy] action for the debug output
-    if (this.chatView && debugText) {
-      const t = theme();
-      this.lastCleanedOutput = debugText;
-      this.chatView.appendActionList([
-        {
-          id: "copy",
-          normalStyle: this.makeSpan({
-            text: "  [copy]",
-            style: { fg: t.textDim },
-          }),
-          hoverStyle: this.makeSpan({
-            text: "  [copy]",
-            style: { fg: t.accent },
-          }),
-        },
-      ]);
-    }
-
-    this.feedLine();
-    this.refreshView();
+    this.queueDebugAnalysis(targetName);
   }
 
   /**
-   * Read the last debug entry from a teammate's session file.
-   * Debug entries are delimited by "## Debug — " headings.
+   * Queue a debug analysis task — sends the last request + debug log
+   * to the base coding agent for analysis.
    */
-  private readLastDebugEntry(teammate: string): string | null {
-    try {
-      const sessionFile = this.adapter.getSessionFile?.(teammate);
-      if (!sessionFile) return null;
-      const content = readFileSync(sessionFile, "utf-8");
-      // Split on debug entry headings and return the last one
-      const entries = content.split(/(?=^## Debug — )/m);
-      const last = entries[entries.length - 1];
-      if (last && last.startsWith("## Debug — ")) {
-        return last.trim();
-      }
-      return null;
-    } catch {
-      return null;
+  private queueDebugAnalysis(teammate: string): void {
+    const debugFile = this.lastDebugFiles.get(teammate);
+    const lastPrompt = this.lastTaskPrompts.get(teammate);
+
+    if (!debugFile) {
+      this.feedLine(tp.muted(`  No debug log available for @${teammate}.`));
+      this.refreshView();
+      return;
     }
+
+    // Read the debug log file
+    let debugContent: string;
+    try {
+      debugContent = readFileSync(debugFile, "utf-8");
+    } catch {
+      this.feedLine(tp.muted(`  Could not read debug log: ${debugFile}`));
+      this.refreshView();
+      return;
+    }
+
+    const analysisPrompt = [
+      `Analyze the following debug log from @${teammate}'s last task execution. Identify any issues, errors, or anomalies. If the response was empty, explain likely causes. Provide a concise diagnosis and suggest fixes if applicable.`,
+      "",
+      "## Last Request Sent to Agent",
+      "",
+      lastPrompt ?? "(not available)",
+      "",
+      "## Debug Log",
+      "",
+      debugContent,
+    ].join("\n");
+
+    // Show the debug log path — ctrl+click to open
+    this.feedLine(
+      concat(
+        tp.muted("  Debug log: "),
+        tp.accent(debugFile),
+      ),
+    );
+    this.feedLine(tp.muted("  Queuing analysis…"));
+    this.refreshView();
+
+    this.taskQueue.push({
+      type: "debug",
+      teammate: this.adapterName,
+      task: analysisPrompt,
+    });
+    this.kickDrain();
   }
 
   private async cmdCancel(argsStr: string): Promise<void> {
@@ -3610,18 +3516,22 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (entry.type === "compact") {
           await this.runCompact(entry.teammate);
         } else {
-          // btw tasks skip conversation context (side question, not part of main thread)
+          // btw and debug tasks skip conversation context (not part of main thread)
           const extraContext =
-            entry.type === "btw" ? "" : this.buildConversationContext();
+            entry.type === "btw" || entry.type === "debug"
+              ? ""
+              : this.buildConversationContext();
           const result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
             extraContext: extraContext || undefined,
           });
-          // Write debug entry to session file
-          this.writeDebugEntry(entry.teammate, entry.task, result, startTime);
-          // btw results are not stored in conversation history
-          if (entry.type !== "btw") {
+          // Write debug entry — skip for debug analysis tasks (avoid recursion)
+          if (entry.type !== "debug") {
+            this.writeDebugEntry(entry.teammate, entry.task, result, startTime);
+          }
+          // btw and debug results are not stored in conversation history
+          if (entry.type !== "btw" && entry.type !== "debug") {
             this.storeResult(result);
           }
           if (entry.type === "retro") {
@@ -3644,8 +3554,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   /**
-   * Append a debug entry to the teammate's session file.
-   * Captures task prompt, result summary, raw output, timing, and errors.
+   * Write a debug log file to .teammates/.tmp/debug/ for the task.
+   * Each task gets its own file. The path is stored in lastDebugFiles for /debug.
    */
   private writeDebugEntry(
     teammate: string,
@@ -3655,24 +3565,38 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     error?: any,
   ): void {
     try {
-      const sessionFile = this.adapter.getSessionFile?.(teammate);
-      if (!sessionFile) return;
+      const debugDir = join(this.teammatesDir, ".tmp", "debug");
+      try {
+        mkdirSync(debugDir, { recursive: true });
+      } catch {
+        return;
+      }
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       const timestamp = new Date().toISOString();
+      const ts = timestamp.replace(/[:.]/g, "-");
+      const debugFile = join(debugDir, `${teammate}-${ts}.md`);
+
       const lines: string[] = [
+        `# Debug — ${teammate}`,
         "",
-        `## Debug — ${timestamp}`,
-        "",
+        `**Timestamp:** ${timestamp}`,
         `**Duration:** ${elapsed}s`,
-        `**Task:** ${task.length > 200 ? `${task.slice(0, 200)}…` : task}`,
+        "",
+        "## Request",
+        "",
+        task,
         "",
       ];
 
       if (error) {
+        lines.push("## Result");
+        lines.push("");
         lines.push(`**Status:** ERROR`);
         lines.push(`**Error:** ${error?.message ?? String(error)}`);
       } else if (result) {
+        lines.push("## Result");
+        lines.push("");
         lines.push(`**Status:** ${result.success ? "OK" : "FAILED"}`);
         lines.push(`**Summary:** ${result.summary || "(no summary)"}`);
         if (result.changedFiles.length > 0) {
@@ -3683,16 +3607,49 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
             `**Handoffs:** ${result.handoffs.map((h) => `@${h.to}`).join(", ")}`,
           );
         }
+
+        // Process diagnostics — exit code, signal, stderr
+        const diag = result.diagnostics;
+        if (diag) {
+          lines.push("");
+          lines.push("### Process");
+          lines.push(
+            `**Exit code:** ${diag.exitCode ?? "(killed by signal)"}`,
+          );
+          if (diag.signal) lines.push(`**Signal:** ${diag.signal}`);
+          if (diag.timedOut) lines.push(`**Timed out:** yes`);
+          if (diag.debugFile) {
+            lines.push(`**Agent debug log:** ${diag.debugFile}`);
+            // Inline Claude's debug file content if it exists
+            try {
+              const agentDebugContent = readFileSync(diag.debugFile, "utf-8");
+              lines.push("");
+              lines.push("### Agent Debug Log");
+              lines.push("");
+              lines.push(agentDebugContent);
+            } catch {
+              /* debug file may not exist yet or be unreadable */
+            }
+          }
+
+          if (diag.stderr.trim()) {
+            lines.push("");
+            lines.push("### stderr");
+            lines.push("");
+            lines.push(diag.stderr);
+          }
+        }
+
         lines.push("");
-        lines.push("<details><summary>Raw output</summary>");
+        lines.push("### Raw Output");
         lines.push("");
         lines.push(result.rawOutput ?? "(empty)");
-        lines.push("");
-        lines.push("</details>");
       }
 
       lines.push("");
-      appendFileSync(sessionFile, lines.join("\n"), "utf-8");
+      writeFileSync(debugFile, lines.join("\n"), "utf-8");
+      this.lastDebugFiles.set(teammate, debugFile);
+      this.lastTaskPrompts.set(teammate, task);
     } catch {
       // Don't let debug logging break task execution
     }
@@ -3794,140 +3751,6 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.refreshView();
   }
 
-  private async cmdInstall(argsStr: string): Promise<void> {
-    const serviceName = argsStr.trim().toLowerCase();
-
-    if (!serviceName) {
-      this.feedLine(tp.bold("\n  Available services:"));
-      for (const [name, svc] of Object.entries(SERVICE_REGISTRY)) {
-        this.feedLine(
-          concat(tp.accent(name.padEnd(16)), tp.muted(svc.description)),
-        );
-      }
-      this.feedLine();
-      this.refreshView();
-      return;
-    }
-
-    const service = SERVICE_REGISTRY[serviceName];
-    if (!service) {
-      this.feedLine(tp.warning(`  Unknown service: ${serviceName}`));
-      this.feedLine(
-        tp.muted(`  Available: ${Object.keys(SERVICE_REGISTRY).join(", ")}`),
-      );
-      this.refreshView();
-      return;
-    }
-
-    // Install the package globally
-    if (this.chatView) {
-      this.chatView.setProgress(`Installing ${service.package}...`);
-      this.refreshView();
-    }
-    let installSpinner: Ora | null = null;
-    if (!this.chatView) {
-      installSpinner = ora({
-        text:
-          chalk.blue(serviceName) +
-          chalk.gray(` installing ${service.package}...`),
-        spinner: "dots",
-      }).start();
-    }
-
-    try {
-      await execAsync(`npm install -g ${service.package}`, {
-        timeout: 5 * 60 * 1000,
-      });
-      if (installSpinner) installSpinner.stop();
-      if (this.chatView) this.chatView.setProgress(null);
-    } catch (err: any) {
-      if (installSpinner)
-        installSpinner.fail(chalk.red(`Install failed: ${err.message}`));
-      if (this.chatView) {
-        this.chatView.setProgress(null);
-        this.feedLine(tp.error(`  ✖ Install failed: ${err.message}`));
-        this.refreshView();
-      }
-      return;
-    }
-
-    // Verify the binary works
-    const checkCmdStr = service.checkCmd.join(" ");
-    try {
-      execSync(checkCmdStr, { stdio: "ignore" });
-    } catch {
-      this.feedLine(tp.success(`  ✔ ${serviceName} installed`));
-      this.feedLine(
-        tp.warning(
-          `  ⚠ Restart your terminal to add ${service.checkCmd[0]} to your PATH, then run /install ${serviceName} again to build the index.`,
-        ),
-      );
-      this.refreshView();
-      return;
-    }
-
-    this.feedLine(tp.success(`  ✔ ${serviceName} installed successfully`));
-
-    // Register in settings.json
-    const settings = this.readSettings();
-    if (!settings.services.some((s) => s.name === serviceName)) {
-      settings.services.push({ name: serviceName });
-      this.writeSettings(settings);
-      this.feedLine(tp.muted(`  Registered in settings.json`));
-    }
-
-    // Build initial index if this service supports it
-    if (service.indexCmd) {
-      if (this.chatView) {
-        this.chatView.setProgress(`Building ${serviceName} index...`);
-        this.refreshView();
-      }
-      let idxSpinner: Ora | null = null;
-      if (!this.chatView) {
-        idxSpinner = ora({
-          text: chalk.blue(serviceName) + chalk.gray(` building index...`),
-          spinner: "dots",
-        }).start();
-      }
-
-      const indexCmdStr = service.indexCmd.join(" ");
-      try {
-        await execAsync(indexCmdStr, {
-          cwd: resolve(this.teammatesDir, ".."),
-          timeout: 5 * 60 * 1000,
-        });
-        if (idxSpinner)
-          idxSpinner.succeed(
-            chalk.blue(serviceName) + chalk.gray(" index built"),
-          );
-        if (this.chatView) {
-          this.chatView.setProgress(null);
-          this.feedLine(tp.success(`  ✔ ${serviceName} index built`));
-        }
-      } catch (err: any) {
-        if (idxSpinner)
-          idxSpinner.warn(chalk.yellow(`Index build failed: ${err.message}`));
-        if (this.chatView) {
-          this.chatView.setProgress(null);
-          this.feedLine(tp.warning(`  ⚠ Index build failed: ${err.message}`));
-        }
-      }
-    }
-
-    // Ask the coding agent to wire the service into the project
-    if (service.wireupTask) {
-      this.feedLine();
-      this.feedLine(tp.muted(`  Wiring up ${serviceName}...`));
-      this.refreshView();
-      const result = await this.orchestrator.assign({
-        teammate: this.adapterName,
-        task: service.wireupTask,
-      });
-      this.storeResult(result);
-    }
-    this.refreshView();
-  }
-
   private async cmdClear(): Promise<void> {
     this.conversationHistory.length = 0;
     this.lastResult = null;
@@ -3986,40 +3809,11 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       .catch(() => {});
   }
 
-  private startRecallWatch(): void {
-    // Only start if recall is installed (check settings.json)
-    if (!this.isServiceInstalled("recall")) return;
-
-    try {
-      this.recallWatchProcess = cpSpawn(
-        "teammates-recall",
-        ["watch", "--dir", this.teammatesDir, "--json"],
-        {
-          stdio: ["ignore", "ignore", "ignore"],
-          detached: false,
-        },
-      );
-      this.recallWatchProcess.on("error", () => {
-        // Recall binary not found — silently ignore
-        this.recallWatchProcess = null;
-      });
-      this.recallWatchProcess.on("exit", () => {
-        this.recallWatchProcess = null;
-      });
-    } catch {
-      this.recallWatchProcess = null;
-    }
-  }
-
-  private stopRecallWatch(): void {
-    if (this.recallWatchProcess) {
-      this.recallWatchProcess.kill("SIGTERM");
-      this.recallWatchProcess = null;
-    }
-  }
+  // Recall is now bundled as a library dependency — no watch process needed.
+  // Sync happens via syncRecallIndex() after every task and on startup.
 
   private async cmdCompact(argsStr: string): Promise<void> {
-    const arg = argsStr.trim();
+    const arg = argsStr.trim().replace(/^@/, "");
     const allTeammates = this.orchestrator
       .listTeammates()
       .filter((n) => n !== this.adapterName);
@@ -4113,29 +3907,43 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
       if (this.chatView) this.chatView.setProgress(null);
 
-      // Trigger recall sync if installed
-      if (this.isServiceInstalled("recall")) {
-        try {
-          if (this.chatView) {
-            this.chatView.setProgress(`Syncing ${name} index...`);
-            this.refreshView();
-          }
-          let syncSpinner: Ora | null = null;
-          if (!this.chatView) {
-            syncSpinner = ora({
-              text: `Syncing ${name} index...`,
-              color: "cyan",
-            }).start();
-          }
-          await execAsync(`teammates-recall sync --dir "${this.teammatesDir}"`);
-          if (syncSpinner) syncSpinner.succeed(`${name}: index synced`);
-          if (this.chatView) {
-            this.chatView.setProgress(null);
-            this.feedLine(tp.success(`  ✔ ${name}: index synced`));
-          }
-        } catch {
-          /* sync failed — non-fatal */
+      // Sync recall index for this teammate (bundled library call)
+      try {
+        if (this.chatView) {
+          this.chatView.setProgress(`Syncing ${name} index...`);
+          this.refreshView();
         }
+        let syncSpinner: Ora | null = null;
+        if (!this.chatView) {
+          syncSpinner = ora({
+            text: `Syncing ${name} index...`,
+            color: "cyan",
+          }).start();
+        }
+        await syncRecallIndex(this.teammatesDir, name);
+        if (syncSpinner) syncSpinner.succeed(`${name}: index synced`);
+        if (this.chatView) {
+          this.chatView.setProgress(null);
+          this.feedLine(tp.success(`  ✔ ${name}: index synced`));
+        }
+      } catch {
+        /* sync failed — non-fatal */
+      }
+      // Queue wisdom distillation agent task
+      try {
+        const teammateDir = join(this.teammatesDir, name);
+        const wisdomPrompt = await buildWisdomPrompt(teammateDir, name);
+        if (wisdomPrompt) {
+          this.taskQueue.push({
+            type: "agent",
+            teammate: name,
+            task: wisdomPrompt,
+          });
+          if (this.chatView)
+            this.feedLine(tp.muted(`  ↻ ${name}: queued wisdom distillation`));
+        }
+      } catch {
+        /* wisdom prompt build failed — non-fatal */
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -4240,9 +4048,9 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         await this.cleanOldTempFiles(fullPath, maxAgeMs);
-        // Remove dir if now empty — but skip "sessions" which is structural
-        // and may be recreated concurrently by startSession().
-        if (entry.name !== "sessions") {
+        // Remove dir if now empty — but skip structural dirs that are
+        // recreated concurrently (sessions by startSession, debug by writeDebugEntry).
+        if (entry.name !== "sessions" && entry.name !== "debug") {
           const remaining = await readdir(fullPath).catch(() => [""]);
           if (remaining.length === 0)
             await rm(fullPath, { recursive: true }).catch(() => {});
@@ -4257,8 +4065,17 @@ Issues that can't be resolved unilaterally — they need input from other teamma
   }
 
   private async startupMaintenance(): Promise<void> {
-    // Clean up .teammates/.tmp files older than 1 week
     const tmpDir = join(this.teammatesDir, ".tmp");
+
+    // Clean up debug log files older than 1 day
+    const debugDir = join(tmpDir, "debug");
+    try {
+      await this.cleanOldTempFiles(debugDir, 24 * 60 * 60 * 1000);
+    } catch {
+      /* debug dir may not exist yet — non-fatal */
+    }
+
+    // Clean up other .tmp files older than 1 week
     try {
       await this.cleanOldTempFiles(tmpDir, 7 * 24 * 60 * 60 * 1000);
     } catch {
@@ -4269,9 +4086,6 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       .listTeammates()
       .filter((n) => n !== this.adapterName);
     if (teammates.length === 0) return;
-
-    // Check if recall is installed
-    const recallInstalled = this.isServiceInstalled("recall");
 
     // 1. Check each teammate for stale daily logs (older than 7 days)
     const oneWeekAgo = new Date();
@@ -4308,13 +4122,11 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       }
     }
 
-    // 2. Sync recall indexes if installed
-    if (recallInstalled) {
-      try {
-        await execAsync(`teammates-recall sync --dir "${this.teammatesDir}"`);
-      } catch {
-        /* sync failed — non-fatal */
-      }
+    // 2. Sync recall indexes (bundled library call)
+    try {
+      await syncRecallIndex(this.teammatesDir);
+    } catch {
+      /* sync failed — non-fatal */
     }
   }
 

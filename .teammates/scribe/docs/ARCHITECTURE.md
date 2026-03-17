@@ -31,7 +31,7 @@ Routes tasks between teammates via a REPL. Key components:
 
 ### Recall Search (`recall/`)
 
-Local semantic search over teammate memory files. Zero cloud dependencies.
+Local semantic search over teammate memory files. Bundled as a direct dependency of the CLI — recall is automatically queried before every task. Zero cloud dependencies.
 
 | File | Purpose |
 |------|---------|
@@ -41,6 +41,8 @@ Local semantic search over teammate memory files. Zero cloud dependencies.
 | `embeddings.ts` | transformers.js wrapper (Xenova/all-MiniLM-L6-v2, 384-dim) |
 
 **Index storage:** `.teammates/<teammate>/.index/` (gitignored, auto-generated)
+
+**Integration:** The CLI imports recall as a library (`queryRecallContext`, `syncRecallIndex`). No subprocess spawning — queries run in-process.
 
 ### Framework (`template/` + `.teammates/`)
 
@@ -70,7 +72,11 @@ cli.ts ─── parse command, tokenize ───▶ orchestrator.ts
                                             │
                                    hydrate prompt:
                                    • SOUL.md (identity)
-                                   • WISDOM.md + last 7 daily logs
+                                   • WISDOM.md (distilled principles)
+                                   • recall results (auto-queried)
+                                   • last 7 daily logs
+                                   • weekly summaries
+                                   • session history (injected content)
                                    • roster (all teammates)
                                    • handoff context (if chained)
                                    • output protocol
@@ -105,7 +111,7 @@ Agent writes memory files
 .teammates/<name>/memory/YYYY-MM-DD.md     (append-only daily log)
     │
     ▼
-recall search (auto-syncs before query)
+CLI syncs recall index after every task (library call, not subprocess)
     │
     ▼
 indexer.ts ─── detect changed files ─── chunk text ─── embed locally
@@ -114,7 +120,7 @@ indexer.ts ─── detect changed files ─── chunk text ─── embed l
 Vectra index at .teammates/<name>/.index/
     │
     ▼
-search.ts ─── query embeddings ─── return scored results
+Next task: CLI queries recall automatically ─── results injected into prompt
 ```
 
 ### Handoff Chains
@@ -133,8 +139,9 @@ Teammates can hand off work to each other with structured envelopes:
 |---------|-------|-------------|
 | Pluggable adapters | `adapter.ts`, `cli-proxy.ts` | Any CLI agent wires in via `AgentAdapter` interface |
 | Registry discovery | `registry.ts` | Auto-discovers teammates from `.teammates/` dirs, parses SOUL.md |
-| Prompt hydration | `adapter.ts` | Layers identity → memory → roster → handoff → protocol → task |
+| Prompt hydration | `adapter.ts` | Layers identity → wisdom → recall results → daily logs → weekly summaries → session history → roster → protocol → task |
 | File-as-memory | Framework | No in-RAM state; markdown files are the only persistence |
+| Automatic recall | `adapter.ts` | Queries recall index before every task, injects results into prompt |
 | Auto-sync search | `search.ts` | Transparently indexes new/changed files before returning results |
 | Structured output | Output protocol | Agents end responses with `{ "result": ... }` or `{ "handoff": ... }` |
 | Ownership routing | `orchestrator.ts` | Keyword matching against SOUL.md ownership patterns |
@@ -154,8 +161,7 @@ Teammates can hand off work to each other with structured envelopes:
 ## Dependency Direction
 
 ```
-Templates (Scribe) ──▶ Onboarding ──▶ Recall (Beacon)
-                                  ──▶ CLI (Beacon)
+Templates (Scribe) ──▶ Onboarding ──▶ CLI (Beacon) ──depends on──▶ Recall (Beacon)
 ```
 
 Breaking changes propagate downstream. Feature requests propagate upstream.

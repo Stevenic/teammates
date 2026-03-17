@@ -65,20 +65,23 @@ Optional services are declared in `.teammates/services.json`. This file is check
 
 The CLI reads `services.json` to detect which services are available and injects their capabilities into teammate prompts automatically.
 
-### teammates-recall — Semantic Memory Search
+### Recall — Automatic Memory Search
 
-**Enabled when:** `"recall"` key exists in `services.json`.
+`@teammates/recall` is bundled as a direct dependency of the CLI. It provides local semantic search across teammate memory files using Vectra vector indexes and on-device embeddings (transformers.js). Zero cloud dependencies.
 
-`teammates-recall` provides local semantic search across teammate memory files (WISDOM.md, typed memories, daily logs, SOUL.md). Runs fully locally with zero cloud dependencies.
+**How it works:** The CLI automatically queries the recall index before every task, using the task prompt as the search query. Relevant episodic summaries and typed memories are injected into the teammate's context window — no manual search needed.
 
-| Command | Description |
-|---|---|
-| `teammates-recall search "query"` | Search across all teammate memories |
-| `teammates-recall search "query" --teammate beacon` | Search scoped to one teammate |
-| `teammates-recall sync` | Incremental index update (run after writing memory files) |
-| `teammates-recall status` | Show index health and stats |
+**Sync:** The CLI automatically syncs the recall index after every task completes and after `/compact` runs. Teammates do not need to run sync manually.
 
-**When to use:** When you need context from another teammate's past work or decisions, or when searching your own memories for a half-remembered detail. Prefer this over manually reading through memory files.
+**What gets indexed:**
+
+| Content | Indexed | Reason |
+|---------|---------|--------|
+| Weekly summaries | Yes | Primary episodic search surface (52-week window) |
+| Monthly summaries | Yes | Long-term episodic context (permanent) |
+| Typed memories | Yes | Searchable semantic knowledge |
+| Raw daily logs | No | Already in prompt context (last 7 days) |
+| SOUL.md / WISDOM.md | No | Always loaded directly into prompt |
 
 ## Memory
 
@@ -98,15 +101,20 @@ Semantic (knowledge):  Typed Memories → WISDOM
 
 Daily logs feed both axes: episodic compaction produces weekly/monthly summaries, while durable facts and lessons extracted during compaction become typed memories that eventually distill into wisdom.
 
-### Session startup — read order
+### Context window — what the CLI injects
 
-At the start of each session, a teammate reads (in this order):
+The CLI automatically builds each teammate's context before every task. The prompt stack (in order):
 
 1. **SOUL.md** — identity, principles, boundaries
 2. **WISDOM.md** — distilled principles from compacted memories
-3. **memory/YYYY-MM-DD.md** — today's and yesterday's daily logs
-4. **USER.md** — who the user is and how they prefer to work
-5. **memory/** typed files — browse or search on-demand as the task requires
+3. **Relevant memories from recall** — automatically queried using the task prompt; returns matching episodic summaries and typed memories from the vector index
+4. **Last 7 daily logs** — recent session notes
+5. **Weekly summaries** — most recent episodic summaries
+6. **Session history** — prior task results from the current CLI session (injected as content, not a file path)
+7. **Roster** — all teammates and their roles
+8. **Conversation history + task** — the user's message and prior exchanges
+
+Teammates do not need to manually read these files or run recall searches — the CLI handles all context assembly automatically.
 
 ### Tier 1 — Daily Logs
 

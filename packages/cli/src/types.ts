@@ -79,6 +79,19 @@ export interface TaskResult {
   handoffs: HandoffEnvelope[];
   /** Raw output from the agent */
   rawOutput?: string;
+  /** Process diagnostics for debugging empty/failed responses */
+  diagnostics?: {
+    /** Process exit code (null if killed by signal) */
+    exitCode: number | null;
+    /** Signal that killed the process (null if exited normally) */
+    signal: string | null;
+    /** stderr output (separate from stdout) */
+    stderr: string;
+    /** Whether the process was killed by timeout */
+    timedOut: boolean;
+    /** Path to the agent's debug log file, if written */
+    debugFile?: string;
+  };
 }
 
 /** Task assignment to a teammate */

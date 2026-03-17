@@ -11,7 +11,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - Read your SOUL.md and WISDOM.md at the start of every session.
 - Read `memory/YYYY-MM-DD.md` for today and yesterday.
 - Read USER.md to understand who you're working with.
-- Browse `memory/` for typed memory files relevant to the current task (or use recall search if available).
+- Relevant memories from past work are automatically provided in your context via recall search.
 - Update your files as you learn. If you change SOUL.md, tell the user.
 
 ## Core Principles

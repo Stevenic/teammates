@@ -128,12 +128,14 @@ The CLI uses a generic adapter interface to support any coding agent. Each adapt
 
 ### How Adapters Work
 
-1. The orchestrator builds a full prompt (identity + memory + roster + task)
-2. The prompt is written to a temp file
-3. The agent CLI is spawned with the prompt
-4. stdout/stderr are captured for result parsing
-5. The output is parsed for embedded handoff blocks
-6. Temp files are cleaned up
+1. The adapter queries the recall index for relevant memories (automatic, in-process)
+2. The orchestrator builds a full prompt (SOUL → WISDOM → recall results → daily logs → weekly summaries → session history → roster → task)
+3. The prompt is written to a temp file
+4. The agent CLI is spawned with the prompt
+5. stdout/stderr are captured for result parsing
+6. The output is parsed for embedded handoff blocks
+7. The recall index is synced to pick up any files the agent created/modified
+8. Temp files are cleaned up
 
 ### Writing a Custom Adapter
 
@@ -213,6 +215,10 @@ Tests use [Vitest](https://vitest.dev/) and cover the core modules:
 | `src/orchestrator.test.ts` | Task routing, assignment, reset |
 | `src/registry.test.ts` | Teammate discovery, SOUL.md parsing (role, ownership), daily logs |
 | `src/adapters/echo.test.ts` | Echo adapter session and task execution |
+
+## Dependencies
+
+- **`@teammates/recall`** — Bundled as a direct dependency. Provides automatic semantic search over teammate memories before every task. No separate installation or configuration needed.
 
 ## Requirements
 

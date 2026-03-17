@@ -6,6 +6,7 @@
  * and translates between the orchestrator's protocol and the agent's native API.
  */
 
+import { Indexer, search, type SearchResult } from "@teammates/recall";
 import type { TaskResult, TeammateConfig } from "./types.js";
 
 export interface AgentAdapter {
@@ -61,6 +62,54 @@ export interface InstalledService {
   usage: string;
 }
 
+/** Recall search results formatted for prompt injection. */
+export interface RecallContext {
+  results: SearchResult[];
+  /** Whether the query succeeded (false = index missing or search errored) */
+  ok: boolean;
+}
+
+/**
+ * Query the recall index for context relevant to the task prompt.
+ * Returns search results that should be injected into the teammate prompt.
+ * Skips auto-sync (sync happens after tasks, not before — keeps pre-task fast).
+ */
+export async function queryRecallContext(
+  teammatesDir: string,
+  teammateName: string,
+  taskPrompt: string,
+): Promise<RecallContext> {
+  try {
+    const results = await search(taskPrompt, {
+      teammatesDir,
+      teammate: teammateName,
+      maxResults: 5,
+      maxChunks: 3,
+      maxTokens: 500,
+      skipSync: true,
+    });
+    return { results, ok: true };
+  } catch {
+    return { results: [], ok: false };
+  }
+}
+
+/**
+ * Sync the recall index for a teammate (or all teammates).
+ * Wrapper around the recall library's Indexer.
+ */
+export async function syncRecallIndex(
+  teammatesDir: string,
+  teammate?: string,
+): Promise<void> {
+  const indexer = new Indexer({ teammatesDir });
+  if (teammate) {
+    await indexer.syncTeammate(teammate);
+  } else {
+    await indexer.syncAll();
+  }
+}
+
 /**
  * Build the full prompt for a teammate session.
  * Includes identity, memory, roster, output protocol, and the task.
@@ -73,6 +122,8 @@ export function buildTeammatePrompt(
     roster?: RosterEntry[];
     services?: InstalledService[];
     sessionFile?: string;
+    sessionContent?: string;
+    recallResults?: SearchResult[];
   },
 ): string {
   const parts: string[] = [];
@@ -89,6 +140,22 @@ export function buildTeammatePrompt(
     parts.push("\n---\n");
   }
 
+  // ── Recall results (relevant episodic & semantic memories) ────────
+  if (options?.recallResults && options.recallResults.length > 0) {
+    parts.push("## Relevant Memories (from recall search)\n");
+    parts.push(
+      "These memories were retrieved based on relevance to the current task:\n",
+    );
+    for (const r of options.recallResults) {
+      const label = r.contentType
+        ? `[${r.contentType}] ${r.uri}`
+        : r.uri;
+      parts.push(`### ${label}\n${r.text}\n`);
+    }
+    parts.push("\n---\n");
+  }
+
+  // ── Recent daily logs ──────────────────────────────────────────────
   if (teammate.dailyLogs.length > 0) {
     parts.push("## Recent Daily Logs\n");
     for (const log of teammate.dailyLogs.slice(0, 7)) {
@@ -103,6 +170,16 @@ export function buildTeammatePrompt(
     for (const log of teammate.weeklyLogs.slice(0, 2)) {
       parts.push(`### ${log.week}\n${log.content}\n`);
     }
+    parts.push("\n---\n");
+  }
+
+  // ── Session history (prior tasks in this session) ─────────────────
+  if (options?.sessionContent?.trim()) {
+    parts.push("## Session History\n");
+    parts.push(
+      "These are entries from your prior tasks in this session:\n",
+    );
+    parts.push(options.sessionContent);
     parts.push("\n---\n");
   }
 
@@ -145,8 +222,6 @@ export function buildTeammatePrompt(
     parts.push("## Session State\n");
     parts.push(`Your session file is at: \`${options.sessionFile}\`
 
-**Read this file first** — it contains context from your prior tasks in this session.
-
 **Before returning your result**, append a brief entry to this file with:
 - What you did
 - Key decisions made
@@ -178,8 +253,10 @@ These files are your persistent memory. Without them, your next session starts f
   parts.push("\n---\n");
 
   // ── Output protocol ───────────────────────────────────────────────
-  parts.push("## Output Protocol\n");
-  parts.push(`Your response is a message. Format it as:
+  parts.push("## Output Protocol (CRITICAL)\n");
+  parts.push(`**Your #1 job is to produce a visible text response.** Session updates and memory writes are secondary — they support continuity but are not the deliverable. The user sees ONLY your text output. If you update files but return no text, the user sees an empty message and your work is invisible.
+
+Format your response as:
 
 \`\`\`
 TO: user
@@ -198,9 +275,9 @@ TO: user
 \`\`\`
 
 **Rules:**
+- **You MUST end your turn with visible text output.** A turn that ends with only tool calls and no text is a failed turn.
 - The \`# Subject\` line is REQUIRED — it becomes the message title.
 - Always write a substantive body. Never return just the subject.
-- **Your final message MUST contain your response text.** Do not end your turn with only tool calls — always finish with a visible message to the user.
 - Use markdown: headings, lists, code blocks, bold, etc.
 - Do as much work as you can before handing off.
 - Only hand off to teammates listed in "Your Team" above.
@@ -221,6 +298,12 @@ TO: user
   // ── Task ──────────────────────────────────────────────────────────
   parts.push("## Task\n");
   parts.push(taskPrompt);
+  parts.push("\n---\n");
+
+  // ── Final reminder (last thing the agent reads) ─────────────────
+  parts.push(
+    "**REMINDER: After completing the task and updating session/memory files, you MUST produce a text response starting with `TO: user`. An empty response is a bug.**",
+  );
 
   return parts.join("\n");
 }
