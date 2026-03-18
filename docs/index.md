@@ -17,11 +17,11 @@ A `.teammates/` directory in your repo containing markdown files that any AI age
 
 ## How It Works
 
-1. Clone this repo (or copy `ONBOARDING.md` into your project)
-2. Point your AI agent at `ONBOARDING.md`
-3. The agent analyzes your codebase and creates a tailored set of teammates
+1. Install the CLI: `npm install -g @teammates/cli`
+2. Launch a session: `teammates claude` (or codex, aider, copilot)
+3. The CLI guides you through onboarding — analyzing your codebase, proposing teammates, and scaffolding the `.teammates/` directory
 
-That's it. Your agent reads the onboarding instructions and does the rest.
+That's it. The CLI handles routing, handoffs, and memory automatically.
 
 ## Key Concepts
 
@@ -57,16 +57,12 @@ That's it. Your agent reads the onboarding instructions and does the rest.
 ## Getting Started
 
 ```bash
-git clone https://github.com/Stevenic/teammates.git
+npm install -g @teammates/cli
+cd your-project
+teammates claude       # or codex, aider, copilot
 ```
 
-Then point your AI coding agent at `ONBOARDING.md`:
-
-```
-Read ONBOARDING.md and set up teammates for this project
-```
-
-See the [full README](https://github.com/Stevenic/teammates) for detailed setup instructions per agent.
+The CLI will prompt you to set up teammates on first run. You can also use the framework without the CLI — see the [full README](https://github.com/Stevenic/teammates) for all setup options.
 
 ## License
 

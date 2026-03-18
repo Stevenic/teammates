@@ -18,7 +18,7 @@ You have a codebase, a team, and AI coding tools already in use. You want to mov
 **Prerequisites:**
 - A git repository with at least a few hundred lines of code
 - At least one person willing to run the onboarding process
-- An AI coding tool that can read and write files (Claude Code, Cursor, Windsurf, Aider, etc.)
+- Node.js installed (for the CLI)
 
 **Time commitment:** The initial onboarding takes 15-30 minutes of interaction with your AI tool. After that, teammates are self-maintaining.
 
@@ -35,7 +35,15 @@ Good starting points:
 
 ## Step 2: Run Onboarding
 
-Point your AI tool at `ONBOARDING.md` from the teammates repo. The agent will:
+Install and launch the CLI:
+
+```bash
+npm install -g @teammates/cli
+cd your-project
+teammates claude       # or codex, aider, copilot
+```
+
+On first run, the CLI will prompt you to set up your team. Choose **New team** and the agent will:
 
 1. Analyze your codebase structure
 2. Propose a team roster
@@ -43,6 +51,8 @@ Point your AI tool at `ONBOARDING.md` from the teammates repo. The agent will:
 4. Create the `.teammates/` directory with all the files
 
 **Key moment:** When the agent proposes the roster, push back if the domains are too narrow. Fewer teammates with broader scope is almost always better than many narrow specialists.
+
+> **Without the CLI:** You can also point any AI tool at `ONBOARDING.md` directly. See the [README](https://github.com/Stevenic/teammates#framework-only-no-cli) for details.
 
 ## Step 3: Commit the `.teammates/` Directory
 
@@ -59,16 +69,15 @@ git commit -m "Add AI teammates"
 
 ## Step 4: Start Using Teammates
 
-### If you use the CLI orchestrator
+### With the CLI (recommended)
 
 ```bash
-cd cli && npm install && npm run build
 teammates claude   # or your preferred adapter
 ```
 
 The CLI handles routing, handoffs, and memory injection automatically.
 
-### If you use a standalone AI tool
+### With a standalone AI tool
 
 Tell your agent at the start of each session:
 

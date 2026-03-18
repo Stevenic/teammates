@@ -14,13 +14,83 @@ AI coding agents lose context between sessions. They don't know your project's a
 
 A `.teammates/` directory in your repo containing markdown files that any AI agent can read. Teammates are persistent personas — each one owns a slice of your codebase and accumulates knowledge over time.
 
-## How It Works
+## Getting Started
 
-1. Clone this repo (or copy `ONBOARDING.md` into your project)
-2. Point your AI agent at `ONBOARDING.md`
-3. The agent analyzes your codebase and creates a tailored set of teammates
+### 1. Install the CLI
 
-That's it. Your agent reads the onboarding instructions and does the rest.
+```bash
+npm install -g @teammates/cli
+```
+
+### 2. Launch a session
+
+From your project directory, start the CLI with your preferred coding agent:
+
+```bash
+teammates claude       # Claude Code
+teammates codex        # OpenAI Codex
+teammates aider        # Aider
+teammates copilot      # GitHub Copilot
+```
+
+### 3. Onboard your team
+
+If this is your first time running the CLI in a project without a `.teammates/` directory, you'll be prompted to set up your team. The CLI offers four options:
+
+| Option | What it does |
+|---|---|
+| **New team** | Analyzes your codebase and creates teammates from scratch — proposes a roster based on your project's domains, gets your approval, then scaffolds everything |
+| **Import team** | Copies teammates from another project (`/init <path>`). Imports SOUL.md + WISDOM.md only, then each teammate adapts itself to the new codebase |
+| **Solo mode** | Uses the agent without teammates — no `.teammates/` directory, no routing |
+| **Exit** | Quits without changes |
+
+After onboarding, the CLI asks 5 optional questions (name, role, experience level, preferences, current focus) to create a local `USER.md` profile. Teammates use this to tailor their communication style and technical depth. USER.md is gitignored and stays on your machine.
+
+### 4. Start working
+
+Once your team is set up, you're in the REPL:
+
+- **`@mention`** — assign directly to a teammate (`@beacon fix the search index`)
+- **Bare text** — auto-routes to the best teammate based on keywords
+- **`/status`** — see active teammates, running tasks, and the queue
+- **Handoff approval** — teammates can propose handoffs; you approve, auto-approve, or reject
+
+### Re-running onboarding
+
+Use `/init` inside an existing session to re-run onboarding from scratch, or `/init <path>` to import teammates from another project.
+
+### CLI options
+
+```
+teammates <agent> [options] [-- agent-flags...]
+```
+
+| Flag | Description |
+|---|---|
+| `--model <model>` | Override the agent's model |
+| `--dir <path>` | Override `.teammates/` directory location |
+| `--help` | Show usage information |
+
+Arguments after `--` are passed through to the underlying agent CLI.
+
+See [packages/cli/README.md](packages/cli/README.md) for the full command reference and adapter docs.
+
+## Framework Only (No CLI)
+
+If you prefer not to use the CLI, you can set up teammates manually with any AI coding tool that reads markdown:
+
+1. Clone or copy the `template/` directory from this repo
+2. Point your AI agent at `ONBOARDING.md`:
+
+```
+Read ONBOARDING.md and set up teammates for this project
+```
+
+3. The agent analyzes your codebase and creates a tailored `.teammates/` directory
+
+This is the original approach and still works with any agent. The CLI automates routing, handoffs, and memory — but the underlying framework is plain markdown that any tool can read.
+
+See [ONBOARDING.md](ONBOARDING.md) for the full onboarding instructions.
 
 ## What Gets Created
 
@@ -32,11 +102,16 @@ your-project/
     PROTOCOL.md         # Collaboration rules, memory workflow, handoffs
     CROSS-TEAM.md       # Shared lessons across teammates
     TEMPLATE.md         # Template for creating new teammates
+    DECISIONS.md        # Decision log (ADR-lite)
     USER.md             # Who you are (gitignored, stays local)
+    _standups/          # Shared async standup entries
+    _tasks/             # Shared task queue
     <teammate-name>/
       SOUL.md           # Identity, continuity, principles, boundaries, ownership
       WISDOM.md         # Distilled principles from compacted memories
       memory/           # Daily logs (YYYY-MM-DD.md) and typed memories (<type>_<topic>.md)
+        weekly/         # Weekly episodic summaries
+        monthly/        # Monthly episodic summaries
 ```
 
 ## Key Concepts
@@ -47,118 +122,27 @@ your-project/
 - **Ownership** — File patterns each teammate is responsible for. Every part of the codebase has a clear owner.
 - **Protocol** — How teammates collaborate: handoff conventions, dependency direction, and conflict resolution.
 
-## CLI Orchestrator (Optional)
-
-Route tasks to teammates, manage handoffs, and run any coding agent backend from a single REPL:
-
-```bash
-cd cli && npm install && npm run build
-teammates claude       # or codex, aider, echo
-```
-
-Inside the session:
-- **`@mention`** — assign directly to a teammate (`@beacon fix the search index`)
-- **Bare text** — auto-routes to the best teammate based on keywords
-- **`/queue`** — queue tasks to run sequentially in the background
-- **Handoff approval** — teammates can propose handoffs; you approve, auto-approve, or reject
-
-See [cli/README.md](cli/README.md) for the full command reference and adapter docs.
-
-## Memory Search (Optional)
-
-As daily logs accumulate, teammates can't read every file. Install `@teammates/recall` for local semantic search:
-
-```bash
-npm install -g @teammates/recall
-teammates-recall index --dir ./.teammates
-teammates-recall search "auth token pattern" --json
-```
-
-Uses [Vectra](https://github.com/Stevenic/vectra) for vector search and [transformers.js](https://huggingface.co/docs/transformers.js) for local embeddings. No API keys, no cloud — everything runs on-device.
-
-Any agent that can run shell commands gets semantic memory recall. See [recall/README.md](recall/README.md) for details.
-
 ## Supported Coding Agents
 
-teammates works with any AI coding tool that can read and write files. The following agents have first-class support:
+teammates works with any AI coding tool that can read and write files. The following agents have first-class CLI adapters:
 
-- **Claude Code** — Anthropic's agentic coding tool
-- **OpenAI Codex** — OpenAI's coding agent (CLI)
-- **GitHub Copilot** — GitHub's AI coding agent (VS Code, JetBrains, CLI)
+- **Claude Code** — `teammates claude`
+- **OpenAI Codex** — `teammates codex`
+- **Aider** — `teammates aider`
+- **GitHub Copilot** — `teammates copilot`
+- **Echo** — `teammates echo` (test adapter, no external agent)
 
-Also works with: Cursor, Windsurf, Aider, Cline, Continue, and any other agent that reads markdown.
+Also works without the CLI: Cursor, Windsurf, Cline, Continue, and any other agent that reads markdown.
 
-## Getting Started
+## Packages
 
-### 1. Clone the framework
+| Package | Description |
+|---|---|
+| [@teammates/cli](packages/cli) | Interactive teammate orchestrator — routes tasks, manages handoffs, runs any coding agent backend |
+| [@teammates/recall](packages/recall) | Local semantic memory search using Vectra and transformers.js — bundled with the CLI |
+| [@teammates/consolonia](packages/consolonia) | Terminal UI rendering engine for ANSI output |
 
-```bash
-git clone https://github.com/Stevenic/teammates.git
-```
-
-### 2. Start onboarding with your agent
-
-Pick the agent you use and run the appropriate command from your **target project directory** (the project you want to add teammates to):
-
-#### Claude Code
-
-```bash
-claude
-```
-
-Then in the Claude Code session:
-
-```
-Read <path-to-teammates>/ONBOARDING.md and set up teammates for this project
-```
-
-Claude Code will read the onboarding instructions, analyze your codebase, and scaffold the `.teammates/` directory.
-
-#### OpenAI Codex
-
-```bash
-codex
-```
-
-Then in the Codex session:
-
-```
-Read <path-to-teammates>/ONBOARDING.md and set up teammates for this project
-```
-
-Codex will follow the same onboarding flow — reading the instructions, proposing teammates based on your codebase, and creating the `.teammates/` directory.
-
-#### GitHub Copilot
-
-In **VS Code** or **JetBrains** with Copilot Chat (Agent mode):
-
-1. Open your target project
-2. Open Copilot Chat and switch to **Agent** mode
-3. Send:
-
-```
-Read <path-to-teammates>/ONBOARDING.md and set up teammates for this project
-```
-
-From the **Copilot CLI**:
-
-```bash
-gh copilot
-```
-
-Then:
-
-```
-Read <path-to-teammates>/ONBOARDING.md and set up teammates for this project
-```
-
-#### Other Agents
-
-For any agent that can read and write files, the prompt is the same:
-
-> Read ONBOARDING.md and set up teammates for my project at `<path-to-your-project>`
-
-See [ONBOARDING.md](ONBOARDING.md) for the full onboarding instructions.
+`@teammates/recall` is bundled as a dependency of the CLI. No separate install needed — memory search runs automatically before every task, injecting relevant context into each teammate's prompt.
 
 ## Project Structure
 
@@ -167,18 +151,19 @@ teammates/
   README.md             # This file
   ONBOARDING.md         # Instructions for an AI agent to bootstrap teammates
   LICENSE               # MIT
-  cli/                  # Optional: interactive teammate orchestrator
-    src/                # TypeScript source (REPL, orchestrator, adapters)
-    package.json        # @teammates/cli package
-    README.md           # CLI documentation
-  consolonia/           # Optional: terminal UI rendering
-    src/                # TypeScript source
-    package.json        # @teammates/consolonia package
-  recall/               # Optional: local semantic memory search
-    src/                # TypeScript source
-    package.json        # @teammates/recall package
-    README.md           # Recall documentation
-  docs/                 # Vision and design documents
+  packages/
+    cli/                # Interactive teammate orchestrator
+      src/              # TypeScript source (REPL, orchestrator, adapters)
+      package.json      # @teammates/cli package
+      README.md         # CLI documentation
+    consolonia/         # Terminal UI rendering
+      src/              # TypeScript source
+      package.json      # @teammates/consolonia package
+    recall/             # Local semantic memory search (bundled with CLI)
+      src/              # TypeScript source
+      package.json      # @teammates/recall package
+      README.md         # Recall documentation
+  docs/                 # Documentation site (https://stevenic.github.io/teammates)
     working-with-teammates.md  # Day-to-day workflows: standups, retros, routing
     adoption-guide.md   # How to introduce teammates to an existing team
     cookbook.md          # Concrete recipes for common workflows
