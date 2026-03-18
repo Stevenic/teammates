@@ -22,7 +22,12 @@
       "Bash(node -e \"console.log\\(process.stdout.constructor.toString\\(\\).slice\\(0, 200\\)\\)\" 2>&1)",
       "Bash(node -e \"console.log\\(Object.getOwnPropertyNames\\(process.stdout\\).concat\\(Object.getOwnPropertyNames\\(Object.getPrototypeOf\\(process.stdout\\)\\)\\).join\\(', '\\)\\)\")",
       "Bash(node -e \"const rl = require\\('readline'\\); console.log\\(rl.moveCursor.toString\\(\\)\\)\")",
-      "Bash(node -e \"const rl = require\\('readline'\\); console.log\\(rl.cursorTo.toString\\(\\)\\)\")"
+      "Bash(node -e \"const rl = require\\('readline'\\); console.log\\(rl.cursorTo.toString\\(\\)\\)\")",
+      "Bash(npm view:*)",
+      "Bash(npm pack:*)",
+      "Bash(npm ls:*)",
+      "Bash(node -e \"const p = require\\(''C:/source/teammates/node_modules/vscode-jsonrpc/package.json''\\); console.log\\(p.version, p.exports ? ''has exports'' : ''no exports''\\)\")",
+      "Bash(node:*)"
     ]
   }
 }
