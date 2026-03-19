@@ -353,6 +353,17 @@ export class AnimatedBanner extends Control {
     }
   }
 
+  /** Update service statuses and rebuild the banner lines. */
+  updateServices(services: ServiceInfo[]): void {
+    this._info.services = services;
+    this._buildFinalLines();
+    // If animation is done, refresh immediately
+    if (this._phase === "done") {
+      this._lines = this._finalLines;
+      this._apply();
+    }
+  }
+
   /** Cancel any pending animation timer. */
   dispose(): void {
     if (this._timer) {

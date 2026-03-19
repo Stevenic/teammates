@@ -9,7 +9,7 @@
  *   teammates --dir <path>        Override .teammates/ location
  */
 
-import { exec as execCb, execSync, spawn } from "node:child_process";
+import { exec as execCb, execSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -215,10 +215,14 @@ class TeammatesREPL {
     new Map();
   /** Quoted reply text to expand on next submit. */
   private _pendingQuotedReply: string | null = null;
+  /** Resolver for inline ask — when set, next submit resolves this instead of normal handling. */
+  private _pendingAsk: ((answer: string) => void) | null = null;
   private defaultFooter: StyledSpan | null = null; // cached left footer content
   private defaultFooterRight: StyledSpan | null = null; // cached right footer content
   /** Cached service statuses for banner + /configure. */
   private serviceStatuses: ServiceInfo[] = [];
+  /** Reference to the animated banner widget for live updates. */
+  private banner: AnimatedBanner | null = null;
   /** The local user's alias (avatar name). Set after USER.md is read or interview completes. */
   private userAlias: string | null = null;
 
@@ -632,7 +636,7 @@ class TeammatesREPL {
       );
 
       if (!isValid) {
-        this.feedLine(tp.error(`  ✖ Unknown teammate: @${h.to}`));
+        this.feedLine(tp.error(`  ✖  Unknown teammate: @${h.to}`));
       } else if (this.autoApproveHandoffs) {
         this.taskQueue.push({ type: "agent", teammate: h.to, task: h.task });
         this.feedLine(tp.muted("  automatically approved"));
@@ -1079,7 +1083,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     if (this.app) this.app.refresh();
   }
 
-  private queueTask(input: string): void {
+  private queueTask(input: string, preMentions?: string[]): void {
     const allNames = this.orchestrator.listTeammates();
 
     // Check for @everyone — queue to all teammates except the coding agent
@@ -1104,14 +1108,20 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       return;
     }
 
-    // Collect all @mentioned teammates anywhere in the input
-    const mentionRegex = /@(\S+)/g;
-    let m: RegExpExecArray | null;
-    const mentioned: string[] = [];
-    while ((m = mentionRegex.exec(input)) !== null) {
-      const name = m[1];
-      if (allNames.includes(name) && !mentioned.includes(name)) {
-        mentioned.push(name);
+    // Use pre-resolved mentions if provided (avoids picking up @mentions from expanded paste text),
+    // otherwise scan the input directly.
+    let mentioned: string[];
+    if (preMentions) {
+      mentioned = preMentions;
+    } else {
+      const mentionRegex = /@(\S+)/g;
+      let m: RegExpExecArray | null;
+      mentioned = [];
+      while ((m = mentionRegex.exec(input)) !== null) {
+        const name = m[1];
+        if (allNames.includes(name) && !mentioned.includes(name)) {
+          mentioned.push(name);
+        }
       }
     }
 
@@ -1237,7 +1247,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     if (choice === "3") {
       await mkdir(teammatesDir, { recursive: true });
       console.log();
-      console.log(chalk.green("  ✔") + chalk.gray(` Created ${teammatesDir}`));
+      console.log(chalk.green("  ✔ ") + chalk.gray(` Created ${teammatesDir}`));
       console.log(
         chalk.gray(
           "  Running in solo mode — all tasks go to your agent.",
@@ -1283,7 +1293,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     const copied = await copyTemplateFiles(teammatesDir);
     if (copied.length > 0) {
       console.log(
-        chalk.green("  ✔") +
+        chalk.green("  ✔ ") +
           chalk.gray(` Copied template files: ${copied.join(", ")}`),
       );
       console.log();
@@ -1319,7 +1329,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       this.printAgentOutput(result.rawOutput);
 
       if (result.success) {
-        console.log(chalk.green("  ✔ Onboarding complete!"));
+        console.log(chalk.green("  ✔  Onboarding complete!"));
       } else {
         console.log(
           chalk.yellow(
@@ -1412,7 +1422,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
       if (teammates.length > 0) {
         console.log(
-          chalk.green("  ✔") +
+          chalk.green("  ✔ ") +
             chalk.white(
               ` Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: `,
             ) +
@@ -1519,7 +1529,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       this.printAgentOutput(result.rawOutput);
 
       if (result.success) {
-        console.log(chalk.green("  ✔ Team adaptation complete!"));
+        console.log(chalk.green("  ✔  Team adaptation complete!"));
       } else {
         console.log(
           chalk.yellow(
@@ -1572,6 +1582,31 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         rl.close();
         resolve(answer.trim());
       });
+    });
+  }
+
+  /**
+   * Ask for input using the ChatView's own prompt (no raw readline).
+   * Temporarily replaces the footer with the prompt text and intercepts the next submit.
+   */
+  private askInline(prompt: string): Promise<string> {
+    return new Promise((resolve) => {
+      if (!this.chatView) {
+        // Fallback if no ChatView (shouldn't happen during /configure)
+        return this.askInput(prompt).then(resolve);
+      }
+      // Show the prompt in the feed so it's visible
+      this.feedLine(tp.accent(`  ${prompt}`));
+      this.chatView.setFooter(tp.accent(`  ${prompt}`));
+      this._pendingAsk = (answer: string) => {
+        // Restore footer
+        if (this.chatView && this.defaultFooter) {
+          this.chatView.setFooter(this.defaultFooter);
+        }
+        this.refreshView();
+        resolve(answer.trim());
+      };
+      this.refreshView();
     });
   }
 
@@ -1680,7 +1715,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         this.chatView.setInputOverride(null);
         this.chatView.appendStyledToFeed(
           concat(
-            tp.success("  ✔ "),
+            tp.success("  ✔  "),
             tp.dim(`Saved USER.md + avatar @${alias} — update anytime with /user`),
           ),
         );
@@ -2314,6 +2349,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       teammates: bannerTeammates,
       services: this.serviceStatuses,
     });
+    this.banner = bannerWidget;
 
     // ── Create ChatView and Consolonia App ────────────────────────────
 
@@ -2514,7 +2550,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       }, 2000);
     });
     this.chatView.on("action", (id: string) => {
-      if (id === "copy") {
+      if (id.startsWith("copy-cmd:")) {
+        this.doCopy(id.slice("copy-cmd:".length));
+      } else if (id === "copy") {
         this.doCopy(this.lastCleanedOutput || undefined);
       } else if (
         id.startsWith("retro-approve-") ||
@@ -2605,7 +2643,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         const fileName = trimmed.split(/[/\\]/).pop() || trimmed;
         const n = ++this.pasteCounter;
         this.pastedTexts.set(n, `[Image: source: ${trimmed}]`);
-        const placeholder = `[Image ${fileName}]`;
+        const placeholder = `[Image ${fileName}] `;
         const newVal =
           current.slice(0, idx) +
           placeholder +
@@ -2648,9 +2686,30 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
   /** Handle line submission from ChatView. */
   private async handleSubmit(rawLine: string): Promise<void> {
+    // If an inline ask is pending, resolve it instead of normal processing
+    if (this._pendingAsk) {
+      const resolve = this._pendingAsk;
+      this._pendingAsk = null;
+      resolve(rawLine);
+      return;
+    }
+
     this.clearWordwheel();
     this.wordwheelItems = [];
     this.wordwheelIndex = -1;
+
+    // Resolve @mentions from the raw input BEFORE paste expansion.
+    // This prevents @mentions inside pasted/expanded text from being picked up.
+    const allNames = this.orchestrator.listTeammates();
+    const preMentionRegex = /@(\S+)/g;
+    let pm: RegExpExecArray | null;
+    const preMentions: string[] = [];
+    while ((pm = preMentionRegex.exec(rawLine)) !== null) {
+      const name = pm[1];
+      if (allNames.includes(name) && !preMentions.includes(name)) {
+        preMentions.push(name);
+      }
+    }
 
     // Expand paste placeholders with actual content
     let input = rawLine.replace(
@@ -2736,10 +2795,11 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       return;
     }
 
-    // Everything else gets queued
+    // Everything else gets queued.
+    // Pass pre-resolved mentions so @mentions inside expanded paste text are ignored.
     this.conversationHistory.push({ role: this.selfName, text: input });
     this.printUserMessage(input);
-    this.queueTask(input);
+    this.queueTask(input, preMentions);
     this.refreshView();
   }
 
@@ -2928,46 +2988,20 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       this.feedLine();
 
       const plat = process.platform;
-      let installCmd: string;
-      let installLabel: string;
+      this.feedLine(tp.text("  Run this in another terminal:"));
       if (plat === "win32") {
-        installCmd = "winget install --id GitHub.cli";
-        installLabel = "winget install --id GitHub.cli";
+        this.feedCommand("winget install --id GitHub.cli");
       } else if (plat === "darwin") {
-        installCmd = "brew install gh";
-        installLabel = "brew install gh";
+        this.feedCommand("brew install gh");
       } else {
-        installCmd = "sudo apt install gh";
-        installLabel = "sudo apt install gh  (or see https://cli.github.com)";
+        this.feedCommand("sudo apt install gh");
+        this.feedLine(tp.muted("    (or see https://cli.github.com)"));
       }
 
-      this.feedLine(tp.text(`  Install:  ${installLabel}`));
       this.feedLine();
-
-      // Ask user
-      const answer = await this.askInput("Run install command? [Y/n] ");
+      const answer = await this.askInline("Press Enter when done (or n to skip)");
       if (answer.toLowerCase() === "n") {
-        this.feedLine(tp.muted("  Skipped. Install manually and re-run /configure github"));
-        this.refreshView();
-        return;
-      }
-
-      // Spawn install in a visible subprocess
-      this.feedLine(tp.muted(`  Running: ${installCmd}`));
-      this.refreshView();
-
-      const installSuccess = await new Promise<boolean>((res) => {
-        const parts = installCmd.split(" ");
-        const child = spawn(parts[0], parts.slice(1), {
-          stdio: "inherit",
-          shell: true,
-        });
-        child.on("error", () => res(false));
-        child.on("exit", (code) => res(code === 0));
-      });
-
-      if (!installSuccess) {
-        this.feedLine(tp.error("  Install failed. Please install manually from https://cli.github.com"));
+        this.feedLine(tp.muted("  Skipped. Run /configure github when ready."));
         this.refreshView();
         return;
       }
@@ -2978,7 +3012,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         ghInstalled = true;
         this.feedLine(tp.success("  ✓ GitHub CLI installed"));
       } catch {
-        this.feedLine(tp.error("  GitHub CLI still not found after install. You may need to restart your terminal."));
+        this.feedLine(tp.error("  GitHub CLI still not found. You may need to restart your terminal."));
         this.refreshView();
         return;
       }
@@ -2997,31 +3031,16 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     }
 
     if (!authed) {
-      this.feedLine(tp.muted("  Authentication needed — this will open your browser for GitHub OAuth."));
+      this.feedLine();
+      this.feedLine(tp.text("  Run this in another terminal to authenticate:"));
+      this.feedCommand("gh auth login --web --git-protocol https");
+      this.feedLine();
+      this.feedLine(tp.muted("  This will open your browser for GitHub OAuth."));
       this.feedLine();
 
-      const answer = await this.askInput("Start authentication? [Y/n] ");
+      const answer = await this.askInline("Press Enter when done (or n to skip)");
       if (answer.toLowerCase() === "n") {
         this.feedLine(tp.muted("  Skipped. Run /configure github when ready."));
-        this.refreshView();
-        this.updateServiceStatus("GitHub", "not-configured");
-        return;
-      }
-
-      this.feedLine(tp.muted("  Starting auth flow..."));
-      this.refreshView();
-
-      const authSuccess = await new Promise<boolean>((res) => {
-        const child = spawn("gh", ["auth", "login", "--web", "--git-protocol", "https"], {
-          stdio: "inherit",
-          shell: true,
-        });
-        child.on("error", () => res(false));
-        child.on("exit", (code) => res(code === 0));
-      });
-
-      if (!authSuccess) {
-        this.feedLine(tp.error("  Authentication failed. Try again with /configure github"));
         this.refreshView();
         this.updateServiceStatus("GitHub", "not-configured");
         return;
@@ -3055,7 +3074,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
   private updateServiceStatus(name: string, status: ServiceStatus): void {
     const svc = this.serviceStatuses.find((s) => s.name === name);
-    if (svc) svc.status = status;
+    if (svc) {
+      svc.status = status;
+      if (this.banner) {
+        this.banner.updateServices(this.serviceStatuses);
+        this.refreshView();
+      }
+    }
   }
 
   private registerCommands(): void {
@@ -3321,7 +3346,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (this.activeTasks.size === 0) this.stopStatusAnimation();
         if (!this.chatView) this.input.deactivateAndErase();
         const displayErr = event.teammate === this.adapterName ? this.selfName : event.teammate;
-        this.feedLine(tp.error(`  ✖ ${displayErr}: ${event.error}`));
+        this.feedLine(tp.error(`  ✖  ${displayErr}: ${event.error}`));
         this.showPrompt();
         break;
     }
@@ -3578,7 +3603,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (this.activeTasks.size === 0) this.stopStatusAnimation();
         const msg = err?.message ?? String(err);
         const displayAgent = agent === this.adapterName ? this.selfName : agent;
-        this.feedLine(tp.error(`  ✖ @${displayAgent}: ${msg}`));
+        this.feedLine(tp.error(`  ✖  @${displayAgent}: ${msg}`));
         this.refreshView();
       }
 
@@ -3936,7 +3961,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       } else {
         if (spinner) spinner.succeed(`${name}: ${parts.join(", ")}`);
         if (this.chatView)
-          this.feedLine(tp.success(`  ✔ ${name}: ${parts.join(", ")}`));
+          this.feedLine(tp.success(`  ✔  ${name}: ${parts.join(", ")}`));
       }
 
       if (this.chatView) this.chatView.setProgress(null);
@@ -3958,7 +3983,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (syncSpinner) syncSpinner.succeed(`${name}: index synced`);
         if (this.chatView) {
           this.chatView.setProgress(null);
-          this.feedLine(tp.success(`  ✔ ${name}: index synced`));
+          this.feedLine(tp.success(`  ✔  ${name}: index synced`));
         }
       } catch {
         /* sync failed — non-fatal */
@@ -3984,7 +4009,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       if (spinner) spinner.fail(`${name}: ${msg}`);
       if (this.chatView) {
         this.chatView.setProgress(null);
-        this.feedLine(tp.error(`  ✖ ${name}: ${msg}`));
+        this.feedLine(tp.error(`  ✖  ${name}: ${msg}`));
       }
     }
     this.refreshView();
@@ -4210,7 +4235,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       // Show brief "Copied" message in the progress area
       if (this.chatView) {
         this.chatView.setProgress(
-          concat(tp.success("✔ "), tp.muted("Copied to clipboard")),
+          concat(tp.success("✔  "), tp.muted("Copied to clipboard")),
         );
         this.refreshView();
         setTimeout(() => {
@@ -4221,7 +4246,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     } catch {
       if (this.chatView) {
         this.chatView.setProgress(
-          concat(tp.error("✖ "), tp.muted("Failed to copy")),
+          concat(tp.error("✖  "), tp.muted("Failed to copy")),
         );
         this.refreshView();
         setTimeout(() => {
@@ -4230,6 +4255,20 @@ Issues that can't be resolved unilaterally — they need input from other teamma
         }, 1500);
       }
     }
+  }
+
+  /**
+   * Feed a command line with a clickable [copy] button.
+   * Renders as: `    command text  [copy]`
+   */
+  private feedCommand(command: string): void {
+    if (!this.chatView) {
+      this.feedLine(tp.accent(`    ${command}`));
+      return;
+    }
+    const normal = concat(tp.accent(`    ${command}  `), tp.muted("[copy]"));
+    const hover = concat(tp.accent(`    ${command}  `), tp.accent("[copy]"));
+    this.chatView.appendAction(`copy-cmd:${command}`, normal, hover);
   }
 
   private async cmdHelp(): Promise<void> {
@@ -4382,9 +4421,9 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     this.feedLine();
 
     // Status
-    row("success", t.success, "✔ Task completed");
-    row("warning", t.warning, "⚠ Pending handoff");
-    row("error", t.error, "✖ Something went wrong");
+    row("success", t.success, "✔  Task completed");
+    row("warning", t.warning, "⚠  Pending handoff");
+    row("error", t.error, "✖  Something went wrong");
     row("info", t.info, "⠋ Working on task...");
 
     this.feedLine();
@@ -4468,9 +4507,9 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       "",
       "| Language   | Status  |",
       "|------------|---------|",
-      "| JavaScript | ✔ Ready |",
-      "| Python     | ✔ Ready |",
-      "| C#         | ✔ Ready |",
+      "| JavaScript | ✔  Ready |",
+      "| Python     | ✔  Ready |",
+      "| C#         | ✔  Ready |",
       "",
       "---",
     ].join("\n");

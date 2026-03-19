@@ -831,6 +831,7 @@ export class ChatView extends Control {
       if (me.type === "release" && this._selecting) {
         this._selecting = false;
         this._stopSelScroll();
+        this._selEnd = { x: me.x, y: me.y };
         // If anchor == end (just a click, no drag), clear selection
         if (
           this._selAnchor &&
@@ -1268,6 +1269,10 @@ export class ChatView extends Control {
       cy += item.height;
     }
 
+    // Always cache feed geometry for selection edge-detection
+    this._feedY = y;
+    this._feedH = height;
+
     // Render scrollbar and cache geometry for hit-testing
     if (height > 0 && totalContentH > height) {
       const scrollX = x + width - 1;
@@ -1286,8 +1291,6 @@ export class ChatView extends Control {
 
       // Cache for mouse interaction
       this._scrollbarX = scrollX;
-      this._feedY = y;
-      this._feedH = height;
       this._thumbPos = thumbPos;
       this._thumbSize = thumbSize;
       this._maxScroll = maxScroll;
