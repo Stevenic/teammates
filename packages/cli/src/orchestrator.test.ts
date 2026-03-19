@@ -10,6 +10,7 @@ function makeTeammate(
 ): TeammateConfig {
   return {
     name,
+    type: "ai" as const,
     role,
     soul: `# ${name}\n\n${role}`,
     wisdom: "",
@@ -61,7 +62,7 @@ function createOrchestrator(
   }
   // Initialize statuses
   for (const t of teammates) {
-    orch.getAllStatuses().set(t.name, { state: "idle" });
+    orch.getAllStatuses().set(t.name, { state: "idle", presence: "online" });
   }
   return { orch, adapter: mockAdapter };
 }

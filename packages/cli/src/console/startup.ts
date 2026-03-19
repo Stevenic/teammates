@@ -48,7 +48,8 @@ export function buildTitle(word: string): [string, string] {
 
 export interface StartupInfo {
   version: string;
-  adapterName: string;
+  /** Display name shown in the banner (user alias or adapter name). */
+  displayName: string;
   teammateCount: number;
   cwd: string;
   recallInstalled: boolean;
@@ -113,7 +114,7 @@ export async function playStartup(info: StartupInfo): Promise<void> {
 
   // Build info lines to sit to the right of TM
   const rightLine1 =
-    chalk.white(info.adapterName) +
+    chalk.white(info.displayName) +
     chalk.gray(
       ` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`,
     ) +

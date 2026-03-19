@@ -15,6 +15,7 @@ import {
 import { PKG_VERSION } from "./cli-args.js";
 import { buildTitle } from "./console/startup.js";
 import { tp } from "./theme.js";
+import type { PresenceState } from "./types.js";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -26,10 +27,11 @@ export interface ServiceInfo {
 }
 
 export interface BannerInfo {
-  adapterName: string;
+  /** Display name shown in the banner (user alias or adapter name). */
+  displayName: string;
   teammateCount: number;
   cwd: string;
-  teammates: { name: string; role: string }[];
+  teammates: { name: string; role: string; presence: PresenceState }[];
   services: ServiceInfo[];
 }
 
@@ -125,7 +127,7 @@ export class AnimatedBanner extends Control {
     lines.push(
       concat(
         tp.accent(tmTop),
-        tp.text(gap + info.adapterName),
+        tp.text(gap + info.displayName),
         tp.muted(
           ` · ${info.teammateCount} teammate${info.teammateCount === 1 ? "" : "s"}`,
         ),
@@ -153,11 +155,17 @@ export class AnimatedBanner extends Control {
     lines.push("");
     this._rosterStart = lines.length;
 
-    // Teammate roster
+    // Teammate roster (with presence indicators)
     for (const t of info.teammates) {
+      const presenceDot =
+        t.presence === "online"
+          ? tp.success("  ● ")
+          : t.presence === "reachable"
+            ? tp.warning("  ● ")
+            : tp.error("  ● ");
       lines.push(
         concat(
-          tp.accent("  ● "),
+          presenceDot,
           tp.accent(`@${t.name}`.padEnd(14)),
           tp.muted(t.role),
         ),

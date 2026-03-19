@@ -132,7 +132,6 @@ ${chalk.bold("@teammates/cli")} — Agent-agnostic teammate orchestrator
 
 ${chalk.bold("Usage:")}
   teammates <agent>          Launch session with an agent
-  teammates claude           Use Claude Code
   teammates codex            Use OpenAI Codex
   teammates aider            Use Aider
 

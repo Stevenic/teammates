@@ -247,6 +247,7 @@ describe("Registry.register", () => {
     const registry = new Registry(tempDir);
     registry.register({
       name: "test",
+      type: "ai",
       role: "Test role.",
       soul: "# Test",
       wisdom: "",

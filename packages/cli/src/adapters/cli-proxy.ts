@@ -331,6 +331,7 @@ export class CliProxyAdapter implements AgentAdapter {
         { promptFile, prompt },
         {
           name: "_router",
+          type: "ai" as const,
           role: "",
           soul: "",
           wisdom: "",

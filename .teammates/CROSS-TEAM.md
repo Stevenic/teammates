@@ -20,6 +20,10 @@ The **Boundary Rule** (see PROTOCOL.md) applies to the **codebase** — source c
 
 When adding a new teammate, add a row to this table.
 
+## Projects
+
+Active projects are tracked in **[PROJECTS.md](PROJECTS.md)** — codename, spec link, lead, phase, status.
+
 ## Shared Docs
 
 - **[Architecture](scribe/docs/ARCHITECTURE.md)** — Full project architecture: packages, data flow, key patterns, tech stack. Maintained by Scribe. _(added 2026-03-13)_
@@ -33,3 +37,4 @@ When adding a new teammate, add a row to this table.
 - **[S26 — MCP Passthrough Spec](scribe/docs/specs/S26-mcp-passthrough.md)** — MCP server config and per-agent passthrough. For Beacon implementation. _(added 2026-03-17)_
 - **[F1 — Temporal Awareness Spec](scribe/docs/specs/F1-temporal-awareness.md)** — `/catchup` command: "What happened?" queries with lens-based rendering. For Beacon implementation. _(added 2026-03-17)_
 - **[F3 — Decision Synthesis Spec](scribe/docs/specs/F3-decision-synthesis.md)** — Cross-teammate search with authority ranking + `/decision` command. For Beacon implementation. _(added 2026-03-17)_
+- **[Multi-Human Collaboration Spec](scribe/docs/specs/F-multi-human-collaboration.md)** — Design for human avatars, server architecture, handoff queues, presence, and GitHub integration. _(added 2026-03-19)_

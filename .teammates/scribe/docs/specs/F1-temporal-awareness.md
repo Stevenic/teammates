@@ -126,7 +126,7 @@ Each lens defines how the gathered data should be presented. These are injected 
 
 ### Implementation Architecture
 
-The temporal awareness engine is **not a standalone module** — it's a specialized prompt template that the orchestrator routes to the appropriate teammate (or to `@claude` for team-wide queries).
+The temporal awareness engine is **not a standalone module** — it's a specialized prompt template that the orchestrator routes to the appropriate teammate (or to the user's agent for team-wide queries).
 
 ```
 /catchup last 3 days
@@ -151,7 +151,7 @@ Build synthesis prompt:
     ▼
 Route to agent:
   - @teammate scoped → that teammate's agent
-  - team-wide → @claude (general agent, has no domain bias)
+  - team-wide → user's agent (general agent, has no domain bias)
     │
     ▼
 Agent produces formatted output
@@ -162,9 +162,9 @@ Agent produces formatted output
 | Query scope | Routed to | Rationale |
 |-------------|-----------|-----------|
 | `@beacon` | beacon's agent | Teammate synthesizes their own activity best |
-| `@everyone` / no scope | `@claude` | Neutral agent, no domain bias for team-wide summaries |
+| `@everyone` / no scope | user's agent | Neutral agent, no domain bias for team-wide summaries |
 | `file:path` | Owner of that file path | Owner has most context about their files |
-| `standup` | `@claude` | Cross-team synthesis needs neutrality |
+| `standup` | user's agent | Cross-team synthesis needs neutrality |
 
 ### "Since Last Activity" Detection
 

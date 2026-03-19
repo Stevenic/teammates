@@ -8,10 +8,18 @@ export type SandboxLevel =
   | "workspace-write"
   | "danger-full-access";
 
+/** Whether this teammate is a human avatar or an AI agent */
+export type TeammateType = "human" | "ai";
+
+/** Presence state for /status display */
+export type PresenceState = "online" | "offline" | "reachable";
+
 /** A teammate's loaded configuration */
 export interface TeammateConfig {
   /** Teammate name (folder name under .teammates/) */
   name: string;
+  /** Whether this is a human avatar or AI teammate */
+  type: TeammateType;
   /** Role description from SOUL.md */
   role: string;
   /** Full SOUL.md content */

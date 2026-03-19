@@ -34,7 +34,8 @@ import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
 import { Control } from "../layout/control.js";
 import type { Constraint, Rect, Size } from "../layout/types.js";
-import type { StyledSpan } from "../styled.js";
+import { type StyledSpan, spanLength } from "../styled.js";
+import { stringDisplayWidth } from "../pixel/symbol.js";
 import { type StyledLine, StyledText } from "./styled-text.js";
 import { Text } from "./text.js";
 import {
@@ -120,8 +121,10 @@ export interface ChatViewOptions {
   dropdownLabelStyle?: TextStyle;
   /** Maximum number of lines the input box can grow to (default 1). */
   maxInputHeight?: number;
-  /** Footer content shown below the input (StyledLine for mixed colors). */
+  /** Footer content shown below the input (StyledLine for mixed colors). Sets the left side. */
   footer?: StyledLine;
+  /** Right-aligned footer content. */
+  footerRight?: StyledLine;
   /** Style for footer text (used as default when footer is a plain string). */
   footerStyle?: TextStyle;
   /** Command history entries. */
@@ -148,6 +151,7 @@ export class ChatView extends Control {
   private _input: TextInput;
   private _inputSeparator: _Separator;
   private _footer: StyledText;
+  private _footerRight: StyledText;
   private _dropdownItems: DropdownItem[] = [];
   private _dropdownIndex: number = -1;
 
@@ -277,6 +281,14 @@ export class ChatView extends Control {
     });
     this.addChild(this._footer);
 
+    const footerRightLine: StyledLine = options.footerRight ?? "";
+    this._footerRight = new StyledText({
+      lines: [footerRightLine],
+      defaultStyle: this._footerStyle,
+      wrap: false,
+    });
+    this.addChild(this._footerRight);
+
     // Wire input events to ChatView events
     this._input.on("submit", (text: string) => this.emit("submit", text));
     this._input.on("change", (text: string) => this.emit("change", text));
@@ -342,9 +354,15 @@ export class ChatView extends Control {
 
   // ── Public API: Footer ─────────────────────────────────────────
 
-  /** Set footer content (plain string or StyledSpan for mixed colors). */
+  /** Set left-side footer content (plain string or StyledSpan for mixed colors). */
   setFooter(content: StyledLine): void {
     this._footer.lines = [content];
+    this.invalidate();
+  }
+
+  /** Set right-side footer content (plain string or StyledSpan for mixed colors). */
+  setFooterRight(content: StyledLine): void {
+    this._footerRight.lines = [content];
     this.invalidate();
   }
 
@@ -603,6 +621,7 @@ export class ChatView extends Control {
       this._input.focusable = false;
       this._inputSeparator.visible = false;
       this._footer.visible = false;
+      this._footerRight.visible = false;
     } else {
       // Restore normal input chrome
       this._input.visible = true;
@@ -610,6 +629,7 @@ export class ChatView extends Control {
       this._input.onFocus();
       this._inputSeparator.visible = true;
       this._footer.visible = true;
+      this._footerRight.visible = true;
     }
 
     this.invalidate();
@@ -1103,6 +1123,7 @@ export class ChatView extends Control {
       const totalDropdownH = dropdownExtraH + 1;
       this._renderDropdown(ctx, b.x, y, W, totalDropdownH);
     } else {
+      // Left footer
       this._footer.measure({
         minWidth: 0,
         maxWidth: W,
@@ -1111,6 +1132,24 @@ export class ChatView extends Control {
       });
       this._footer.arrange({ x: b.x, y, width: W, height: footerH });
       this._footer.render(ctx);
+
+      // Right footer (right-aligned on the same row)
+      const rightSize = this._footerRight.measure({
+        minWidth: 0,
+        maxWidth: W,
+        minHeight: 0,
+        maxHeight: 1,
+      });
+      if (rightSize.width > 0) {
+        const rightX = b.x + W - rightSize.width;
+        this._footerRight.arrange({
+          x: rightX,
+          y,
+          width: rightSize.width,
+          height: footerH,
+        });
+        this._footerRight.render(ctx);
+      }
     }
   }
 

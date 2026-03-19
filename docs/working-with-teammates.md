@@ -147,10 +147,10 @@ Each teammate responds independently with their ideas. You'll get different angl
 
 **2. Consolidate**
 
-Once all responses are in, ask a teammate (or `@claude`) to merge the ideas into a single ranked list:
+Once all responses are in, ask a teammate to merge the ideas into a single ranked list:
 
 ```
-@claude consolidate all the brainstorm responses into a single table
+@scribe consolidate all the brainstorm responses into a single table
 ```
 
 This produces a deduplicated table with columns for points, idea name, author(s), and summary.
@@ -170,7 +170,7 @@ Each teammate allocates their points based on their own priorities and expertise
 You can weight the results with your own points:
 
 ```
-@claude give each idea 2 points each
+give each idea 2 points each
 ```
 
 Or allocate selectively to the ideas you care about most.

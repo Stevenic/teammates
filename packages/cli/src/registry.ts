@@ -11,6 +11,7 @@ import type {
   DailyLog,
   OwnershipRules,
   TeammateConfig,
+  TeammateType,
   WeeklyLog,
 } from "./types.js";
 
@@ -64,9 +65,11 @@ export class Registry {
     const ownership = parseOwnership(soul);
     const role = parseRole(soul);
     const routingKeywords = parseRoutingKeywords(soul);
+    const type = parseType(soul);
 
     const config: TeammateConfig = {
       name,
+      type,
       role,
       soul,
       wisdom,
@@ -213,6 +216,12 @@ function parseRoutingKeywords(soul: string): string[] {
   const routingMatch = soul.match(/### Routing[\s\S]*?(?=###|## |$)/);
   if (!routingMatch) return [];
   return extractPatterns(routingMatch[0]);
+}
+
+/** Parse type (human or ai) from SOUL.md — looks for **Type:** human */
+function parseType(soul: string): TeammateType {
+  const match = soul.match(/\*\*Type:\*\*\s*(human|ai)/i);
+  return match && match[1].toLowerCase() === "human" ? "human" : "ai";
 }
 
 /** Extract file patterns (backtick-wrapped) from a markdown section */

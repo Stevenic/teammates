@@ -5,6 +5,7 @@ import type { TeammateConfig } from "./types.js";
 function makeConfig(overrides?: Partial<TeammateConfig>): TeammateConfig {
   return {
     name: "beacon",
+    type: "ai" as const,
     role: "Platform engineer.",
     soul: "# Beacon\n\nBeacon owns the recall package.",
     wisdom: "",

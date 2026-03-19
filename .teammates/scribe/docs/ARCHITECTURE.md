@@ -171,7 +171,7 @@ Breaking changes propagate downstream. Feature requests propagate upstream.
 ```bash
 # CLI
 cd cli && npm install && npm run build
-teammates claude              # Launch REPL
+teammates                     # Launch REPL
 
 # Recall
 cd recall && npm install && npm run build

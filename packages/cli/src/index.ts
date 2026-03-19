@@ -35,10 +35,12 @@ export type {
   HandoffEnvelope,
   OrchestratorEvent,
   OwnershipRules,
+  PresenceState,
   QueueEntry,
   SandboxLevel,
   SlashCommand,
   TaskAssignment,
   TaskResult,
   TeammateConfig,
+  TeammateType,
 } from "./types.js";

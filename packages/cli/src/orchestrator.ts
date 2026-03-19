@@ -22,6 +22,8 @@ export interface OrchestratorConfig {
 
 export interface TeammateStatus {
   state: "idle" | "working";
+  /** Presence for display: online (green), offline (red), reachable (yellow) */
+  presence: import("./types.js").PresenceState;
   lastSummary?: string;
   lastChangedFiles?: string[];
   lastTimestamp?: Date;
@@ -44,7 +46,10 @@ export class Orchestrator {
   async init(): Promise<void> {
     await this.registry.loadAll();
     for (const name of this.registry.list()) {
-      this.statuses.set(name, { state: "idle" });
+      const config = this.registry.get(name);
+      // AI teammates are always online; humans start as offline
+      const presence = config?.type === "human" ? "offline" : "online";
+      this.statuses.set(name, { state: "idle", presence });
     }
   }
 
@@ -89,7 +94,8 @@ export class Orchestrator {
     }
 
     this.onEvent({ type: "task_assigned", assignment });
-    this.statuses.set(assignment.teammate, { state: "working" });
+    const prevPresence = this.statuses.get(assignment.teammate)?.presence ?? "online";
+    this.statuses.set(assignment.teammate, { state: "working", presence: prevPresence });
 
     // Get or create session
     let sessionId = this.sessions.get(assignment.teammate);
@@ -108,9 +114,11 @@ export class Orchestrator {
     const result = await this.adapter.executeTask(sessionId, teammate, prompt);
     this.onEvent({ type: "task_completed", result });
 
-    // Update status
+    // Update status (preserve presence)
+    const postPresence = this.statuses.get(assignment.teammate)?.presence ?? "online";
     this.statuses.set(assignment.teammate, {
       state: "idle",
+      presence: postPresence,
       lastSummary: result.summary,
       lastChangedFiles: result.changedFiles,
       lastTimestamp: new Date(),
@@ -171,7 +179,7 @@ export class Orchestrator {
     }
 
     // Require a meaningful match — weak/ambiguous scores fall through
-    // so the caller can default to the base coding agent
+    // so the caller can default to the user's agent
     if (bestScore < 2) return null;
 
     return bestMatch;
@@ -192,12 +200,6 @@ export class Orchestrator {
     for (const [name, config] of this.registry.all()) {
       roster.push({ name, role: config.role, ownership: config.ownership });
     }
-    // Include the base agent as an option
-    roster.push({
-      name: this.adapter.name,
-      role: "General-purpose coding agent",
-      ownership: { primary: [], secondary: [] },
-    });
 
     return this.adapter.routeTask(task, roster);
   }
@@ -212,7 +214,9 @@ export class Orchestrator {
     const added: string[] = [];
     for (const name of this.registry.list()) {
       if (!before.has(name)) {
-        this.statuses.set(name, { state: "idle" });
+        const config = this.registry.get(name);
+        const presence = config?.type === "human" ? "offline" : "online";
+        this.statuses.set(name, { state: "idle", presence });
         added.push(name);
       }
     }
@@ -228,7 +232,8 @@ export class Orchestrator {
     }
     this.sessions.clear();
     for (const name of this.registry.list()) {
-      this.statuses.set(name, { state: "idle" });
+      const prevPresence = this.statuses.get(name)?.presence ?? "online";
+      this.statuses.set(name, { state: "idle", presence: prevPresence });
     }
   }
 

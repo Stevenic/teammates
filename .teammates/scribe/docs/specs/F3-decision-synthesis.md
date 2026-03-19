@@ -103,7 +103,7 @@ The engine:
 3. Searches git log for commits mentioning the topic
 4. Filters results to **decision-relevant** types: `project` memories, DECISIONS.md entries, daily log entries containing "decision", "decided", "chose", "switched", "replaced"
 5. Orders results chronologically (oldest first) to show the decision trail
-6. Routes to `@claude` for synthesis
+6. Routes to the user's agent for synthesis
 
 #### Decision Trail Output Template
 

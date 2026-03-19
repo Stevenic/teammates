@@ -4,6 +4,7 @@ import { EchoAdapter } from "./echo.js";
 
 const teammate: TeammateConfig = {
   name: "beacon",
+  type: "ai",
   role: "Platform engineer.",
   soul: "# Beacon\n\nBeacon owns the recall package.",
   wisdom: "",
