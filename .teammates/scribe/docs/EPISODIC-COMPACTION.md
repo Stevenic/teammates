@@ -90,21 +90,23 @@ Wisdom is never lost when episodic files compress or delete, because durable kno
 
 ### Prompt Assembly — Context Window Stack
 
-The CLI (`adapter.ts`) builds the full prompt automatically:
+The CLI (`adapter.ts`) builds the full prompt automatically within a **32k token budget** for memory context:
 
 ```
 adapter.ts builds prompt:
-    ┌─ SOUL.md                          (always, direct file read)
-    ├─ WISDOM.md                        (always, direct file read)
-    ├─ Relevant memories from recall    (automatic, queried using task prompt)
-    ├─ Last 7 daily logs                (always, direct file reads)
-    ├─ Weekly summaries                 (always, direct file reads)
-    ├─ Session history                  (injected as content from session file)
+    ┌─ SOUL.md                          (always, outside budget)
+    ├─ WISDOM.md                        (always, outside budget)
+    ├─ Relevant memories from recall    (≥8k tokens + unused daily budget)
+    ├─ Recent daily logs                (today always; days 2-7 up to 24k tokens, whole entries)
+    ├─ Session state                    (file path ref — agent reads/writes directly)
     ├─ Roster                           (all teammates and roles)
     ├─ Memory/session write instructions
     ├─ Output protocol
-    └─ Conversation history + task
+    ├─ Current date/time
+    └─ Task                             (always, outside budget)
 ```
+
+Weekly summaries are **not** injected directly — they surface via recall search when relevant to the task prompt.
 
 Recall queries run in-process via library imports (`queryRecallContext`), not subprocess spawning. The task prompt is used as the search query to find relevant episodic summaries and typed memories.
 

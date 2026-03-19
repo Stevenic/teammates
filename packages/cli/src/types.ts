@@ -116,7 +116,8 @@ export type QueueEntry =
   | { type: "compact"; teammate: string; task: string }
   | { type: "retro"; teammate: string; task: string }
   | { type: "btw"; teammate: string; task: string }
-  | { type: "debug"; teammate: string; task: string };
+  | { type: "debug"; teammate: string; task: string }
+  | { type: "summarize"; teammate: string; task: string };
 
 /** A registered slash command. */
 export interface SlashCommand {

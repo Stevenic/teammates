@@ -83,25 +83,90 @@ class TeammatesREPL {
   private lastResult: TaskResult | null = null;
   private lastResults: Map<string, TaskResult> = new Map();
   private conversationHistory: { role: string; text: string }[] = [];
+  /** Running summary of older conversation history maintained by the coding agent. */
+  private conversationSummary = "";
 
   private storeResult(result: TaskResult): void {
     this.lastResult = result;
     this.lastResults.set(result.teammate, result);
     this.conversationHistory.push({
       role: result.teammate,
-      text: result.rawOutput ?? result.summary,
+      text: result.summary,
     });
   }
 
+  /** Token budget for recent conversation history (24k tokens ≈ 96k chars). */
+  private static readonly CONV_HISTORY_CHARS = 24_000 * 4;
+
   private buildConversationContext(): string {
-    if (this.conversationHistory.length === 0) return "";
-    // Keep last 10 exchanges to avoid blowing up prompt size
-    const recent = this.conversationHistory.slice(-10);
-    const lines = ["## Conversation History\n"];
-    for (const entry of recent) {
-      lines.push(`**${entry.role}:** ${entry.text}\n`);
+    if (this.conversationHistory.length === 0 && !this.conversationSummary)
+      return "";
+
+    const budget = TeammatesREPL.CONV_HISTORY_CHARS;
+    const parts: string[] = ["## Conversation History\n"];
+
+    // Include running summary of older conversation if present
+    if (this.conversationSummary) {
+      parts.push(
+        `### Previous Conversation Summary\n\n${this.conversationSummary}\n`,
+      );
     }
-    return lines.join("\n");
+
+    // Work backwards from newest — include whole entries up to 24k tokens
+    const entries: string[] = [];
+    let used = 0;
+    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+      const line = `**${this.conversationHistory[i].role}:** ${this.conversationHistory[i].text}\n`;
+      if (used + line.length > budget && entries.length > 0) break;
+      entries.unshift(line);
+      used += line.length;
+    }
+    if (entries.length > 0) parts.push(entries.join("\n"));
+
+    return parts.join("\n");
+  }
+
+  /**
+   * Check if conversation history exceeds the 24k token budget.
+   * If so, take the older entries that won't fit, combine with existing summary,
+   * and queue a summarization task to the coding agent.
+   */
+  private maybeQueueSummarization(): void {
+    const budget = TeammatesREPL.CONV_HISTORY_CHARS;
+
+    // Calculate how many recent entries fit in the budget (newest first)
+    let recentChars = 0;
+    let splitIdx = this.conversationHistory.length;
+    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+      const line = `**${this.conversationHistory[i].role}:** ${this.conversationHistory[i].text}\n`;
+      if (recentChars + line.length > budget) break;
+      recentChars += line.length;
+      splitIdx = i;
+    }
+
+    if (splitIdx === 0) return; // everything fits — nothing to summarize
+
+    // Collect entries that are being pushed out
+    const toSummarize = this.conversationHistory.slice(0, splitIdx);
+    const entriesText = toSummarize
+      .map((e) => `**${e.role}:** ${e.text}`)
+      .join("\n");
+
+    // Build the summarization prompt
+    const prompt = this.conversationSummary
+      ? `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Update the existing summary to incorporate the new conversation entries below.\n\n## Current Summary\n\n${this.conversationSummary}\n\n## New Entries to Incorporate\n\n${entriesText}\n\n## Instructions\n\nReturn ONLY the updated summary — no preamble, no explanation. The summary should:\n- Be a concise bulleted list of key topics discussed, decisions made, and work completed\n- Preserve important context that future messages might reference\n- Drop trivial or redundant details\n- Stay under 2000 characters\n- Do NOT include any output protocol (no TO:, no # Subject, no handoff blocks)`
+      : `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Summarize the conversation entries below.\n\n## Entries to Summarize\n\n${entriesText}\n\n## Instructions\n\nReturn ONLY the summary — no preamble, no explanation. The summary should:\n- Be a concise bulleted list of key topics discussed, decisions made, and work completed\n- Preserve important context that future messages might reference\n- Drop trivial or redundant details\n- Stay under 2000 characters\n- Do NOT include any output protocol (no TO:, no # Subject, no handoff blocks)`;
+
+    // Remove the summarized entries — they'll be captured in the summary
+    this.conversationHistory.splice(0, splitIdx);
+
+    // Queue the summarization task to the base coding agent
+    this.taskQueue.push({
+      type: "summarize",
+      teammate: this.adapterName,
+      task: prompt,
+    });
+    this.kickDrain();
   }
   private adapterName: string;
   private teammatesDir!: string;
@@ -2985,6 +3050,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           this.stopStatusAnimation();
         }
 
+        // Suppress display for internal summarization tasks
+        const activeEntry = this.agentActive.get(event.result.teammate);
+        if (activeEntry?.type === "summarize") break;
+
         if (!this.chatView) this.input.deactivateAndErase();
 
         const raw = event.result.rawOutput ?? "";
@@ -3288,6 +3357,19 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       try {
         if (entry.type === "compact") {
           await this.runCompact(entry.teammate);
+        } else if (entry.type === "summarize") {
+          // Internal housekeeping — summarize older conversation history
+          const result = await this.orchestrator.assign({
+            teammate: entry.teammate,
+            task: entry.task,
+          });
+          // Extract the summary from the agent's output (strip protocol artifacts)
+          const raw = result.rawOutput ?? "";
+          this.conversationSummary = raw
+            .replace(/^TO:\s*\S+\s*\n/im, "")
+            .replace(/^#\s+.+\n*/m, "")
+            .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
+            .trim();
         } else {
           // btw and debug tasks skip conversation context (not part of main thread)
           const extraContext =
@@ -3306,6 +3388,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           // btw and debug results are not stored in conversation history
           if (entry.type !== "btw" && entry.type !== "debug") {
             this.storeResult(result);
+            // Check if older history needs summarizing
+            this.maybeQueueSummarization();
           }
           if (entry.type === "retro") {
             this.handleRetroResult(result);
@@ -3524,6 +3608,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
   private async cmdClear(): Promise<void> {
     this.conversationHistory.length = 0;
+    this.conversationSummary = "";
     this.lastResult = null;
     this.lastResults.clear();
     this.taskQueue.length = 0;

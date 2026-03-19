@@ -129,7 +129,7 @@ The CLI uses a generic adapter interface to support any coding agent. Each adapt
 ### How Adapters Work
 
 1. The adapter queries the recall index for relevant memories (automatic, in-process)
-2. The orchestrator builds a full prompt (SOUL → WISDOM → recall results → daily logs → weekly summaries → session history → roster → task)
+2. The orchestrator builds a full prompt within a 32k token budget (SOUL → WISDOM → recall results → daily logs (budget-trimmed) → session state → roster → task)
 3. The prompt is written to a temp file
 4. The agent CLI is spawned with the prompt
 5. stdout/stderr are captured for result parsing

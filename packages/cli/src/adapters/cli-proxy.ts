@@ -233,15 +233,6 @@ export class CliProxyAdapter implements AgentAdapter {
     // If the teammate has no soul (e.g. the raw agent), skip identity/memory
     // wrapping but include handoff instructions so it can delegate to teammates
     const sessionFile = this.sessionFiles.get(teammate.name);
-    // Read session file content for injection into the prompt
-    let sessionContent: string | undefined;
-    if (sessionFile) {
-      try {
-        sessionContent = await readFile(sessionFile, "utf-8");
-      } catch {
-        // Session file may not exist yet — that's fine
-      }
-    }
     let fullPrompt: string;
     if (teammate.soul) {
       // Query recall for relevant memories before building prompt
@@ -256,7 +247,6 @@ export class CliProxyAdapter implements AgentAdapter {
         roster: this.roster,
         services: this.services,
         sessionFile,
-        sessionContent,
         recallResults: recall?.results,
       });
     } else {

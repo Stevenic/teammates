@@ -115,6 +115,85 @@ describe("buildTeammatePrompt", () => {
     expect(prompt).toContain("## Session State");
     expect(prompt).toContain("/tmp/beacon-session.md");
   });
+
+  it("drops daily logs that exceed the 24k daily budget", () => {
+    // Each log is ~50k chars = ~12.5k tokens. Only 1 fits in 24k daily budget.
+    const bigContent = "D".repeat(50_000);
+    const config = makeConfig({
+      dailyLogs: [
+        { date: "2026-03-18", content: "Today's log — never trimmed" },
+        { date: "2026-03-17", content: bigContent }, // day 2 — fits in 24k
+        { date: "2026-03-16", content: bigContent }, // day 3 — exceeds 24k, dropped
+      ],
+    });
+    const prompt = buildTeammatePrompt(config, "task");
+    // Today's log is always fully present (never trimmed)
+    expect(prompt).toContain("Today's log — never trimmed");
+    // Day 2 fits within 24k
+    expect(prompt).toContain("2026-03-17");
+    // Day 3 doesn't fit (12.5k + 12.5k > 24k)
+    expect(prompt).not.toContain("2026-03-16");
+  });
+
+  it("recall gets at least 8k tokens even when daily logs use full 24k", () => {
+    // Daily logs fill their 24k budget. Recall still gets its guaranteed 8k minimum.
+    const dailyContent = "D".repeat(90_000); // ~22.5k tokens — fits in 24k
+    const config = makeConfig({
+      dailyLogs: [
+        { date: "2026-03-18", content: "today" },
+        { date: "2026-03-17", content: dailyContent },
+      ],
+    });
+    const recallText = "R".repeat(20_000); // ~5k tokens — fits in 8k min
+    const prompt = buildTeammatePrompt(config, "task", {
+      recallResults: [
+        { teammate: "beacon", uri: "memory/decision_foo.md", text: recallText, score: 0.9, contentType: "typed_memory" },
+      ],
+    });
+    expect(prompt).toContain("2026-03-17");
+    expect(prompt).toContain("## Relevant Memories");
+  });
+
+  it("recall gets unused daily log budget", () => {
+    // Small daily logs leave most of 24k unused — recall gets the surplus.
+    const config = makeConfig({
+      dailyLogs: [
+        { date: "2026-03-18", content: "today" },
+        { date: "2026-03-17", content: "short day 2" }, // ~3 tokens
+      ],
+    });
+    // Large recall result — should fit because daily logs barely used any budget
+    const recallText = "R".repeat(80_000); // ~20k tokens — fits in (8k + ~24k unused)
+    const prompt = buildTeammatePrompt(config, "task", {
+      recallResults: [
+        { teammate: "beacon", uri: "memory/big.md", text: recallText, score: 0.9, contentType: "typed_memory" },
+      ],
+    });
+    expect(prompt).toContain("## Relevant Memories");
+    expect(prompt).toContain("memory/big.md");
+  });
+
+  it("weekly summaries are excluded (indexed by recall)", () => {
+    const config = makeConfig({
+      dailyLogs: [{ date: "2026-03-13", content: "short log" }],
+      weeklyLogs: [{ week: "2026-W11", content: "short summary" }],
+    });
+    const prompt = buildTeammatePrompt(config, "task");
+    expect(prompt).toContain("## Recent Daily Logs");
+    expect(prompt).not.toContain("## Recent Weekly Summaries");
+  });
+
+  it("excludes task prompt from budget calculation", () => {
+    // Large task prompt should not trigger trimming of wrapper sections
+    const bigTask = "x".repeat(100_000);
+    const config = makeConfig({
+      dailyLogs: [{ date: "2026-03-13", content: "small log" }],
+    });
+    const prompt = buildTeammatePrompt(config, bigTask);
+    // Daily logs should still be included despite the huge task
+    expect(prompt).toContain("## Recent Daily Logs");
+    expect(prompt).toContain("small log");
+  });
 });
 
 describe("formatHandoffContext", () => {

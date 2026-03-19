@@ -88,16 +88,22 @@ Daily logs feed both axes: episodic compaction produces weekly/monthly summaries
 
 ### Context window — what the CLI injects
 
-The CLI automatically builds each teammate's context before every task. The prompt stack (in order):
+The CLI automatically builds each teammate's context before every task. The prompt is assembled within a **32k token budget** for memory context, with smart allocation across sources.
 
-1. **SOUL.md** — identity, principles, boundaries
-2. **WISDOM.md** — distilled principles from compacted memories
-3. **Relevant memories from recall** — automatically queried using the task prompt; returns matching episodic summaries and typed memories from the vector index
-4. **Last 7 daily logs** — recent session notes
-5. **Weekly summaries** — most recent episodic summaries
-6. **Session history** — prior task results from the current CLI session (injected as content, not a file path)
-7. **Roster** — all teammates and their roles
-8. **Conversation history + task** — the user's message and prior exchanges
+The prompt stack (in order):
+
+1. **SOUL.md** — identity, principles, boundaries (always, outside budget)
+2. **WISDOM.md** — distilled principles from compacted memories (always, outside budget)
+3. **Relevant memories from recall** — automatically queried using the task prompt; returns matching episodic summaries and typed memories from the vector index (at least 8k tokens, plus any unused daily log budget)
+4. **Recent daily logs** — today's log is always included; days 2-7 are included most-recent-first up to 24k tokens (whole entries only, never truncated mid-entry)
+5. **Session state** — path to the session file (`.teammates/.tmp/sessions/<name>.md`); the agent reads and writes it directly for cross-task continuity
+6. **Roster** — all teammates and their roles
+7. **Memory update instructions** — how to write daily logs, typed memories, and WISDOM.md
+8. **Output protocol** — response format and handoff syntax
+9. **Current date/time**
+10. **Task** — the user's message (always, outside budget)
+
+Weekly summaries are **not** injected directly — they are searchable via recall (step 3) and surface when relevant to the task prompt.
 
 Teammates do not need to manually read these files or run recall searches — the CLI handles all context assembly automatically.
 

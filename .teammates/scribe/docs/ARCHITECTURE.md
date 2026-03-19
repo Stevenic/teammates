@@ -70,14 +70,14 @@ cli.ts ─── parse command, tokenize ───▶ orchestrator.ts
                                             ▼
                                        adapter.ts
                                             │
-                                   hydrate prompt:
+                                   hydrate prompt (32k budget):
                                    • SOUL.md (identity)
                                    • WISDOM.md (distilled principles)
-                                   • recall results (auto-queried)
-                                   • last 7 daily logs
-                                   • weekly summaries
-                                   • session history (injected content)
+                                   • recall results (≥8k tokens)
+                                   • recent daily logs (today + up to 24k)
+                                   • session state (file path ref)
                                    • roster (all teammates)
+                                   • memory/session write instructions
                                    • handoff context (if chained)
                                    • output protocol
                                             │
@@ -139,7 +139,7 @@ Teammates can hand off work to each other with structured envelopes:
 |---------|-------|-------------|
 | Pluggable adapters | `adapter.ts`, `cli-proxy.ts` | Any CLI agent wires in via `AgentAdapter` interface |
 | Registry discovery | `registry.ts` | Auto-discovers teammates from `.teammates/` dirs, parses SOUL.md |
-| Prompt hydration | `adapter.ts` | Layers identity → wisdom → recall results → daily logs → weekly summaries → session history → roster → protocol → task |
+| Prompt hydration | `adapter.ts` | Layers identity → wisdom → recall results → daily logs (budget-trimmed) → session state → roster → protocol → task (32k budget) |
 | File-as-memory | Framework | No in-RAM state; markdown files are the only persistence |
 | Automatic recall | `adapter.ts` | Queries recall index before every task, injects results into prompt |
 | Auto-sync search | `search.ts` | Transparently indexes new/changed files before returning results |
