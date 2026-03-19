@@ -12,7 +12,6 @@
 import { exec as execCb, execSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -3073,21 +3072,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         );
         this.lastCleanedOutput = cleaned;
 
-        if (sizeKB > 5) {
-          const tmpFile = join(
-            tmpdir(),
-            `teammates-${event.result.teammate}-${Date.now()}.md`,
-          );
-          writeFileSync(tmpFile, cleaned, "utf-8");
-          this.feedLine(tp.muted(`  ${"─".repeat(40)}`));
-          this.feedLine(
-            tp.warning(
-              `  ⚠ Response is ${sizeKB.toFixed(1)}KB — saved to temp file:`,
-            ),
-          );
-          this.feedLine(tp.muted(`  ${tmpFile}`));
-          this.feedLine(tp.muted(`  ${"─".repeat(40)}`));
-        } else if (cleaned) {
+        if (cleaned) {
           this.feedMarkdown(cleaned);
         } else {
           this.feedLine(
