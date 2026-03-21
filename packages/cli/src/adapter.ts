@@ -6,6 +6,7 @@
  * and translates between the orchestrator's protocol and the agent's native API.
  */
 
+import { platform } from "node:os";
 import { Indexer, search, type SearchResult } from "@teammates/recall";
 import type { TaskResult, TeammateConfig } from "./types.js";
 
@@ -159,6 +160,8 @@ export function buildTeammatePrompt(
     services?: InstalledService[];
     sessionFile?: string;
     recallResults?: SearchResult[];
+    /** Contents of USER.md — injected just before the task. */
+    userProfile?: string;
     /** Token budget for the prompt wrapper (default 64k). Task is excluded. */
     tokenBudget?: number;
   },
@@ -290,9 +293,25 @@ export function buildTeammatePrompt(
   // ── Output protocol (required) ──────────────────────────────────
   parts.push(`## Output Protocol (CRITICAL)\n\n**Your #1 job is to produce a visible text response.** Session updates and memory writes are secondary — they support continuity but are not the deliverable. The user sees ONLY your text output. If you update files but return no text, the user sees an empty message and your work is invisible.\n\nFormat your response as:\n\n\`\`\`\nTO: user\n# <Subject line>\n\n<Body — full markdown response>\n\`\`\`\n\n**Handoffs:** To hand off work to a teammate, include a fenced handoff block anywhere in your response:\n\n\`\`\`\n\`\`\`handoff\n@<teammate>\n<task description — what you need them to do, with full context>\n\`\`\`\n\`\`\`\n\n**Rules:**\n- **You MUST end your turn with visible text output.** A turn that ends with only tool calls and no text is a failed turn.\n- The \`# Subject\` line is REQUIRED — it becomes the message title.\n- Always write a substantive body. Never return just the subject.\n- Use markdown: headings, lists, code blocks, bold, etc.\n- Do as much work as you can before handing off.\n- Only hand off to teammates listed in "Your Team" above.\n- The handoff block can appear anywhere in your response — it will be detected automatically.\n\n---\n`);
 
-  // ── Current date/time (required, small) ─────────────────────────
+  // ── Current date/time + environment (required, small) ───────────
   const now = new Date();
-  parts.push(`**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})\n**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}\n\n---\n`);
+  const os = platform();
+  const osLabel = os === "win32" ? "Windows" : os === "darwin" ? "macOS" : "Linux";
+  const slashNote = os === "win32"
+    ? "Use backslashes (`\\`) in file paths."
+    : "Use forward slashes (`/`) in file paths.";
+
+  // Extract timezone from USER.md if available
+  const tzMatch = options?.userProfile?.match(/\*\*Primary Timezone:\*\*\s*(.+)/);
+  const userTimezone = tzMatch?.[1]?.trim();
+  const tzLine = userTimezone ? `\n**Timezone:** ${userTimezone}` : "";
+
+  parts.push(`**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})\n**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}${tzLine}\n**Environment:** ${osLabel} — ${slashNote}\n\n---\n`);
+
+  // ── User profile (always included when present) ────────────────
+  if (options?.userProfile?.trim()) {
+    parts.push(`## User Profile\n\n${options.userProfile.trim()}\n\n---\n`);
+  }
 
   // ── Task (always included, excluded from budget) ────────────────
   parts.push(`## Task\n\n${taskPrompt}\n\n---\n\n**REMINDER: After completing the task and updating session/memory files, you MUST produce a text response starting with \`TO: user\`. An empty response is a bug.**`);

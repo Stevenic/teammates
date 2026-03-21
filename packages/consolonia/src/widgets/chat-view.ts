@@ -485,6 +485,10 @@ export class ChatView extends Control {
   /** Scroll the feed by a delta (positive = down, negative = up). */
   scrollFeed(delta: number): void {
     this._feedScrollOffset = Math.max(0, this._feedScrollOffset + delta);
+    // Clear selection when scrolling (unless actively drag-selecting)
+    if (!this._selecting && this._hasSelection()) {
+      this.clearSelection();
+    }
     this.invalidate();
   }
 
@@ -738,6 +742,7 @@ export class ChatView extends Control {
               0,
               Math.min(this._feedScrollOffset, this._maxScroll),
             );
+            if (this._hasSelection()) this.clearSelection();
             this.invalidate();
           }
           return true;
@@ -750,6 +755,7 @@ export class ChatView extends Control {
           const clampedPos = Math.max(0, Math.min(newThumbPos, maxThumbPos));
           const ratio = maxThumbPos > 0 ? clampedPos / maxThumbPos : 0;
           this._feedScrollOffset = Math.round(ratio * this._maxScroll);
+          if (this._hasSelection()) this.clearSelection();
           this.invalidate();
           return true;
         }

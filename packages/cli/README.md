@@ -164,15 +164,31 @@ class MyAdapter implements AgentAdapter {
 
 Or add a preset to `cli-proxy.ts` for any CLI agent that accepts a prompt and runs to completion.
 
+## Startup Lifecycle
+
+The CLI startup runs in two phases:
+
+**Phase 1 — Pre-TUI (console I/O)**
+1. **User profile setup** — Prompts for alias (required), name, role, experience, preferences, context. Creates `USER.md` and a user avatar folder at `.teammates/<alias>/` with `SOUL.md` (`**Type:** human`).
+2. **Team onboarding** (if no `.teammates/` exists) — Offers New team / Import / Solo / Exit. Onboarding agents run non-interactively to completion.
+3. **Orchestrator init** — Loads existing teammates from `.teammates/`, registers user avatar with `type: "human"` and `presence: "online"`.
+
+**Phase 2 — TUI (Consolonia)**
+4. Animated startup banner with roster
+5. REPL starts — routing, slash commands, handoff approval
+
+All user interaction during Phase 1 uses plain console I/O (readline + ora spinners), avoiding mouse tracking issues that would occur inside the TUI.
+
 ## Architecture
 
 ```
 cli/src/
-  cli.ts            # Entry point, REPL, slash commands, wordwheel UI
-  orchestrator.ts   # Task routing, session management
+  cli.ts            # Entry point, startup lifecycle, REPL, slash commands, wordwheel UI
+  orchestrator.ts   # Task routing, session management, presence tracking
   adapter.ts        # AgentAdapter interface, prompt builder, handoff formatting
-  registry.ts       # Discovers teammates from .teammates/, loads SOUL.md + memory
-  types.ts          # Core types (TeammateConfig, TaskResult, HandoffEnvelope)
+  registry.ts       # Discovers teammates from .teammates/, loads SOUL.md + memory, type detection
+  types.ts          # Core types (TeammateConfig, TaskResult, HandoffEnvelope, TeammateType, PresenceState)
+  onboard.ts        # Template copying, team import, onboarding/adaptation prompts
   dropdown.ts       # Terminal dropdown/wordwheel widget
   adapters/
     cli-proxy.ts    # Generic subprocess adapter with agent presets

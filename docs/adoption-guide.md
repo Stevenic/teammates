@@ -43,12 +43,11 @@ cd your-project
 teammates claude       # or codex, aider, copilot
 ```
 
-On first run, the CLI will prompt you to set up your team. Choose **New team** and the agent will:
+On first run, the CLI walks you through two setup steps **before** the terminal UI starts:
 
-1. Analyze your codebase structure
-2. Propose a team roster
-3. Ask for your approval
-4. Create the `.teammates/` directory with all the files
+1. **User profile** — You'll be asked for an alias (required, used for `@mentions`), plus optional fields like name, role, and preferences. This creates your user avatar — a `.teammates/<alias>/` folder with `SOUL.md` marked `**Type:** human` — so you appear in the roster alongside your AI teammates.
+
+2. **Team setup** — Choose **New team** and the agent will analyze your codebase, propose a roster, get your approval, and scaffold everything. All onboarding agents run non-interactively (no additional prompts).
 
 **Key moment:** When the agent proposes the roster, push back if the domains are too narrow. Fewer teammates with broader scope is almost always better than many narrow specialists.
 

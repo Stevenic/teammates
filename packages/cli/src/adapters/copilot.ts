@@ -120,11 +120,22 @@ export class CopilotAdapter implements AgentAdapter {
         ? await queryRecallContext(teammatesDir, teammate.name, prompt)
         : undefined;
 
+      // Read USER.md for injection into the prompt
+      let userProfile: string | undefined;
+      if (teammatesDir) {
+        try {
+          userProfile = await readFile(join(teammatesDir, "USER.md"), "utf-8");
+        } catch {
+          // USER.md may not exist yet — that's fine
+        }
+      }
+
       fullPrompt = buildTeammatePrompt(teammate, prompt, {
         roster: this.roster,
         services: this.services,
         sessionFile,
         recallResults: recall?.results,
+        userProfile,
       });
     } else {
       // Raw agent mode — minimal wrapping

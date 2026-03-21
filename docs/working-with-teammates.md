@@ -285,9 +285,12 @@ Over time, teammates accumulate daily logs and typed memories. Compaction keeps 
 ```
 
 Shows:
-- All discovered teammates and their current state (idle, active, queued)
+- Your user avatar and all AI teammates with presence indicators (● online, ● offline, ● reachable)
+- Current state for each (idle, active, queued)
 - Active task details
 - Queued tasks
+
+Your user avatar always shows as online. AI teammates default to online when the CLI is running.
 
 Aliases: `/s`, `/queue`, `/qu`
 

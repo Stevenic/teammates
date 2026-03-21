@@ -38,3 +38,4 @@ Active projects are tracked in **[PROJECTS.md](PROJECTS.md)** — codename, spec
 - **[F1 — Temporal Awareness Spec](scribe/docs/specs/F1-temporal-awareness.md)** — `/catchup` command: "What happened?" queries with lens-based rendering. For Beacon implementation. _(added 2026-03-17)_
 - **[F3 — Decision Synthesis Spec](scribe/docs/specs/F3-decision-synthesis.md)** — Cross-teammate search with authority ranking + `/decision` command. For Beacon implementation. _(added 2026-03-17)_
 - **[Multi-Human Collaboration Spec](scribe/docs/specs/F-multi-human-collaboration.md)** — Design for human avatars, server architecture, handoff queues, presence, and GitHub integration. _(added 2026-03-19)_
+- **[P2 — Hands Spec](scribe/docs/specs/P2-hands.md)** — Cross-agent computer use via MCP server: screenshot, click, type, scroll, key, cursor tools. Work allocation across all 3 teammates. _(added 2026-03-20)_

@@ -61,7 +61,7 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 - `npm run build` — Compile TypeScript to `dist/` (in `cli/`)
 - `npm run dev` — Watch mode for development (in `cli/`)
-- `teammates <agent>` — Launch interactive REPL with an agent adapter (claude, codex, aider, echo)
+- `teammates` — Launch interactive REPL (agent adapter resolved from config or default)
 - `teammates --model <model>` — Override the agent model
 - `teammates --dir <path>` — Override `.teammates/` location
 
@@ -82,6 +82,18 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `/configure [service]` — Configure external services like GitHub (aliases: /config)
 - `/help` — All commands (aliases: /h, /?)
 - `/exit` — Exit session (aliases: /q, /quit)
+
+### Consolonia Capabilities
+
+- **Terminal buffer** — Pixel-level rendering with foreground/background color compositing and dirty-region redraw
+- **Layout engine** — Constraint-based layout with Box, Row, Column, and Stack containers
+- **ChatView widget** — Full-screen chat/REPL with banner, scrollable feed, progress messages, input box, dropdown suggestions, drag-to-select, and auto-scroll
+- **Markdown rendering** — Themed markdown with headings, lists, code blocks, tables, and inline markup (`*bold*`, `_italic_`, `` `code` ``, `~dim~`)
+- **TextInput widget** — Single-line input with cursor, history navigation, word-jump, clipboard, and per-character colorization
+- **Interview widget** — Interactive question/answer flow for onboarding and configuration
+- **Mouse tracking** — Click, scroll, move, and drag events with bracketed paste detection
+- **Styled text** — Chalk-like pen API for programmatic styling with ANSI color support
+- **Box-drawing** — Character merging for single, double, and mixed border styles
 
 ### File Patterns
 
@@ -143,3 +155,6 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `packages/cli/src/onboard.ts` — **Produces** the onboarding flow (`copyTemplateFiles`, `getOnboardingPrompt`) consumed by `/init`
 - `packages/cli/src/cli-utils.ts` — **Produces** extracted pure functions (`relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`) consumed by cli.ts
 - `packages/cli/src/adapters/copilot.ts` — **Produces** the `CopilotAdapter` for GitHub Copilot integration
+- `packages/cli/src/banner.ts` — **Produces** the `AnimatedBanner` class and `BannerInfo` interface consumed by cli.ts
+- `packages/cli/src/cli-args.ts` — **Produces** `parseCliArgs()`, `findTeammatesDir()`, `resolveAdapter()`, and `printUsage()` consumed by cli.ts
+- `packages/cli/src/theme.ts` — **Produces** theme configuration (`theme()`, `colorToHex()`, `tp` shortcuts) consumed by cli.ts and banner.ts

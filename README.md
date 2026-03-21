@@ -33,9 +33,18 @@ teammates aider        # Aider
 teammates copilot      # GitHub Copilot
 ```
 
-### 3. Onboard your team
+### 3. Set up your profile
 
-If this is your first time running the CLI in a project without a `.teammates/` directory, you'll be prompted to set up your team. The CLI offers four options:
+On first run, the CLI sets up your user profile **before** the terminal UI starts. You'll be asked for:
+
+- **Alias** (required) — your handle for `@mentions` and the roster (e.g., `stevenic`). Normalized to lowercase `[a-z0-9_-]`.
+- **Name, role, experience, preferences, context** (optional) — helps teammates tailor their communication style and technical depth.
+
+This creates a `USER.md` (gitignored) and a **user avatar folder** at `.teammates/<alias>/` with a `SOUL.md` marked `**Type:** human`. You appear in the roster and `/status` alongside your AI teammates.
+
+### 4. Onboard your team
+
+If this is a new project without a `.teammates/` directory, the CLI prompts you to set up your team (still pre-TUI):
 
 | Option | What it does |
 |---|---|
@@ -44,9 +53,9 @@ If this is your first time running the CLI in a project without a `.teammates/` 
 | **Solo mode** | Uses the agent without teammates — no `.teammates/` directory, no routing |
 | **Exit** | Quits without changes |
 
-After onboarding, the CLI asks 5 optional questions (name, role, experience level, preferences, current focus) to create a local `USER.md` profile. Teammates use this to tailor their communication style and technical depth. USER.md is gitignored and stays on your machine.
+All onboarding agents run non-interactively — they complete fully without additional prompts.
 
-### 4. Start working
+### 5. Start working
 
 Once your team is set up, you're in the REPL:
 
@@ -106,6 +115,10 @@ your-project/
     USER.md             # Who you are (gitignored, stays local)
     _standups/          # Shared async standup entries
     _tasks/             # Shared task queue
+    <your-alias>/       # Your avatar (Type: human) — appears in roster alongside AI teammates
+      SOUL.md           # Your profile and preferences
+      WISDOM.md         # (empty for humans)
+      memory/           # Your activity logs
     <teammate-name>/
       SOUL.md           # Identity, continuity, principles, boundaries, ownership
       WISDOM.md         # Distilled principles from compacted memories

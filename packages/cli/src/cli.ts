@@ -9,7 +9,7 @@
  *   teammates --dir <path>        Override .teammates/ location
  */
 
-import { exec as execCb, execSync } from "node:child_process";
+import { exec as execCb, execSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -22,7 +22,7 @@ import {
   concat,
   type DropdownItem,
   esc,
-  Interview,
+
   pen,
   renderMarkdown,
   type StyledSpan,
@@ -317,7 +317,7 @@ class TeammatesREPL {
     const entries = Array.from(this.activeTasks.values());
     const idx = this.statusRotateIndex % entries.length;
     const { teammate, task } = entries[idx];
-    const displayName = teammate === this.adapterName ? this.selfName : teammate;
+    const displayName = teammate === this.selfName ? this.adapterName : teammate;
 
     const spinChar =
       TeammatesREPL.SPINNER[this.statusFrame % TeammatesREPL.SPINNER.length];
@@ -1118,7 +1118,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       let m: RegExpExecArray | null;
       mentioned = [];
       while ((m = mentionRegex.exec(input)) !== null) {
-        const name = m[1];
+        // Remap adapter name alias → user avatar for routing
+        const name = (m[1] === this.adapterName && this.userAlias) ? this.selfName : m[1];
         if (allNames.includes(name) && !mentioned.includes(name)) {
           mentioned.push(name);
         }
@@ -1155,7 +1156,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     {
       const bg = this._userBg;
       const t = theme();
-      const displayName = match === this.adapterName ? this.selfName : match;
+      const displayName = match === this.selfName ? this.adapterName : match;
       this.feedUserLine(
         concat(
           pen.fg(t.textMuted).bg(bg)("  → "),
@@ -1189,22 +1190,16 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   // ─── Onboarding ───────────────────────────────────────────────────
 
   /**
-   * Interactive prompt when no .teammates/ directory is found.
-   * Returns the new .teammates/ path, or null if user chose to exit.
+   * Interactive prompt for team onboarding after user profile is set up.
+   * .teammates/ already exists at this point. Returns false if user chose to exit.
    */
-  private async promptOnboarding(
+  private async promptTeamOnboarding(
     adapter: AgentAdapter,
-  ): Promise<string | null> {
+    teammatesDir: string,
+  ): Promise<boolean> {
     const cwd = process.cwd();
-    const teammatesDir = join(cwd, ".teammates");
     const termWidth = process.stdout.columns || 100;
 
-    console.log();
-    this.printLogo([
-      chalk.bold("Teammates") + chalk.gray(` v${PKG_VERSION}`),
-      chalk.yellow("No .teammates/ directory found"),
-      chalk.gray(cwd),
-    ]);
     console.log();
     console.log(chalk.gray("─".repeat(termWidth)));
     console.log();
@@ -1241,13 +1236,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     if (choice === "4") {
       console.log(chalk.gray("  Goodbye."));
-      return null;
+      return false;
     }
 
     if (choice === "3") {
-      await mkdir(teammatesDir, { recursive: true });
-      console.log();
-      console.log(chalk.green("  ✔ ") + chalk.gray(` Created ${teammatesDir}`));
       console.log(
         chalk.gray(
           "  Running in solo mode — all tasks go to your agent.",
@@ -1255,20 +1247,17 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       );
       console.log(chalk.gray("  Run /init later to set up teammates."));
       console.log();
-      return teammatesDir;
+      return true;
     }
 
     if (choice === "2") {
-      // Import from another project
-      await mkdir(teammatesDir, { recursive: true });
       await this.runImport(cwd);
-      return teammatesDir;
+      return true;
     }
 
     // choice === "1": Run onboarding via the agent
-    await mkdir(teammatesDir, { recursive: true });
     await this.runOnboardingAgent(adapter, cwd);
-    return teammatesDir;
+    return true;
   }
 
   /**
@@ -1626,106 +1615,293 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   /**
-   * Run the user interview inside the ChatView using the Interview widget.
-   * Hides the normal input prompt until the interview completes.
+   * Pre-TUI user profile setup. Runs in the console before the ChatView is created.
+   * Offers GitHub-based or manual profile creation.
    */
-  private startUserInterview(
-    teammatesDir: string,
-    bannerWidget?: AnimatedBanner,
-  ): void {
-    if (!this.chatView) return;
+  private async runUserSetup(teammatesDir: string): Promise<void> {
+    const termWidth = process.stdout.columns || 100;
 
-    const t = theme();
-    const interview = new Interview({
-      title: "Quick intro — helps teammates tailor their work to you.",
-      subtitle: "(alias is required, press Enter to skip others)",
-      questions: [
-        {
-          key: "alias",
-          prompt: "Your alias",
-          placeholder: "e.g., stevenic — used as your avatar folder name",
-        },
-        { key: "name", prompt: "Your name" },
-        {
-          key: "role",
-          prompt: "Your role",
-          placeholder: "e.g., senior backend engineer",
-        },
-        {
-          key: "experience",
-          prompt: "Relevant experience",
-          placeholder: "e.g., 10 years Go, new to React",
-        },
-        {
-          key: "preferences",
-          prompt: "How you like to work",
-          placeholder: "e.g., terse responses, explain reasoning",
-        },
-        {
-          key: "context",
-          prompt: "Anything else",
-          placeholder: "e.g., solo dev, working on a rewrite",
-        },
-      ],
-      titleStyle: { fg: t.text },
-      subtitleStyle: { fg: t.textDim, italic: true },
-      promptStyle: { fg: t.accent },
-      answeredStyle: { fg: t.textMuted, italic: true },
-      inputStyle: { fg: t.text },
-      cursorStyle: { fg: t.cursorFg, bg: t.cursorBg },
-      placeholderStyle: { fg: t.textDim, italic: true },
-    });
+    console.log();
+    console.log(chalk.gray("─".repeat(termWidth)));
+    console.log();
+    console.log(chalk.white("  Set up your profile\n"));
+    console.log(
+      chalk.cyan("  1") +
+        chalk.gray(") ") +
+        chalk.white("Use GitHub account") +
+        chalk.gray(" — import your name and username from GitHub"),
+    );
+    console.log(
+      chalk.cyan("  2") +
+        chalk.gray(") ") +
+        chalk.white("Manual setup") +
+        chalk.gray(" — enter your details manually"),
+    );
+    console.log(
+      chalk.cyan("  3") +
+        chalk.gray(") ") +
+        chalk.white("Skip") +
+        chalk.gray(" — set up later with /user"),
+    );
+    console.log();
 
-    this.chatView.setInputOverride(interview);
-    if (this.app) this.app.refresh();
+    const choice = await this.askChoice("Pick an option (1/2/3): ", [
+      "1",
+      "2",
+      "3",
+    ]);
 
-    interview.on("complete", (answers: Record<string, string>) => {
-      // Alias is required — normalize to lowercase, strip non-alphanumeric
-      const alias = (answers.alias || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").trim();
-      if (!alias) {
-        if (this.chatView) {
-          this.chatView.setInputOverride(null);
-          this.chatView.appendStyledToFeed(
-            concat(tp.error("  ✘ "), tp.text("Alias is required. Run /user to try again.")),
-          );
-        }
-        if (bannerWidget) bannerWidget.releaseHold();
-        if (this.app) this.app.refresh();
-        return;
+    if (choice === "3") {
+      console.log(chalk.gray("  Skipped — run /user to set up your profile later."));
+      console.log();
+      return;
+    }
+
+    if (choice === "1") {
+      await this.setupGitHubProfile(teammatesDir);
+    } else {
+      await this.setupManualProfile(teammatesDir);
+    }
+  }
+
+  /**
+   * GitHub-based profile setup. Ensures gh is installed and authenticated,
+   * then fetches user info from the GitHub API to create the profile.
+   */
+  private async setupGitHubProfile(teammatesDir: string): Promise<void> {
+    console.log();
+
+    // Step 1: Check if gh is installed
+    let ghInstalled = false;
+    try {
+      execSync("gh --version", { stdio: "pipe" });
+      ghInstalled = true;
+    } catch {
+      // not installed
+    }
+
+    if (!ghInstalled) {
+      console.log(chalk.yellow("  GitHub CLI is not installed.\n"));
+
+      const plat = process.platform;
+      console.log(chalk.white("  Run this in another terminal:"));
+      if (plat === "win32") {
+        console.log(chalk.cyan("    winget install --id GitHub.cli"));
+      } else if (plat === "darwin") {
+        console.log(chalk.cyan("    brew install gh"));
+      } else {
+        console.log(chalk.cyan("    sudo apt install gh"));
+        console.log(chalk.gray("    (or see https://cli.github.com)"));
+      }
+      console.log();
+
+      const answer = await this.askChoice(
+        "Press Enter when done, or s to skip: ",
+        ["", "s", "S"],
+      );
+      if (answer.toLowerCase() === "s") {
+        console.log(chalk.gray("  Falling back to manual setup.\n"));
+        return this.setupManualProfile(teammatesDir);
       }
 
-      // Write USER.md
-      const userMdPath = join(teammatesDir, "USER.md");
-      const lines = ["# User\n"];
-      lines.push(`- **Alias:** ${alias}`);
-      lines.push(`- **Name:** ${answers.name || "_not provided_"}`);
-      lines.push(`- **Role:** ${answers.role || "_not provided_"}`);
-      lines.push(`- **Experience:** ${answers.experience || "_not provided_"}`);
-      lines.push(
-        `- **Preferences:** ${answers.preferences || "_not provided_"}`,
-      );
-      lines.push(`- **Context:** ${answers.context || "_not provided_"}`);
-      writeFileSync(userMdPath, `${lines.join("\n")}\n`, "utf-8");
-
-      // Create avatar folder with SOUL.md & WISDOM.md
-      this.createUserAvatar(teammatesDir, alias, answers);
-
-      // Remove override and restore normal input
-      if (this.chatView) {
-        this.chatView.setInputOverride(null);
-        this.chatView.appendStyledToFeed(
-          concat(
-            tp.success("  ✔  "),
-            tp.dim(`Saved USER.md + avatar @${alias} — update anytime with /user`),
+      // Re-check
+      try {
+        execSync("gh --version", { stdio: "pipe" });
+        ghInstalled = true;
+        console.log(chalk.green("  ✔  GitHub CLI installed"));
+      } catch {
+        console.log(
+          chalk.yellow(
+            "  GitHub CLI still not found. You may need to restart your terminal.",
           ),
         );
+        console.log(chalk.gray("  Falling back to manual setup.\n"));
+        return this.setupManualProfile(teammatesDir);
+      }
+    } else {
+      console.log(chalk.green("  ✔  GitHub CLI installed"));
+    }
+
+    // Step 2: Check auth
+    let authed = false;
+    try {
+      execSync("gh auth status", { stdio: "pipe" });
+      authed = true;
+    } catch {
+      // not authenticated
+    }
+
+    if (!authed) {
+      console.log();
+      console.log(
+        chalk.gray("  Authenticating with GitHub...\n"),
+      );
+
+      const result = spawnSync("gh", ["auth", "login", "--web", "--git-protocol", "https"], {
+        stdio: "inherit",
+        shell: true,
+      });
+
+      if (result.status !== 0) {
+        console.log(
+          chalk.yellow("  Authentication failed or was cancelled."),
+        );
+        console.log(chalk.gray("  Falling back to manual setup.\n"));
+        return this.setupManualProfile(teammatesDir);
       }
 
-      // Release the banner hold so commands animate in
-      if (bannerWidget) bannerWidget.releaseHold();
+      // Verify
+      try {
+        execSync("gh auth status", { stdio: "pipe" });
+        authed = true;
+      } catch {
+        console.log(
+          chalk.yellow("  Authentication could not be verified."),
+        );
+        console.log(chalk.gray("  Falling back to manual setup.\n"));
+        return this.setupManualProfile(teammatesDir);
+      }
+    }
 
-      if (this.app) this.app.refresh();
-    });
+    console.log(chalk.green("  ✔  GitHub authenticated"));
+
+    // Step 3: Fetch user info from GitHub API
+    let login = "";
+    let name = "";
+    try {
+      const json = execSync("gh api user", {
+        stdio: "pipe",
+        encoding: "utf-8",
+      });
+      const user = JSON.parse(json);
+      login = (user.login || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      name = user.name || user.login || "";
+    } catch {
+      console.log(
+        chalk.yellow("  Could not fetch GitHub user info."),
+      );
+      console.log(chalk.gray("  Falling back to manual setup.\n"));
+      return this.setupManualProfile(teammatesDir);
+    }
+
+    if (!login) {
+      console.log(chalk.yellow("  No GitHub username found."));
+      console.log(chalk.gray("  Falling back to manual setup.\n"));
+      return this.setupManualProfile(teammatesDir);
+    }
+
+    console.log(
+      chalk.green(`  ✔  Authenticated as `) +
+        chalk.cyan(`@${login}`) +
+        (name && name !== login ? chalk.gray(` (${name})`) : ""),
+    );
+    console.log();
+
+    // Ask for remaining fields since GitHub doesn't provide them
+    const role = await this.askInput("Your role (optional, press Enter to skip): ");
+    const experience = await this.askInput(
+      "Relevant experience (e.g., 10 years Go, new to React): ",
+    );
+    const preferences = await this.askInput(
+      "How you like to work (e.g., terse responses): ",
+    );
+    // Auto-detect timezone
+    const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timezone = await this.askInput(
+      `Primary timezone${detectedTz ? ` [${detectedTz}]` : ""}: `,
+    );
+
+    const answers: Record<string, string> = {
+      alias: login,
+      name: name || login,
+      role: role || "",
+      experience: experience || "",
+      preferences: preferences || "",
+      timezone: timezone || detectedTz || "",
+    };
+
+    this.writeUserProfile(teammatesDir, login, answers);
+    this.createUserAvatar(teammatesDir, login, answers);
+
+    console.log(
+      chalk.green("  ✔  ") +
+        chalk.gray(`Profile created — avatar @${login}`),
+    );
+    console.log();
+  }
+
+  /**
+   * Manual (console-based) profile setup. Collects fields via askInput().
+   */
+  private async setupManualProfile(teammatesDir: string): Promise<void> {
+    console.log();
+    console.log(
+      chalk.gray("  (alias is required, press Enter to skip others)\n"),
+    );
+
+    const aliasRaw = await this.askInput("Your alias (e.g., alex): ");
+    const alias = aliasRaw.toLowerCase().replace(/[^a-z0-9_-]/g, "").trim();
+    if (!alias) {
+      console.log(
+        chalk.yellow("  Alias is required. Run /user to try again.\n"),
+      );
+      return;
+    }
+
+    const name = await this.askInput("Your name: ");
+    const role = await this.askInput("Your role (e.g., senior backend engineer): ");
+    const experience = await this.askInput(
+      "Relevant experience (e.g., 10 years Go, new to React): ",
+    );
+    const preferences = await this.askInput(
+      "How you like to work (e.g., terse responses): ",
+    );
+    // Auto-detect timezone
+    const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timezone = await this.askInput(
+      `Primary timezone${detectedTz ? ` [${detectedTz}]` : ""}: `,
+    );
+
+    const answers: Record<string, string> = {
+      alias,
+      name,
+      role,
+      experience,
+      preferences,
+      timezone: timezone || detectedTz || "",
+    };
+
+    this.writeUserProfile(teammatesDir, alias, answers);
+    this.createUserAvatar(teammatesDir, alias, answers);
+
+    console.log();
+    console.log(
+      chalk.green("  ✔  ") +
+        chalk.gray(`Profile created — avatar @${alias}`),
+    );
+    console.log(chalk.gray("  Update anytime with /user"));
+    console.log();
+  }
+
+  /**
+   * Write USER.md from collected answers.
+   */
+  private writeUserProfile(
+    teammatesDir: string,
+    alias: string,
+    answers: Record<string, string>,
+  ): void {
+    const userMdPath = join(teammatesDir, "USER.md");
+    const lines = ["# User\n"];
+    lines.push(`- **Alias:** ${alias}`);
+    lines.push(`- **Name:** ${answers.name || "_not provided_"}`);
+    lines.push(`- **Role:** ${answers.role || "_not provided_"}`);
+    lines.push(`- **Experience:** ${answers.experience || "_not provided_"}`);
+    lines.push(
+      `- **Preferences:** ${answers.preferences || "_not provided_"}`,
+    );
+    lines.push(`- **Primary Timezone:** ${answers.timezone || "_not provided_"}`);
+    writeFileSync(userMdPath, `${lines.join("\n")}\n`, "utf-8");
   }
 
   /**
@@ -1743,10 +1919,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     mkdirSync(memoryDir, { recursive: true });
 
     const name = answers.name || alias;
-    const role = answers.role || "Team member";
+    const role = answers.role || "I'm a human working on this project";
     const experience = answers.experience || "";
     const preferences = answers.preferences || "";
-    const context = answers.context || "";
+    const timezone = answers.timezone || "";
 
     // Write SOUL.md
     const soulLines = [
@@ -1760,9 +1936,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     ];
     if (experience) soulLines.push(`**Experience:** ${experience}`);
     if (preferences) soulLines.push(`**Preferences:** ${preferences}`);
-    if (context) {
-      soulLines.push("", "## Context", "", context);
-    }
+    if (timezone) soulLines.push(`**Primary Timezone:** ${timezone}`);
     soulLines.push("");
 
     const soulPath = join(avatarDir, "SOUL.md");
@@ -1776,8 +1950,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       "utf-8",
     );
 
-    // Register the avatar in the orchestrator so it appears in /status immediately
-    this.registerUserAvatar(teammatesDir, alias);
+    // Avatar registration happens later in start() after the orchestrator is initialized.
+    // During pre-TUI setup, the orchestrator doesn't exist yet.
   }
 
   /**
@@ -1805,7 +1979,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     // Read the avatar's SOUL.md if it exists
     let soul = "";
-    let role = "Team member";
+    let role = "I'm a human working on this project";
     try {
       soul = readFileSync(join(avatarDir, "SOUL.md"), "utf-8");
       const roleMatch = soul.match(/\*\*Role:\*\*\s*(.+)/);
@@ -2047,12 +2221,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     }
 
     for (const name of teammates) {
-      if (name.toLowerCase().startsWith(lower)) {
+      // For user avatar, display and match using the adapter name alias
+      const display = name === this.userAlias ? this.adapterName : name;
+      if (display.toLowerCase().startsWith(lower)) {
         const t = this.orchestrator.getRegistry().get(name);
         items.push({
-          label: `@${name}`,
+          label: `@${display}`,
           description: t?.role ?? "",
-          completion: `${before}@${name} ${after.replace(/^\s+/, "")}`,
+          completion: `${before}@${display} ${after.replace(/^\s+/, "")}`,
         });
       }
     }
@@ -2213,15 +2389,31 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     });
     this.adapter = adapter;
 
-    // No .teammates/ found — offer onboarding or solo mode
+    // Detect whether this is a brand-new project (no .teammates/ at all)
+    const isNewProject = !teammatesDir;
     if (!teammatesDir) {
-      teammatesDir = await this.promptOnboarding(adapter);
-      if (!teammatesDir) return; // user chose to exit
+      teammatesDir = join(process.cwd(), ".teammates");
+      await mkdir(teammatesDir, { recursive: true });
+
+      // Show welcome logo for new projects
+      console.log();
+      this.printLogo([
+        chalk.bold("Teammates") + chalk.gray(` v${PKG_VERSION}`),
+        chalk.yellow("New project setup"),
+        chalk.gray(process.cwd()),
+      ]);
     }
 
-    // Check if USER.md needs setup — we'll run the interview inside the
-    // ChatView after the UI loads (not before).
-    const pendingUserInterview = this.needsUserSetup(teammatesDir);
+    // Always onboard the user first if USER.md is missing
+    if (this.needsUserSetup(teammatesDir)) {
+      await this.runUserSetup(teammatesDir);
+    }
+
+    // Team onboarding if .teammates/ was missing
+    if (isNewProject) {
+      const cont = await this.promptTeamOnboarding(adapter, teammatesDir);
+      if (!cont) return; // user chose to exit
+    }
 
     // Init orchestrator
     this.teammatesDir = teammatesDir;
@@ -2245,7 +2437,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       registry.register({
         name: this.adapterName,
         type: "ai",
-        role: "General-purpose coding agent",
+        role: "Coding agent that performs tasks on your behalf.",
         soul: "",
         wisdom: "",
         dailyLogs: [],
@@ -2284,8 +2476,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       borderStyle: (s) => chalk.gray(s),
       colorize: (value) => {
         const validNames = new Set([
-          ...this.orchestrator.listTeammates().filter((n) => n !== this.adapterName),
-          this.selfName,
+          ...this.orchestrator.listTeammates().filter((n) => n !== this.adapterName && n !== this.userAlias),
+          this.adapterName,
           "everyone",
         ]);
         return value
@@ -2337,13 +2529,19 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     const reg = this.orchestrator.getRegistry();
     const statuses = this.orchestrator.getAllStatuses();
     const bannerTeammates: { name: string; role: string; presence: import("./types.js").PresenceState }[] = [];
+    // Add user avatar first (displayed as adapter name alias)
+    if (this.userAlias) {
+      const ut = reg.get(this.userAlias);
+      const up = statuses.get(this.userAlias)?.presence ?? "online";
+      bannerTeammates.push({ name: this.adapterName, role: "Coding agent that performs tasks on your behalf.", presence: up });
+    }
     for (const name of names) {
       const t = reg.get(name);
       const p = statuses.get(name)?.presence ?? "online";
       bannerTeammates.push({ name, role: t?.role ?? "", presence: p });
     }
     const bannerWidget = new AnimatedBanner({
-      displayName: `@${this.selfName}`,
+      displayName: `@${this.adapterName}`,
       teammateCount: names.length,
       cwd: process.cwd(),
       teammates: bannerTeammates,
@@ -2377,8 +2575,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         }
         // Colorize @mentions only if they reference a valid teammate or the user
         const validNames = new Set([
-          ...this.orchestrator.listTeammates().filter((n) => n !== this.adapterName),
-          this.selfName,
+          ...this.orchestrator.listTeammates().filter((n) => n !== this.adapterName && n !== this.userAlias),
+          this.adapterName,
           "everyone",
         ]);
         const mentionPattern = /@(\w+)/g;
@@ -2608,16 +2806,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     bannerWidget.onDirty = () => this.app?.refresh();
     const runPromise = this.app.run();
 
-    // Hold the banner animation before commands if we need to run the interview
-    if (pendingUserInterview) {
-      bannerWidget.hold();
-    }
     bannerWidget.start();
-
-    // Run user interview inside the ChatView if USER.md needs setup
-    if (pendingUserInterview) {
-      this.startUserInterview(teammatesDir, bannerWidget);
-    }
 
     await runPromise;
   }
@@ -2705,7 +2894,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     let pm: RegExpExecArray | null;
     const preMentions: string[] = [];
     while ((pm = preMentionRegex.exec(rawLine)) !== null) {
-      const name = pm[1];
+      // Remap adapter name alias → user avatar for routing
+      const name = (pm[1] === this.adapterName && this.userAlias) ? this.selfName : pm[1];
       if (allNames.includes(name) && !preMentions.includes(name)) {
         preMentions.push(name);
       }
@@ -2811,7 +3001,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.feedLine(concat(tp.bold("  Teammates"), tp.muted(` v${PKG_VERSION}`)));
     this.feedLine(
       concat(
-        tp.text(`  @${this.selfName}`),
+        tp.text(`  @${this.adapterName}`),
         tp.muted(
           ` · ${teammates.length} teammate${teammates.length === 1 ? "" : "s"}`,
         ),
@@ -2836,6 +3026,19 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     // Roster (with presence indicators)
     this.feedLine();
     const statuses = this.orchestrator.getAllStatuses();
+    // Show user avatar first (displayed as adapter name alias)
+    if (this.userAlias) {
+      const up = statuses.get(this.userAlias)?.presence ?? "online";
+      const udot = up === "online" ? tp.success("●") : up === "reachable" ? tp.warning("●") : tp.error("●");
+      this.feedLine(
+        concat(
+          tp.text("  "),
+          udot,
+          tp.accent(` @${this.adapterName.padEnd(14)}`),
+          tp.muted("Coding agent that performs tasks on your behalf."),
+        ),
+      );
+    }
     for (const name of teammates) {
       const t = registry.get(name);
       if (t) {
@@ -3257,7 +3460,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
         // Header: "teammate: subject"
         const subject = event.result.summary || "Task completed";
-        const displayTeammate = event.result.teammate === this.adapterName ? this.selfName : event.result.teammate;
+        const displayTeammate = event.result.teammate === this.selfName ? this.adapterName : event.result.teammate;
         this.feedLine(
           concat(tp.accent(`${displayTeammate}: `), tp.text(subject)),
         );
@@ -3345,7 +3548,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         this.activeTasks.delete(event.teammate);
         if (this.activeTasks.size === 0) this.stopStatusAnimation();
         if (!this.chatView) this.input.deactivateAndErase();
-        const displayErr = event.teammate === this.adapterName ? this.selfName : event.teammate;
+        const displayErr = event.teammate === this.selfName ? this.adapterName : event.teammate;
         this.feedLine(tp.error(`  ✖  ${displayErr}: ${event.error}`));
         this.showPrompt();
         break;
@@ -3360,13 +3563,12 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.feedLine(tp.bold("  Status"));
     this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
 
-    // Show user avatar first if present
+    // Show user avatar first if present (displayed as adapter name alias)
     if (this.userAlias) {
       const userStatus = statuses.get(this.userAlias);
       if (userStatus) {
-        this.feedLine(concat(tp.success("●"), tp.accent(` @${this.userAlias}`), tp.muted(" (you)")));
-        const t = registry.get(this.userAlias);
-        if (t) this.feedLine(tp.muted(`    ${t.role}`));
+        this.feedLine(concat(tp.success("●"), tp.accent(` @${this.adapterName}`), tp.muted(" (you)")));
+        this.feedLine(tp.muted("    Coding agent that performs tasks on your behalf."));
         this.feedLine();
       }
     }
@@ -3532,7 +3734,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     }
 
     const removed = this.taskQueue.splice(n - 1, 1)[0];
-    const cancelDisplay = removed.teammate === this.adapterName ? this.selfName : removed.teammate;
+    const cancelDisplay = removed.teammate === this.selfName ? this.adapterName : removed.teammate;
     this.feedLine(
       concat(
         tp.muted("  Cancelled: "),
@@ -3602,7 +3804,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         this.activeTasks.delete(agent);
         if (this.activeTasks.size === 0) this.stopStatusAnimation();
         const msg = err?.message ?? String(err);
-        const displayAgent = agent === this.adapterName ? this.selfName : agent;
+        const displayAgent = agent === this.selfName ? this.adapterName : agent;
         this.feedLine(tp.error(`  ✖  @${displayAgent}: ${msg}`));
         this.refreshView();
       }
@@ -4352,7 +4554,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     this.feedLine(
       concat(
         tp.muted("  Queued USER.md update → "),
-        tp.accent(`@${this.selfName}`),
+        tp.accent(`@${this.adapterName}`),
       ),
     );
     this.feedLine();
@@ -4374,7 +4576,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       task: question,
     });
     this.feedLine(
-      concat(tp.muted("  Side question → "), tp.accent(`@${this.selfName}`)),
+      concat(tp.muted("  Side question → "), tp.accent(`@${this.adapterName}`)),
     );
     this.feedLine();
     this.refreshView();
