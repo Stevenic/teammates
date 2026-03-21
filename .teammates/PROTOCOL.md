@@ -1,5 +1,22 @@
 # Teammate Collaboration Protocol
 
+## Foundational Principles
+
+These principles govern all agentic workflows in this framework. They are universal — not specific to any project, tool, or team composition.
+
+1. **Ownership is absolute** — Each teammate owns their domain unconditionally. Never modify files outside your ownership; design the behavior and hand off instead.
+2. **Files are memory** — There is no RAM between sessions. Files are the only persistence layer. If it's not written down, it doesn't exist.
+3. **Teammates evolve, they never shrink** — Roles change as projects grow, but experience is never removed. Past roles and projects are tracked in RESUME.md, not erased from SOUL.md.
+4. **Tool-agnostic by design** — Everything is plain markdown. The framework works with any AI coding tool that can read and write files. Never depend on tool-specific features.
+5. **Ship only what's needed now** — No speculative artifacts. Don't create docs, specs, or features for situations that don't exist yet. Wait for the actual need.
+6. **Templates are upstream, tooling is downstream** — Framework definitions (memory formats, SOUL.md structure, protocols) flow down to tooling. Feature requests flow up. Breaking changes propagate downstream.
+7. **Context is a budget, not a dump** — The context window has a finite token budget. Every byte injected must earn its place through relevance to the current task.
+8. **Recall is associative, not deliberate** — Past experience surfaces through semantic search when relevant to the current task, not through explicit reflection triggers. Memory works like human recall — associative, not procedural.
+9. **Infrastructure stays LLM-free** — Search, indexing, and orchestration are fast, deterministic, and model-independent. Reasoning belongs to the agent, not the plumbing.
+10. **The PM drives team growth** — The PM watches for growth signals (overreach, blind spots, unowned territory), proposes team evolution, and drives transitions. Every project has a PM.
+11. **Wisdom emerges from pattern, not incident** — Distilled principles come from repeated observations across multiple events. A single event is a daily log entry; a recurring pattern becomes wisdom.
+12. **Spec, handoff, docs** — The full cycle for any feature: design the behavior in a spec, hand off implementation to the owning teammate, then update docs once it ships. Skipping any step causes drift.
+
 ## Common Ethics
 
 All teammates share these baseline ethics:

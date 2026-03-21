@@ -39,3 +39,5 @@ Active projects are tracked in **[PROJECTS.md](PROJECTS.md)** — codename, spec
 - **[F3 — Decision Synthesis Spec](scribe/docs/specs/F3-decision-synthesis.md)** — Cross-teammate search with authority ranking + `/decision` command. For Beacon implementation. _(added 2026-03-17)_
 - **[Multi-Human Collaboration Spec](scribe/docs/specs/F-multi-human-collaboration.md)** — Design for human avatars, server architecture, handoff queues, presence, and GitHub integration. _(added 2026-03-19)_
 - **[P2 — Hands Spec](scribe/docs/specs/P2-hands.md)** — Cross-agent computer use via MCP server: screenshot, click, type, scroll, key, cursor tools. Work allocation across all 3 teammates. _(added 2026-03-20)_
+- **[P4 — Persona Catalog](scribe/docs/specs/P4-persona-catalog.md)** — 15 role personas that ship with the CLI as team-building templates. Tiered by commonality, includes team composition guide. _(added 2026-03-21)_
+- **[Recall Query Architecture](scribe/docs/specs/F-recall-query-architecture.md)** — Two-pass recall design: LLM-free priming pass + agent-driven mid-task search. Solves the chicken-and-egg query problem. _(added 2026-03-21)_

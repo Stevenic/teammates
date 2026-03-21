@@ -25,6 +25,14 @@ export interface SearchOptions {
   typedMemoryBoost?: number;
 }
 
+/** Options for multi-query search with deduplication. */
+export interface MultiSearchOptions extends SearchOptions {
+  /** Additional queries beyond the primary (keyword-focused, conversation-derived, etc.) */
+  additionalQueries?: string[];
+  /** Pre-matched memory catalog results to merge into the final set */
+  catalogMatches?: SearchResult[];
+}
+
 export interface SearchResult {
   teammate: string;
   uri: string;
@@ -175,4 +183,62 @@ export async function search(
   // Sort by score descending, return top results
   allResults.sort((a, b) => b.score - a.score);
   return allResults.slice(0, maxResults + recencyDepth); // allow extra slots for recency results
+}
+
+/**
+ * Multi-query search with deduplication and catalog merge.
+ *
+ * Fires the primary query plus any additional queries (keyword-focused,
+ * conversation-derived) and merges results. Catalog matches (from frontmatter
+ * text matching) are also merged. Deduplication is by URI — when the same
+ * URI appears from multiple queries, the highest score wins.
+ */
+export async function multiSearch(
+  primaryQuery: string,
+  options: MultiSearchOptions,
+): Promise<SearchResult[]> {
+  const additionalQueries = options.additionalQueries ?? [];
+  const catalogMatches = options.catalogMatches ?? [];
+  const maxResults = options.maxResults ?? 5;
+  const recencyDepth = options.recencyDepth ?? 2;
+
+  // Fire all queries — primary gets full treatment (recency pass + semantic)
+  // Additional queries get semantic only (skipRecency to avoid duplicate weeklies)
+  const primaryResults = await search(primaryQuery, options);
+
+  // Collect all results keyed by URI, keeping highest score
+  const bestByUri = new Map<string, SearchResult>();
+  for (const r of primaryResults) {
+    const existing = bestByUri.get(r.uri);
+    if (!existing || r.score > existing.score) {
+      bestByUri.set(r.uri, r);
+    }
+  }
+
+  // Fire additional queries (reuse same search options minus recency to avoid dupes)
+  for (const query of additionalQueries) {
+    const results = await search(query, {
+      ...options,
+      recencyDepth: 0, // primary already got the weekly summaries
+    });
+    for (const r of results) {
+      const existing = bestByUri.get(r.uri);
+      if (!existing || r.score > existing.score) {
+        bestByUri.set(r.uri, r);
+      }
+    }
+  }
+
+  // Merge catalog matches (frontmatter text-matched results)
+  for (const r of catalogMatches) {
+    const existing = bestByUri.get(r.uri);
+    if (!existing || r.score > existing.score) {
+      bestByUri.set(r.uri, r);
+    }
+  }
+
+  // Sort by score descending, return top results
+  const merged = [...bestByUri.values()];
+  merged.sort((a, b) => b.score - a.score);
+  return merged.slice(0, maxResults + recencyDepth);
 }

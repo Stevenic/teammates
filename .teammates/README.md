@@ -1,6 +1,6 @@
 # Teammates AI Team
 
-Three teammates covering the teammates framework: Beacon owns the recall search package and the CLI orchestrator, Scribe owns the templates and onboarding system, and Pipeline owns the CI/CD pipelines and release automation.
+Three teammates covering the teammates framework: Scribe is the PM owning strategy, documentation, and project planning. Beacon is the Software Engineer owning all coding tasks. Pipeline is DevOps owning everything related to shipping code.
 
 ## Roster
 
@@ -8,9 +8,9 @@ Three teammates covering the teammates framework: Beacon owns the recall search 
 
 | Name | Persona | Primary Ownership | Last Active |
 |---|---|---|---|
-| **Beacon** | Teammates platform engineer | `recall/src/**`, `cli/src/**`, `consolonia/src/**` + package configs | 2026-03-15 |
-| **Scribe** | Framework & onboarding architect | `template/**`, `ONBOARDING.md`, `README.md` | 2026-03-15 |
-| **Pipeline** | DevOps & CI/CD engineer | `.github/workflows/**`, `.github/**` | 2026-03-15 |
+| **Scribe** | Project Manager (PM) | Strategy, docs, specs, project planning | 2026-03-21 |
+| **Beacon** | Software Engineer | `recall/src/**`, `cli/src/**`, `consolonia/src/**` + all code | 2026-03-15 |
+| **Pipeline** | DevOps | `.github/workflows/**`, shipping, CI/CD, releases | 2026-03-15 |
 
 ## Dependency Flow
 
@@ -29,10 +29,9 @@ Scribe defines the framework structure (templates, onboarding instructions). Bea
 
 | Keywords | Teammate |
 |---|---|
-| recall, search, embeddings, vectra, indexer, vector, semantic | **Beacon** |
-| cli, orchestrator, adapter, REPL, handoff, agent, routing, queue, consolonia, terminal UI | **Beacon** |
-| template, onboarding, SOUL.md, WISDOM.md, protocol, framework, roster, markdown | **Scribe** |
-| ci, cd, pipeline, workflow, actions, release, publish, deploy, build automation | **Pipeline** |
+| strategy, roadmap, specs, planning, priorities, docs, documentation, template, onboarding, SOUL.md, WISDOM.md, protocol, framework, roster, markdown | **Scribe** |
+| recall, search, embeddings, vectra, indexer, vector, semantic, cli, orchestrator, adapter, REPL, handoff, agent, routing, queue, consolonia, terminal UI, code, implementation, bug fix, feature | **Beacon** |
+| ci, cd, pipeline, workflow, actions, release, publish, deploy, build automation, shipping, containers, infrastructure | **Pipeline** |
 
 ## Structure
 

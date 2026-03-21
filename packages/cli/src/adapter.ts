@@ -7,7 +7,13 @@
  */
 
 import { platform } from "node:os";
-import { Indexer, search, type SearchResult } from "@teammates/recall";
+import {
+  Indexer,
+  buildQueryVariations,
+  matchMemoryCatalog,
+  multiSearch,
+  type SearchResult,
+} from "@teammates/recall";
 import type { TaskResult, TeammateConfig } from "./types.js";
 
 export interface AgentAdapter {
@@ -72,23 +78,48 @@ export interface RecallContext {
 
 /**
  * Query the recall index for context relevant to the task prompt.
- * Returns search results that should be injected into the teammate prompt.
+ *
+ * Uses a multi-query strategy (Pass 1 from the recall query architecture):
+ * 1. Keyword extraction — generates focused queries from the task prompt
+ * 2. Conversation-aware queries — extracts recent topic from conversation history
+ * 3. Memory index scanning — text-matches frontmatter against the task prompt
+ * 4. Multi-query fusion — fires 2-3 queries and deduplicates by URI
+ *
  * Skips auto-sync (sync happens after tasks, not before — keeps pre-task fast).
  */
 export async function queryRecallContext(
   teammatesDir: string,
   teammateName: string,
   taskPrompt: string,
+  conversationContext?: string,
 ): Promise<RecallContext> {
   try {
-    const results = await search(taskPrompt, {
+    // Build query variations: original + keywords + conversation topic
+    // If no separate conversation context provided, use the task prompt itself
+    // (which may contain prepended conversation history from the orchestrator)
+    const queries = buildQueryVariations(taskPrompt, conversationContext ?? taskPrompt);
+    const primaryQuery = queries[0];
+    const additionalQueries = queries.slice(1);
+
+    // Scan memory frontmatter for text-matched results (no embeddings needed)
+    const catalogMatches = await matchMemoryCatalog(
+      teammatesDir,
+      teammateName,
+      taskPrompt,
+    );
+
+    // Fire multi-query search with deduplication
+    const results = await multiSearch(primaryQuery, {
       teammatesDir,
       teammate: teammateName,
       maxResults: 5,
       maxChunks: 3,
       maxTokens: 500,
       skipSync: true,
+      additionalQueries,
+      catalogMatches,
     });
+
     return { results, ok: true };
   } catch {
     return { results: [], ok: false };
@@ -275,6 +306,10 @@ export function buildTeammatePrompt(
     lines.push("\n---\n");
     parts.push(lines.join("\n"));
   }
+
+  // ── Recall tool (Pass 2 — agent-driven search) ─────────────────
+  // Tell the agent it can search memories mid-task via the CLI tool
+  parts.push(`## Recall — Memory Search Tool\n\nYou can search your own memories mid-task for additional context. This is useful when the pre-loaded memories don't cover what you need.\n\n**Usage:** Run this command via your shell/terminal tool:\n\`\`\`\nteammates-recall search "<your query>" --dir .teammates --teammate ${teammate.name} --no-sync --json\n\`\`\`\n\n**Tips:**\n- Use specific, descriptive queries ("hooks lifecycle event naming decision" not "hooks")\n- Search iteratively: query → read result → refine query\n- The \`--json\` flag returns structured results for easier parsing\n- Results include a \`score\` field (0-1) — higher is more relevant\n- You can omit \`--teammate\` to search across all teammates' memories\n\n---\n`);
 
   // ── Handoff context (required when present) ─────────────────────
   if (options?.handoffContext) {
