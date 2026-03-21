@@ -48,7 +48,7 @@ If this is a new project without a `.teammates/` directory, the CLI prompts you 
 
 | Option | What it does |
 |---|---|
-| **New team** | Analyzes your codebase and creates teammates from scratch — proposes a roster based on your project's domains, gets your approval, then scaffolds everything |
+| **New team** | Analyzes your codebase and creates teammates from scratch — proposes a roster based on your project's domains (with 15 built-in personas as starting points), gets your approval, then scaffolds everything |
 | **Import team** | Copies teammates from another project (`/init <path>`). Imports SOUL.md + WISDOM.md only, then each teammate adapts itself to the new codebase |
 | **Solo mode** | Uses the agent without teammates — no `.teammates/` directory, no routing |
 | **Exit** | Quits without changes |
@@ -122,6 +122,7 @@ your-project/
     <teammate-name>/
       SOUL.md           # Identity, continuity, principles, boundaries, ownership
       WISDOM.md         # Distilled principles from compacted memories
+      RESUME.md         # Career history — past projects and role changes
       memory/           # Daily logs (YYYY-MM-DD.md) and typed memories (<type>_<topic>.md)
         weekly/         # Weekly episodic summaries
         monthly/        # Monthly episodic summaries
@@ -167,6 +168,7 @@ teammates/
   packages/
     cli/                # Interactive teammate orchestrator
       src/              # TypeScript source (REPL, orchestrator, adapters)
+      personas/         # 15 built-in persona templates (PM, SWE, DevOps, QA, Security, etc.)
       package.json      # @teammates/cli package
       README.md         # CLI documentation
     consolonia/         # Terminal UI rendering
@@ -188,7 +190,7 @@ teammates/
     PROTOCOL.md         # Collaboration rules template
     CROSS-TEAM.md       # Empty starter for cross-team notes
     DECISIONS.md        # Decision log template
-    TEMPLATE.md         # Template for individual teammate files (SOUL, WISDOM, typed memories, daily logs)
+    TEMPLATE.md         # Template for individual teammate files (SOUL, WISDOM, RESUME, typed memories, daily logs)
     USER.md             # User profile template (gitignored)
     example/
       SOUL.md           # Worked example of a filled-in SOUL.md

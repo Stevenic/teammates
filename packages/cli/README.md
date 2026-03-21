@@ -179,6 +179,20 @@ The CLI startup runs in two phases:
 
 All user interaction during Phase 1 uses plain console I/O (readline + ora spinners), avoiding mouse tracking issues that would occur inside the TUI.
 
+## Personas
+
+The CLI ships with 15 built-in persona templates that serve as starting points when creating new teammates. Each persona file (`personas/*.md`) contains YAML frontmatter (name, default alias, tier, description) and a complete SOUL.md scaffold pre-filled with the role's identity, principles, quality bar, and ownership structure.
+
+### Tiers
+
+| Tier | Personas |
+|---|---|
+| **1 — Core** | PM (`scribe`), SWE (`beacon`), DevOps (`pipeline`), QA (`sentinel`) |
+| **2 — Specialist** | Security (`shield`), Designer (`canvas`), Tech Writer (`quill`), Data Engineer (`forge`), SRE (`watchtower`), Architect (`blueprint`) |
+| **3 — Niche** | Frontend (`pixel`), Backend (`engine`), Mobile (`orbit`), ML/AI (`neuron`), Performance (`tempo`) |
+
+During onboarding, the CLI uses these personas to scaffold teammates. The user picks roles, optionally renames them, and the persona's SOUL.md body becomes the starting template — project-specific sections (commands, file patterns, technologies) are filled in by the onboarding agent.
+
 ## Architecture
 
 ```
@@ -187,12 +201,14 @@ cli/src/
   orchestrator.ts   # Task routing, session management, presence tracking
   adapter.ts        # AgentAdapter interface, prompt builder, handoff formatting
   registry.ts       # Discovers teammates from .teammates/, loads SOUL.md + memory, type detection
+  personas.ts       # Persona loader — reads and parses bundled persona templates
   types.ts          # Core types (TeammateConfig, TaskResult, HandoffEnvelope, TeammateType, PresenceState)
   onboard.ts        # Template copying, team import, onboarding/adaptation prompts
   dropdown.ts       # Terminal dropdown/wordwheel widget
   adapters/
     cli-proxy.ts    # Generic subprocess adapter with agent presets
     echo.ts         # Test adapter (no-op)
+cli/personas/       # 15 persona template files (pm.md, swe.md, devops.md, etc.)
 ```
 
 ### Output Protocol

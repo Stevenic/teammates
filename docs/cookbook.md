@@ -31,17 +31,18 @@ Concrete recipes for common workflows. Each recipe is self-contained — read th
 
 **Steps:**
 
-1. Copy the SOUL.md and WISDOM.md templates from `.teammates/TEMPLATE.md` into a new folder:
+1. Copy the SOUL.md, WISDOM.md, and RESUME.md templates from `.teammates/TEMPLATE.md` into a new folder:
    ```
    .teammates/<name>/
      SOUL.md
      WISDOM.md
+     RESUME.md
      memory/
        weekly/
        monthly/
    ```
 
-2. Fill in every section of SOUL.md with project-specific details. Use `template/example/SOUL.md` as a reference for tone and detail level.
+2. Fill in every section of SOUL.md with project-specific details. Use `template/example/SOUL.md` as a reference for tone and detail level. You can also start from one of the 15 built-in personas at `packages/cli/personas/` — each provides a role-specific SOUL.md scaffold with identity, principles, and ownership pre-filled.
 
 3. Leave WISDOM.md in its initial empty state — wisdom emerges after the first compaction.
 

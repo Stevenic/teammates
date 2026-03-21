@@ -2,7 +2,7 @@
 
 <!-- template-version: 2 -->
 
-Copy the SOUL.md and WISDOM.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
+Copy the SOUL.md, WISDOM.md, and RESUME.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
 
 ---
 
@@ -94,6 +94,42 @@ Last compacted: YYYY-MM-DD
 ---
 
 _(No wisdom yet — principles emerge after the first compaction.)_
+```
+
+---
+
+## RESUME.md Template
+
+RESUME.md tracks the teammate's career — past projects and role history within the current project. SOUL.md is always the current state; RESUME.md is how they got here.
+
+```markdown
+# <Name> — Resume
+
+## Current Project: <project name>
+
+**Current role:** <current role> (since YYYY-MM-DD)
+
+### Role History
+
+_No role changes yet — this teammate started as <role> on this project._
+
+<!-- When a role change occurs, add a row:
+| Role | Period | Why It Changed |
+|---|---|---|
+| <previous role> | YYYY-MM-DD → YYYY-MM-DD | <reason for the evolution> |
+-->
+
+## Past Projects
+
+_No past projects yet._
+
+<!-- When reusing a teammate across projects, add entries:
+### <Project Name>
+- **Role:** <role>
+- **Period:** YYYY-MM-DD → YYYY-MM-DD
+- **Key contributions:** <what they did>
+- **Technologies:** <tech used>
+-->
 ```
 
 ---

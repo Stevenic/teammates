@@ -58,6 +58,8 @@ Root-level shared files:
 - **[CROSS-TEAM.md](CROSS-TEAM.md)** — Shared lessons across teammates
 - **[PROTOCOL.md](PROTOCOL.md)** — Collaboration rules and handoff conventions
 - **[TEMPLATE.md](TEMPLATE.md)** — Template for creating new teammates
+- **[DECISIONS.md](DECISIONS.md)** — Decision log (ADR-lite format)
+- **[PROJECTS.md](PROJECTS.md)** — Active project registry
 
 See [TEMPLATE.md](TEMPLATE.md) for creating new teammates.
 See [PROTOCOL.md](PROTOCOL.md) for collaboration rules.
