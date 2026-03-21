@@ -34,6 +34,7 @@ export interface AgentAdapter {
     sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
+    options?: { raw?: boolean },
   ): Promise<TaskResult>;
 
   /**

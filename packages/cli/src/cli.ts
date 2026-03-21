@@ -56,6 +56,7 @@ import {
   getOnboardingPrompt,
   importTeammates,
 } from "./onboard.js";
+import { loadPersonas, scaffoldFromPersona } from "./personas.js";
 import { Orchestrator } from "./orchestrator.js";
 import { colorToHex, theme, tp } from "./theme.js";
 import type {
@@ -92,6 +93,128 @@ class TeammatesREPL {
       role: result.teammate,
       text: result.summary,
     });
+  }
+
+  /**
+   * Render a task result to the feed. Called from drainAgentQueue() AFTER
+   * the defensive retry so the user sees the final (possibly retried) output.
+   */
+  private displayTaskResult(result: TaskResult, entryType: string): void {
+    // Suppress display for internal summarization tasks
+    if (entryType === "summarize") return;
+
+    if (!this.chatView) this.input.deactivateAndErase();
+
+    const raw = result.rawOutput ?? "";
+    // Strip protocol artifacts
+    const cleaned = raw
+      .replace(/^TO:\s*\S+\s*\n/im, "")
+      .replace(/^#\s+.+\n*/m, "")
+      .replace(/```handoff\s*\n@\w+\s*\n[\s\S]*?```/g, "")
+      .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
+      .trim();
+
+    // Header: "teammate: subject"
+    const subject = result.summary || "Task completed";
+    const displayTeammate =
+      result.teammate === this.selfName
+        ? this.adapterName
+        : result.teammate;
+    this.feedLine(
+      concat(tp.accent(`${displayTeammate}: `), tp.text(subject)),
+    );
+    this.lastCleanedOutput = cleaned;
+
+    if (cleaned) {
+      this.feedMarkdown(cleaned);
+    } else if (result.changedFiles.length > 0 || result.summary) {
+      // Agent produced no body text but DID do work — generate a synthetic
+      // summary from available metadata so the user sees something useful.
+      const syntheticLines: string[] = [];
+      if (result.summary) {
+        syntheticLines.push(result.summary);
+      }
+      if (result.changedFiles.length > 0) {
+        syntheticLines.push("");
+        syntheticLines.push("**Files changed:**");
+        for (const f of result.changedFiles) {
+          syntheticLines.push(`- ${f}`);
+        }
+      }
+      this.feedMarkdown(syntheticLines.join("\n"));
+    } else {
+      this.feedLine(
+        tp.muted(
+          "  (no response text — the agent may have only performed tool actions)",
+        ),
+      );
+      this.feedLine(
+        tp.muted(
+          `  Use /debug ${result.teammate} to view full output`,
+        ),
+      );
+      // Show diagnostic hints for empty responses
+      const diag = result.diagnostics;
+      if (diag) {
+        if (diag.exitCode !== 0 && diag.exitCode !== null) {
+          this.feedLine(
+            tp.warning(`  ⚠  Process exited with code ${diag.exitCode}`),
+          );
+        }
+        if (diag.signal) {
+          this.feedLine(
+            tp.warning(`  ⚠  Process killed by signal: ${diag.signal}`),
+          );
+        }
+        if (diag.debugFile) {
+          this.feedLine(tp.muted(`  Debug log: ${diag.debugFile}`));
+        }
+      }
+    }
+
+    // Render handoffs
+    const handoffs = result.handoffs;
+    if (handoffs.length > 0) {
+      this.renderHandoffs(result.teammate, handoffs);
+    }
+
+    // Clickable [reply] [copy] actions after the response
+    if (this.chatView && cleaned) {
+      const t = theme();
+      const teammate = result.teammate;
+      const replyId = `reply-${teammate}-${Date.now()}`;
+      this._replyContexts.set(replyId, { teammate, message: cleaned });
+      this.chatView.appendActionList([
+        {
+          id: replyId,
+          normalStyle: this.makeSpan({
+            text: "  [reply]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.makeSpan({
+            text: "  [reply]",
+            style: { fg: t.accent },
+          }),
+        },
+        {
+          id: "copy",
+          normalStyle: this.makeSpan({
+            text: " [copy]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.makeSpan({
+            text: " [copy]",
+            style: { fg: t.accent },
+          }),
+        },
+      ]);
+    }
+    this.feedLine();
+
+    // Auto-detect new teammates added during this task
+    this.refreshTeammates();
+
+    this.showPrompt();
   }
 
   /** Token budget for recent conversation history (24k tokens ≈ 96k chars). */
@@ -1209,39 +1332,46 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     console.log(
       chalk.cyan("  1") +
         chalk.gray(") ") +
-        chalk.white("New team") +
-        chalk.gray(
-          " — analyze this codebase and create teammates from scratch",
-        ),
+        chalk.white("Pick teammates") +
+        chalk.gray(" — choose from persona templates"),
     );
     console.log(
       chalk.cyan("  2") +
+        chalk.gray(") ") +
+        chalk.white("Auto-generate") +
+        chalk.gray(
+          " — let your agent analyze the codebase and create teammates",
+        ),
+    );
+    console.log(
+      chalk.cyan("  3") +
         chalk.gray(") ") +
         chalk.white("Import team") +
         chalk.gray(" — copy teammates from another project"),
     );
     console.log(
-      chalk.cyan("  3") +
+      chalk.cyan("  4") +
         chalk.gray(") ") +
         chalk.white("Solo mode") +
         chalk.gray(" — use your agent without teammates"),
     );
-    console.log(chalk.cyan("  4") + chalk.gray(") ") + chalk.white("Exit"));
+    console.log(chalk.cyan("  5") + chalk.gray(") ") + chalk.white("Exit"));
     console.log();
 
-    const choice = await this.askChoice("Pick an option (1/2/3/4): ", [
+    const choice = await this.askChoice("Pick an option (1/2/3/4/5): ", [
       "1",
       "2",
       "3",
       "4",
+      "5",
     ]);
 
-    if (choice === "4") {
+    if (choice === "5") {
       console.log(chalk.gray("  Goodbye."));
       return false;
     }
 
-    if (choice === "3") {
+    if (choice === "4") {
       console.log(
         chalk.gray(
           "  Running in solo mode — all tasks go to your agent.",
@@ -1252,14 +1382,196 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       return true;
     }
 
-    if (choice === "2") {
+    if (choice === "3") {
       await this.runImport(cwd);
       return true;
     }
 
-    // choice === "1": Run onboarding via the agent
-    await this.runOnboardingAgent(adapter, cwd);
+    if (choice === "2") {
+      // Auto-generate via agent
+      await this.runOnboardingAgent(adapter, cwd);
+      return true;
+    }
+
+    // choice === "1": Pick from persona templates
+    await this.runPersonaOnboarding(teammatesDir);
     return true;
+  }
+
+  /**
+   * Persona-based onboarding: show a list of bundled personas, let the user
+   * pick which ones to create, optionally rename them, and scaffold the folders.
+   */
+  private async runPersonaOnboarding(teammatesDir: string): Promise<void> {
+    const personas = await loadPersonas();
+    if (personas.length === 0) {
+      console.log(chalk.yellow("  No persona templates found."));
+      return;
+    }
+
+    console.log();
+    console.log(chalk.white("  Available personas:\n"));
+
+    // Display personas grouped by tier
+    let currentTier = 0;
+    for (let i = 0; i < personas.length; i++) {
+      const p = personas[i];
+      if (p.tier !== currentTier) {
+        currentTier = p.tier;
+        const label = currentTier === 1 ? "Core" : "Specialized";
+        console.log(chalk.gray(`  ── ${label} ──`));
+      }
+      const num = String(i + 1).padStart(2, " ");
+      console.log(
+        chalk.cyan(`  ${num}`) +
+          chalk.gray(") ") +
+          chalk.white(p.persona) +
+          chalk.gray(` (${p.alias})`) +
+          chalk.gray(` — ${p.description}`),
+      );
+    }
+
+    console.log();
+    console.log(
+      chalk.gray("  Enter numbers separated by commas, e.g. 1,3,5"),
+    );
+    console.log();
+
+    const input = await this.askInput("Personas: ");
+    if (!input) {
+      console.log(chalk.gray("  No personas selected."));
+      return;
+    }
+
+    // Parse comma-separated numbers
+    const indices = input
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10) - 1)
+      .filter((i) => i >= 0 && i < personas.length);
+
+    const unique = [...new Set(indices)];
+    if (unique.length === 0) {
+      console.log(chalk.yellow("  No valid selections."));
+      return;
+    }
+
+    console.log();
+
+    // Copy framework files first
+    await copyTemplateFiles(teammatesDir);
+
+    const created: string[] = [];
+    for (const idx of unique) {
+      const p = personas[idx];
+      const nameInput = await this.askInput(
+        `Name for ${p.persona} [${p.alias}]: `,
+      );
+      const name = nameInput || p.alias;
+      const folderName = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+
+      await scaffoldFromPersona(teammatesDir, folderName, p);
+      created.push(folderName);
+      console.log(
+        chalk.green("  ✔  ") + chalk.white(`@${folderName}`) + chalk.gray(` — ${p.persona}`),
+      );
+    }
+
+    console.log();
+    console.log(
+      chalk.green(`  ✔  Created ${created.length} teammate${created.length > 1 ? "s" : ""}: `) +
+        chalk.white(created.map((n) => `@${n}`).join(", ")),
+    );
+    console.log(
+      chalk.gray(
+        "  Tip: Your agent will adapt ownership and capabilities to this codebase on first task.",
+      ),
+    );
+    console.log();
+  }
+
+  /**
+   * In-TUI persona picker for /init pick. Uses feedLine + askInline instead
+   * of console.log + askInput.
+   */
+  private async runPersonaOnboardingInline(
+    teammatesDir: string,
+  ): Promise<void> {
+    const personas = await loadPersonas();
+    if (personas.length === 0) {
+      this.feedLine(tp.warning("  No persona templates found."));
+      this.refreshView();
+      return;
+    }
+
+    // Display personas in the feed
+    this.feedLine(tp.text("  Available personas:\n"));
+
+    let currentTier = 0;
+    for (let i = 0; i < personas.length; i++) {
+      const p = personas[i];
+      if (p.tier !== currentTier) {
+        currentTier = p.tier;
+        const label = currentTier === 1 ? "Core" : "Specialized";
+        this.feedLine(tp.muted(`  ── ${label} ──`));
+      }
+      const num = String(i + 1).padStart(2, " ");
+      this.feedLine(
+        concat(
+          tp.text(`  ${num}) ${p.persona} `),
+          tp.muted(`(${p.alias}) — ${p.description}`),
+        ),
+      );
+    }
+
+    this.feedLine(tp.muted("\n  Enter numbers separated by commas, e.g. 1,3,5"));
+    this.refreshView();
+
+    const input = await this.askInline("Personas: ");
+    if (!input) {
+      this.feedLine(tp.muted("  No personas selected."));
+      this.refreshView();
+      return;
+    }
+
+    const indices = input
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10) - 1)
+      .filter((i) => i >= 0 && i < personas.length);
+
+    const unique = [...new Set(indices)];
+    if (unique.length === 0) {
+      this.feedLine(tp.warning("  No valid selections."));
+      this.refreshView();
+      return;
+    }
+
+    await copyTemplateFiles(teammatesDir);
+
+    const created: string[] = [];
+    for (const idx of unique) {
+      const p = personas[idx];
+      const nameInput = await this.askInline(
+        `Name for ${p.persona} [${p.alias}]: `,
+      );
+      const name = nameInput || p.alias;
+      const folderName = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+
+      await scaffoldFromPersona(teammatesDir, folderName, p);
+      created.push(folderName);
+      this.feedLine(
+        concat(tp.success(`  ✔  @${folderName}`), tp.muted(` — ${p.persona}`)),
+      );
+    }
+
+    this.feedLine(
+      concat(
+        tp.success(
+          `\n  ✔  Created ${created.length} teammate${created.length > 1 ? "s" : ""}: `,
+        ),
+        tp.text(created.map((n) => `@${n}`).join(", ")),
+      ),
+    );
+    this.refreshView();
   }
 
   /**
@@ -3321,8 +3633,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       {
         name: "init",
         aliases: ["onboard", "setup"],
-        usage: "/init [from-path]",
-        description: "Set up teammates (or import from another project)",
+        usage: "/init [pick | from-path]",
+        description:
+          "Set up teammates (pick from personas, or import from another project)",
         run: (args) => this.cmdInit(args),
       },
       {
@@ -3445,113 +3758,15 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       }
 
       case "task_completed": {
-        // Remove from active tasks
+        // Remove from active tasks and stop spinner.
+        // Result display is deferred to drainAgentQueue() so the defensive
+        // retry can update rawOutput before anything is shown to the user.
         this.activeTasks.delete(event.result.teammate);
 
         // Stop animation if no more active tasks
         if (this.activeTasks.size === 0) {
           this.stopStatusAnimation();
         }
-
-        // Suppress display for internal summarization tasks
-        const activeEntry = this.agentActive.get(event.result.teammate);
-        if (activeEntry?.type === "summarize") break;
-
-        if (!this.chatView) this.input.deactivateAndErase();
-
-        const raw = event.result.rawOutput ?? "";
-        // Strip protocol artifacts
-        const cleaned = raw
-          .replace(/^TO:\s*\S+\s*\n/im, "")
-          .replace(/^#\s+.+\n*/m, "")
-          .replace(/```handoff\s*\n@\w+\s*\n[\s\S]*?```/g, "")
-          .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
-          .trim();
-        const sizeKB = cleaned ? Buffer.byteLength(cleaned, "utf-8") / 1024 : 0;
-
-        // Header: "teammate: subject"
-        const subject = event.result.summary || "Task completed";
-        const displayTeammate = event.result.teammate === this.selfName ? this.adapterName : event.result.teammate;
-        this.feedLine(
-          concat(tp.accent(`${displayTeammate}: `), tp.text(subject)),
-        );
-        this.lastCleanedOutput = cleaned;
-
-        if (cleaned) {
-          this.feedMarkdown(cleaned);
-        } else {
-          this.feedLine(
-            tp.muted(
-              "  (no response text — the agent may have only performed tool actions)",
-            ),
-          );
-          this.feedLine(
-            tp.muted(
-              `  Use /debug ${event.result.teammate} to view full output`,
-            ),
-          );
-          // Show diagnostic hints for empty responses
-          const diag = event.result.diagnostics;
-          if (diag) {
-            if (diag.exitCode !== 0 && diag.exitCode !== null) {
-              this.feedLine(
-                tp.warning(`  ⚠ Process exited with code ${diag.exitCode}`),
-              );
-            }
-            if (diag.signal) {
-              this.feedLine(
-                tp.warning(`  ⚠ Process killed by signal: ${diag.signal}`),
-              );
-            }
-            if (diag.debugFile) {
-              this.feedLine(tp.muted(`  Debug log: ${diag.debugFile}`));
-            }
-          }
-        }
-
-        // Render handoffs
-        const handoffs = event.result.handoffs;
-        if (handoffs.length > 0) {
-          this.renderHandoffs(event.result.teammate, handoffs);
-        }
-
-        // Clickable [reply] [copy] actions after the response
-        if (this.chatView && cleaned) {
-          const t = theme();
-          const teammate = event.result.teammate;
-          const replyId = `reply-${teammate}-${Date.now()}`;
-          this._replyContexts.set(replyId, { teammate, message: cleaned });
-          this.chatView.appendActionList([
-            {
-              id: replyId,
-              normalStyle: this.makeSpan({
-                text: "  [reply]",
-                style: { fg: t.textDim },
-              }),
-              hoverStyle: this.makeSpan({
-                text: "  [reply]",
-                style: { fg: t.accent },
-              }),
-            },
-            {
-              id: "copy",
-              normalStyle: this.makeSpan({
-                text: " [copy]",
-                style: { fg: t.textDim },
-              }),
-              hoverStyle: this.makeSpan({
-                text: " [copy]",
-                style: { fg: t.accent },
-              }),
-            },
-          ]);
-        }
-        this.feedLine();
-
-        // Auto-detect new teammates added during this task
-        this.refreshTeammates();
-
-        this.showPrompt();
         break;
       }
 
@@ -3797,8 +4012,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
           // Defensive retry: if the agent produced no text output but exited
           // successfully, it likely ended its turn with only file edits.
-          // Retry once with a lightweight prompt that skips memory/session
-          // updates to maximize the chance of getting visible text.
+          // Retry up to 2 times with progressively simpler prompts.
           const rawText = (result.rawOutput ?? "").trim();
           if (
             !rawText &&
@@ -3807,21 +4021,42 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
             entry.type !== "debug"
           ) {
             this.silentAgents.add(entry.teammate);
-            const retryResult = await this.orchestrator.assign({
+
+            // Attempt 1: ask the agent to summarize what it did
+            const retry1 = await this.orchestrator.assign({
               teammate: entry.teammate,
-              task: `You completed the previous task but produced no visible text output. The user cannot see your work without a text response.\n\nOriginal task: ${entry.task}\n\nPlease respond now with a summary of what you did. Do NOT update session or memory files again — just produce text output.\n\nFormat:\n\`\`\`\nTO: user\n# <Subject line>\n\n<Body — what you did, key decisions, files changed>\n\`\`\``,
+              task: `You completed the previous task but produced no visible text output. The user cannot see your work without a text response.\n\nOriginal task: ${entry.task}\n\nPlease respond now with a summary of what you did. Do NOT update session or memory files. Do NOT use any tools. Just produce text output.\n\nFormat:\nTO: user\n# <Subject line>\n\n<Body — what you did, key decisions, files changed>`,
+              raw: true,
             });
-            this.silentAgents.delete(entry.teammate);
-            // Merge: keep original result's file changes but use retry's text
-            const retryRaw = (retryResult.rawOutput ?? "").trim();
-            if (retryRaw) {
+            const retry1Raw = (retry1.rawOutput ?? "").trim();
+            if (retry1Raw) {
               result = {
                 ...result,
-                rawOutput: retryResult.rawOutput,
-                summary: retryResult.summary || result.summary,
+                rawOutput: retry1.rawOutput,
+                summary: retry1.summary || result.summary,
               };
+            } else {
+              // Attempt 2: absolute minimum prompt — just ask for one sentence
+              const retry2 = await this.orchestrator.assign({
+                teammate: entry.teammate,
+                task: `Say "Done." followed by one sentence describing what you changed. No tools. No file edits. Just text.`,
+                raw: true,
+              });
+              const retry2Raw = (retry2.rawOutput ?? "").trim();
+              if (retry2Raw) {
+                result = {
+                  ...result,
+                  rawOutput: retry2.rawOutput,
+                  summary: retry2.summary || result.summary,
+                };
+              }
             }
+
+            this.silentAgents.delete(entry.teammate);
           }
+
+          // Display the (possibly retried) result to the user
+          this.displayTaskResult(result, entry.type);
 
           // Write debug entry — skip for debug analysis tasks (avoid recursion)
           if (entry.type !== "debug") {
@@ -3959,7 +4194,10 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     await mkdir(teammatesDir, { recursive: true });
 
     const fromPath = argsStr.trim();
-    if (fromPath) {
+    if (fromPath === "pick") {
+      // Persona picker mode: /init pick
+      await this.runPersonaOnboardingInline(teammatesDir);
+    } else if (fromPath) {
       // Import mode: /init <path-to-another-project>
       const resolved = resolve(fromPath);
       let sourceDir: string;

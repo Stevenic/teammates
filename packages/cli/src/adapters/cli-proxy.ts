@@ -229,12 +229,15 @@ export class CliProxyAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
+    options?: { raw?: boolean },
   ): Promise<TaskResult> {
-    // If the teammate has no soul (e.g. the raw agent), skip identity/memory
-    // wrapping but include handoff instructions so it can delegate to teammates
+    // If raw mode is set, skip all prompt wrapping — send prompt as-is
+    // Used for defensive retries where the full prompt template is counterproductive
     const sessionFile = this.sessionFiles.get(teammate.name);
     let fullPrompt: string;
-    if (teammate.soul) {
+    if (options?.raw) {
+      fullPrompt = prompt;
+    } else if (teammate.soul) {
       // Query recall for relevant memories before building prompt
       const teammatesDir = teammate.cwd
         ? join(teammate.cwd, ".teammates")

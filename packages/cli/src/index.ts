@@ -28,6 +28,8 @@ export {
   type OrchestratorConfig,
   type TeammateStatus,
 } from "./orchestrator.js";
+export type { Persona } from "./personas.js";
+export { loadPersonas, scaffoldFromPersona } from "./personas.js";
 export { Registry } from "./registry.js";
 export { tp } from "./theme.js";
 export type {

@@ -110,6 +110,8 @@ export interface TaskAssignment {
   task: string;
   /** Extra context to include in the prompt */
   extraContext?: string;
+  /** When true, skip identity/memory prompt wrapping — send task as-is */
+  raw?: boolean;
 }
 
 /** Orchestrator event for logging/hooks */

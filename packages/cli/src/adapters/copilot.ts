@@ -104,6 +104,7 @@ export class CopilotAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
+    options?: { raw?: boolean },
   ): Promise<TaskResult> {
     await this.ensureClient(teammate.cwd);
 
@@ -111,7 +112,9 @@ export class CopilotAdapter implements AgentAdapter {
 
     // Build the full teammate prompt (identity + memory + task)
     let fullPrompt: string;
-    if (teammate.soul) {
+    if (options?.raw) {
+      fullPrompt = prompt;
+    } else if (teammate.soul) {
       // Query recall for relevant memories before building prompt
       const teammatesDir = teammate.cwd
         ? join(teammate.cwd, ".teammates")

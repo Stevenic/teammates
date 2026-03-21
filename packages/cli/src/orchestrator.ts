@@ -111,7 +111,9 @@ export class Orchestrator {
     }
 
     // Execute
-    const result = await this.adapter.executeTask(sessionId, teammate, prompt);
+    const result = await this.adapter.executeTask(sessionId, teammate, prompt, {
+      raw: assignment.raw,
+    });
     this.onEvent({ type: "task_completed", result });
 
     // Update status (preserve presence)
