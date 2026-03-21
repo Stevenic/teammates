@@ -172,6 +172,8 @@ class TeammatesREPL {
   private taskQueue: QueueEntry[] = [];
   /** Per-agent active tasks — one per agent running in parallel. */
   private agentActive: Map<string, QueueEntry> = new Map();
+  /** Agents currently in a silent retry — suppress all events. */
+  private silentAgents: Set<string> = new Set();
   /** Per-agent drain locks — prevents double-draining a single agent. */
   private agentDrainLocks: Map<string, Promise<void>> = new Map();
   /** Stored pasted text keyed by paste number, expanded on Enter. */
@@ -3421,6 +3423,15 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   // ─── Event handler ───────────────────────────────────────────────
 
   private handleEvent(event: OrchestratorEvent): void {
+    // Suppress all events for agents in silent retry
+    const evtAgent =
+      event.type === "task_assigned"
+        ? event.assignment.teammate
+        : event.type === "task_completed"
+          ? event.result.teammate
+          : event.teammate;
+    if (this.silentAgents.has(evtAgent)) return;
+
     switch (event.type) {
       case "task_assigned": {
         // Track this task and start the animated status bar
@@ -3778,11 +3789,40 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
             entry.type === "btw" || entry.type === "debug"
               ? ""
               : this.buildConversationContext();
-          const result = await this.orchestrator.assign({
+          let result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
             extraContext: extraContext || undefined,
           });
+
+          // Defensive retry: if the agent produced no text output but exited
+          // successfully, it likely ended its turn with only file edits.
+          // Retry once with a lightweight prompt that skips memory/session
+          // updates to maximize the chance of getting visible text.
+          const rawText = (result.rawOutput ?? "").trim();
+          if (
+            !rawText &&
+            result.success &&
+            entry.type !== "btw" &&
+            entry.type !== "debug"
+          ) {
+            this.silentAgents.add(entry.teammate);
+            const retryResult = await this.orchestrator.assign({
+              teammate: entry.teammate,
+              task: `You completed the previous task but produced no visible text output. The user cannot see your work without a text response.\n\nOriginal task: ${entry.task}\n\nPlease respond now with a summary of what you did. Do NOT update session or memory files again — just produce text output.\n\nFormat:\n\`\`\`\nTO: user\n# <Subject line>\n\n<Body — what you did, key decisions, files changed>\n\`\`\``,
+            });
+            this.silentAgents.delete(entry.teammate);
+            // Merge: keep original result's file changes but use retry's text
+            const retryRaw = (retryResult.rawOutput ?? "").trim();
+            if (retryRaw) {
+              result = {
+                ...result,
+                rawOutput: retryResult.rawOutput,
+                summary: retryResult.summary || result.summary,
+              };
+            }
+          }
+
           // Write debug entry — skip for debug analysis tasks (avoid recursion)
           if (entry.type !== "debug") {
             this.writeDebugEntry(entry.teammate, entry.task, result, startTime);

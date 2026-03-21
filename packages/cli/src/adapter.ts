@@ -316,17 +316,20 @@ export function buildTeammatePrompt(
     parts.push(`## Handoff Context\n\n${options.handoffContext}\n\n---\n`);
   }
 
+  // ── Output protocol (required — BEFORE session/memory updates) ──
+  // Placed first so agents produce text response before doing housekeeping.
+  // When output protocol is after memory updates, agents often end their turn
+  // with file edits and produce no visible text output.
+  parts.push(`## Output Protocol (CRITICAL)\n\n**Your #1 job is to produce a visible text response.** Session updates and memory writes are secondary — they support continuity but are not the deliverable. The user sees ONLY your text output. If you update files but return no text, the user sees an empty message and your work is invisible.\n\nFormat your response as:\n\n\`\`\`\nTO: user\n# <Subject line>\n\n<Body — full markdown response>\n\`\`\`\n\n**Handoffs:** To hand off work to a teammate, include a fenced handoff block anywhere in your response:\n\n\`\`\`\n\`\`\`handoff\n@<teammate>\n<task description — what you need them to do, with full context>\n\`\`\`\n\`\`\`\n\n**Rules:**\n- **You MUST end your turn with visible text output.** A turn that ends with only tool calls and no text is a failed turn.\n- The \`# Subject\` line is REQUIRED — it becomes the message title.\n- Always write a substantive body. Never return just the subject.\n- Use markdown: headings, lists, code blocks, bold, etc.\n- Do as much work as you can before handing off.\n- Only hand off to teammates listed in "Your Team" above.\n- The handoff block can appear anywhere in your response — it will be detected automatically.\n- **Write your text response FIRST, then update session/memory files.** This ensures visible output even if the agent turn ends early.\n\n---\n`);
+
   // ── Session state (required) ────────────────────────────────────
   if (options?.sessionFile) {
-    parts.push(`## Session State\n\nYour session file is at: \`${options.sessionFile}\`\n\n**Before returning your result**, append a brief entry to this file with:\n- What you did\n- Key decisions made\n- Files changed\n- Anything the next task should know\n\nThis is how you maintain continuity across tasks. Always read it, always update it.\n\n---\n`);
+    parts.push(`## Session State\n\nYour session file is at: \`${options.sessionFile}\`\n\n**After writing your text response**, append a brief entry to this file with:\n- What you did\n- Key decisions made\n- Files changed\n- Anything the next task should know\n\nThis is how you maintain continuity across tasks. Always read it, always update it.\n\n---\n`);
   }
 
   // ── Memory updates (required) ───────────────────────────────────
   const today = new Date().toISOString().slice(0, 10);
-  parts.push(`## Memory Updates\n\n**Before returning your result**, update your memory files:\n\n1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist.\n   - What you did\n   - Key decisions made\n   - Files changed\n   - Anything the next task should know\n\n2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`name\`, \`description\`, \`type\`). Update existing memory files if the topic already has one.\n\n3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.\n\nThese files are your persistent memory. Without them, your next session starts from scratch.\n\n---\n`);
-
-  // ── Output protocol (required) ──────────────────────────────────
-  parts.push(`## Output Protocol (CRITICAL)\n\n**Your #1 job is to produce a visible text response.** Session updates and memory writes are secondary — they support continuity but are not the deliverable. The user sees ONLY your text output. If you update files but return no text, the user sees an empty message and your work is invisible.\n\nFormat your response as:\n\n\`\`\`\nTO: user\n# <Subject line>\n\n<Body — full markdown response>\n\`\`\`\n\n**Handoffs:** To hand off work to a teammate, include a fenced handoff block anywhere in your response:\n\n\`\`\`\n\`\`\`handoff\n@<teammate>\n<task description — what you need them to do, with full context>\n\`\`\`\n\`\`\`\n\n**Rules:**\n- **You MUST end your turn with visible text output.** A turn that ends with only tool calls and no text is a failed turn.\n- The \`# Subject\` line is REQUIRED — it becomes the message title.\n- Always write a substantive body. Never return just the subject.\n- Use markdown: headings, lists, code blocks, bold, etc.\n- Do as much work as you can before handing off.\n- Only hand off to teammates listed in "Your Team" above.\n- The handoff block can appear anywhere in your response — it will be detected automatically.\n\n---\n`);
+  parts.push(`## Memory Updates\n\n**After writing your text response**, update your memory files:\n\n1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist.\n   - What you did\n   - Key decisions made\n   - Files changed\n   - Anything the next task should know\n\n2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`name\`, \`description\`, \`type\`). Update existing memory files if the topic already has one.\n\n3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.\n\nThese files are your persistent memory. Without them, your next session starts from scratch.\n\n---\n`);
 
   // ── Current date/time + environment (required, small) ───────────
   const now = new Date();
@@ -349,7 +352,7 @@ export function buildTeammatePrompt(
   }
 
   // ── Task (always included, excluded from budget) ────────────────
-  parts.push(`## Task\n\n${taskPrompt}\n\n---\n\n**REMINDER: After completing the task and updating session/memory files, you MUST produce a text response starting with \`TO: user\`. An empty response is a bug.**`);
+  parts.push(`## Task\n\n${taskPrompt}\n\n---\n\n**REMINDER: Write your text response (TO: user) FIRST, then update session/memory files. A turn with only file edits and no text output is a failed turn.**`);
 
   return parts.join("\n");
 }
