@@ -83,6 +83,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 - `**/README.md` — Package-level docs (co-owned with package owners, PM reviews for consistency)
 
+### Routing
+
+- `spec`, `plan`, `roadmap`, `requirement`, `documentation`, `onboarding`, `process`, `decision`, `scope`, `priority`
+
 ### Key Interfaces
 
 - `specs/**` — **Produces** specifications consumed by implementing teammates

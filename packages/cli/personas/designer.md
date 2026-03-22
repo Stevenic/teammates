@@ -86,6 +86,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `src/**/*.css` / `src/**/*.scss` — Stylesheets (co-owned with Frontend/SWE)
 - `public/assets/**` — Static assets (icons, images)
 
+### Routing
+
+- `UX`, `UI`, `accessibility`, `a11y`, `component`, `design`, `layout`, `theme`, `WCAG`, `color`, `typography`
+
 ### Key Interfaces
 
 - `src/components/**` — **Produces** UI components consumed by feature code

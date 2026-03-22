@@ -643,8 +643,12 @@ function parseMessageProtocol(
     }
   }
 
-  // Find all ```handoff blocks
+  // Find all ```handoff blocks (primary) + natural-language fallback
   const handoffBlocks = findHandoffBlocks(output);
+  if (handoffBlocks.length === 0) {
+    // Fallback: detect natural-language handoff patterns mentioning known teammates
+    handoffBlocks.push(...findNaturalLanguageHandoffs(output, _teammateNames));
+  }
   const handoffs: HandoffEnvelope[] = handoffBlocks.map((h) => ({
     from: teammateName,
     to: h.target,
@@ -687,6 +691,52 @@ function findHandoffBlocks(output: string): { target: string; task: string }[] {
   while ((match = pattern.exec(output)) !== null) {
     results.push({ target: match[1].toLowerCase(), task: match[2].trim() });
   }
+  return results;
+}
+
+/**
+ * Fallback handoff detector: catches natural-language handoff patterns when
+ * the agent fails to use the ```handoff fenced block format.
+ *
+ * Looks for sentences like:
+ *   - "hand off to @beacon: implement the feature"
+ *   - "handing this to @scribe for documentation"
+ *   - "I'll delegate to @pipeline"
+ *   - "queued a handoff to @beacon"
+ *
+ * Only triggers if the @mentioned name is in the known teammate list.
+ * Extracts the surrounding sentence as the task description.
+ */
+function findNaturalLanguageHandoffs(
+  output: string,
+  teammateNames: string[],
+): { target: string; task: string }[] {
+  if (teammateNames.length === 0) return [];
+
+  const results: { target: string; task: string }[] = [];
+  const seen = new Set<string>();
+
+  // Pattern: handoff-related verb/noun near @teammate
+  const pattern =
+    /(?:hand(?:off|ing off| off| this off)|delegat(?:e|ing)|pass(?:ing)? (?:this |it )?(?:to|off to)|queued? (?:a )?handoff (?:to|for))\s+@(\w+)\b[.:,]?\s*(.*)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(output)) !== null) {
+    const target = match[1].toLowerCase();
+    if (!teammateNames.includes(target)) continue;
+    if (seen.has(target)) continue;
+    seen.add(target);
+
+    // Use the rest of the sentence as the task, or a generic description
+    let task = match[2]
+      .replace(/\n.*/s, "") // first line only
+      .replace(/[.!]+$/, "") // strip trailing punctuation
+      .trim();
+    if (!task || task.length < 5) {
+      task = "(handoff detected from natural language — no task details provided)";
+    }
+    results.push({ target, task });
+  }
+
   return results;
 }
 

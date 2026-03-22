@@ -200,85 +200,22 @@ export function buildTeammatePrompt(
 ): string {
   const parts: string[] = [];
 
-  // ── Identity (required) ─────────────────────────────────────────
-  parts.push(`# You are ${teammate.name}\n\n${teammate.soul}\n\n---\n`);
+  // ── Top edge (high attention) ─────────────────────────────────────
 
-  // ── Wisdom (required) ───────────────────────────────────────────
+  // <IDENTITY> — anchors persona
+  parts.push(`<IDENTITY>\n# You are ${teammate.name}\n\n${teammate.soul}\n`);
+
+  // <WISDOM> — stable knowledge
   if (teammate.wisdom.trim()) {
-    parts.push(`## Your Wisdom\n\n${teammate.wisdom}\n\n---\n`);
+    parts.push(`<WISDOM>\n${teammate.wisdom}\n`);
   }
 
-  // ── Budget-allocated context (daily logs → recall) ──────────────
-  // Today's log: always included, outside budget
-  // Days 2-7: up to 24k tokens (whole entries)
-  // Recall: at least 8k + unused daily budget, last entry may overflow by 4k
-  const todayLog = teammate.dailyLogs.slice(0, 1);
-  const pastLogs = teammate.dailyLogs.slice(1, 7); // days 2-7
-  let dailyBudget = DAILY_LOG_BUDGET_TOKENS;
+  // ── Reference data (middle — acceptable for "lost in the middle") ──
 
-  // Current daily log (today) — never trimmed, always included
-  if (todayLog.length > 0) {
-    const todayLines = ["## Recent Daily Logs\n"];
-    for (const log of todayLog) {
-      todayLines.push(`### ${log.date}\n${log.content}\n`);
-    }
-    parts.push(todayLines.join("\n"));
-  }
-
-  // Days 2-7 — whole entries, up to 24k tokens
-  if (pastLogs.length > 0) {
-    const lines: string[] = [];
-    for (const log of pastLogs) {
-      const entry = `### ${log.date}\n${log.content}\n`;
-      const cost = estimateTokens(entry);
-      if (cost > dailyBudget) break;
-      lines.push(entry);
-      dailyBudget -= cost;
-    }
-    if (lines.length > 0) parts.push(lines.join("\n"));
-  }
-
-  // Recall results — gets at least 8k tokens, plus unused daily budget
-  // Last entry may overflow by up to 4k tokens
-  const recallBudget = Math.max(RECALL_MIN_BUDGET_TOKENS, RECALL_MIN_BUDGET_TOKENS + dailyBudget);
-  const recallResults = options?.recallResults ?? [];
-  if (recallResults.length > 0) {
-    const lines = [
-      "## Relevant Memories (from recall search)\n",
-      "These memories were retrieved based on relevance to the current task:\n",
-    ];
-    const headerCost = estimateTokens(lines.join("\n"));
-    let recallUsed = headerCost;
-    for (const r of recallResults) {
-      const label = r.contentType
-        ? `[${r.contentType}] ${r.uri}`
-        : r.uri;
-      const entry = `### ${label}\n${r.text}\n`;
-      const cost = estimateTokens(entry);
-      if (recallUsed + cost > recallBudget + RECALL_OVERFLOW_TOKENS) break;
-      lines.push(entry);
-      recallUsed += cost;
-      // Stop cleanly at budget — but allow the current entry (overflow grace)
-      if (recallUsed >= recallBudget) break;
-    }
-    if (lines.length > 2) {
-      lines.push("\n---\n");
-      parts.push(lines.join("\n"));
-    }
-  }
-
-  // Close context section with separator if needed
-  if (todayLog.length > 0 || pastLogs.length > 0) {
-    const lastPart = parts[parts.length - 1];
-    if (!lastPart.endsWith("---\n")) {
-      parts.push("\n---\n");
-    }
-  }
-
-  // ── Team roster (required, small) ───────────────────────────────
+  // <TEAM> — roster for handoffs
   if (options?.roster && options.roster.length > 0) {
     const lines = [
-      "## Your Team\n",
+      "<TEAM>",
       "These are the other teammates you can hand off work to:\n",
     ];
     for (const t of options.roster) {
@@ -289,14 +226,13 @@ export function buildTeammatePrompt(
           : "";
       lines.push(`- **@${t.name}**: ${t.role}${owns}`);
     }
-    lines.push("\n---\n");
-    parts.push(lines.join("\n"));
+    parts.push(lines.join("\n") + "\n");
   }
 
-  // ── Installed services (required, small) ────────────────────────
+  // <SERVICES> — installed services
   if (options?.services && options.services.length > 0) {
     const lines = [
-      "## Available Services\n",
+      "<SERVICES>",
       "These services are installed and available for you to use:\n",
     ];
     for (const svc of options.services) {
@@ -304,36 +240,15 @@ export function buildTeammatePrompt(
       lines.push(svc.description);
       lines.push(`\n**Usage:** \`${svc.usage}\`\n`);
     }
-    lines.push("\n---\n");
-    parts.push(lines.join("\n"));
+    parts.push(lines.join("\n") + "\n");
   }
 
-  // ── Recall tool (Pass 2 — agent-driven search) ─────────────────
-  // Tell the agent it can search memories mid-task via the CLI tool
-  parts.push(`## Recall — Memory Search Tool\n\nYou can search your own memories mid-task for additional context. This is useful when the pre-loaded memories don't cover what you need.\n\n**Usage:** Run this command via your shell/terminal tool:\n\`\`\`\nteammates-recall search "<your query>" --dir .teammates --teammate ${teammate.name} --no-sync --json\n\`\`\`\n\n**Tips:**\n- Use specific, descriptive queries ("hooks lifecycle event naming decision" not "hooks")\n- Search iteratively: query → read result → refine query\n- The \`--json\` flag returns structured results for easier parsing\n- Results include a \`score\` field (0-1) — higher is more relevant\n- You can omit \`--teammate\` to search across all teammates' memories\n\n---\n`);
+  // <RECALL_TOOL> — Pass 2: agent-driven search
+  parts.push(`<RECALL_TOOL>\nYou can search your own memories mid-task for additional context. This is useful when the pre-loaded memories don't cover what you need.\n\n**Usage:** Run this command via your shell/terminal tool:\n\`\`\`\nteammates-recall search "<your query>" --dir .teammates --teammate ${teammate.name} --no-sync --json\n\`\`\`\n\n**Tips:**\n- Use specific, descriptive queries ("hooks lifecycle event naming decision" not "hooks")\n- Search iteratively: query → read result → refine query\n- The \`--json\` flag returns structured results for easier parsing\n- Results include a \`score\` field (0-1) — higher is more relevant\n- You can omit \`--teammate\` to search across all teammates' memories\n`);
 
-  // ── Handoff context (required when present) ─────────────────────
-  if (options?.handoffContext) {
-    parts.push(`## Handoff Context\n\n${options.handoffContext}\n\n---\n`);
-  }
-
-  // ── Output protocol (required — BEFORE session/memory updates) ──
-  // Placed first so agents produce text response before doing housekeeping.
-  // When output protocol is after memory updates, agents often end their turn
-  // with file edits and produce no visible text output.
-  parts.push(`## Output Protocol (CRITICAL)\n\n**Your #1 job is to produce a visible text response.** Session updates and memory writes are secondary — they support continuity but are not the deliverable. The user sees ONLY your text output. If you update files but return no text, the user sees an empty message and your work is invisible.\n\nFormat your response as:\n\n\`\`\`\nTO: user\n# <Subject line>\n\n<Body — full markdown response>\n\`\`\`\n\n**Handoffs:** To hand off work to a teammate, include a fenced handoff block anywhere in your response:\n\n\`\`\`\n\`\`\`handoff\n@<teammate>\n<task description — what you need them to do, with full context>\n\`\`\`\n\`\`\`\n\n**Rules:**\n- **You MUST end your turn with visible text output.** A turn that ends with only tool calls and no text is a failed turn.\n- The \`# Subject\` line is REQUIRED — it becomes the message title.\n- Always write a substantive body. Never return just the subject.\n- Use markdown: headings, lists, code blocks, bold, etc.\n- Do as much work as you can before handing off.\n- Only hand off to teammates listed in "Your Team" above.\n- The handoff block can appear anywhere in your response — it will be detected automatically.\n- **Write your text response FIRST, then update session/memory files.** This ensures visible output even if the agent turn ends early.\n\n---\n`);
-
-  // ── Session state (required) ────────────────────────────────────
-  if (options?.sessionFile) {
-    parts.push(`## Session State\n\nYour session file is at: \`${options.sessionFile}\`\n\n**After writing your text response**, append a brief entry to this file with:\n- What you did\n- Key decisions made\n- Files changed\n- Anything the next task should know\n\nThis is how you maintain continuity across tasks. Always read it, always update it.\n\n---\n`);
-  }
-
-  // ── Memory updates (required) ───────────────────────────────────
-  const today = new Date().toISOString().slice(0, 10);
-  parts.push(`## Memory Updates\n\n**After writing your text response**, update your memory files:\n\n1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist.\n   - What you did\n   - Key decisions made\n   - Files changed\n   - Anything the next task should know\n\n2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`name\`, \`description\`, \`type\`). Update existing memory files if the topic already has one.\n\n3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.\n\nThese files are your persistent memory. Without them, your next session starts from scratch.\n\n---\n`);
-
-  // ── Current date/time + environment (required, small) ───────────
+  // <ENVIRONMENT> — date/time + platform
   const now = new Date();
+  const today = now.toISOString().slice(0, 10);
   const os = platform();
   const osLabel = os === "win32" ? "Windows" : os === "darwin" ? "macOS" : "Linux";
   const slashNote = os === "win32"
@@ -345,15 +260,163 @@ export function buildTeammatePrompt(
   const userTimezone = tzMatch?.[1]?.trim();
   const tzLine = userTimezone ? `\n**Timezone:** ${userTimezone}` : "";
 
-  parts.push(`**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})\n**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}${tzLine}\n**Environment:** ${osLabel} — ${slashNote}\n\n---\n`);
+  parts.push(`<ENVIRONMENT>\n**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})\n**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}${tzLine}\n**Environment:** ${osLabel} — ${slashNote}\n`);
 
-  // ── User profile (always included when present) ────────────────
-  if (options?.userProfile?.trim()) {
-    parts.push(`## User Profile\n\n${options.userProfile.trim()}\n\n---\n`);
+  // ── Session context (middle-to-lower) ─────────────────────────────
+
+  // <DAILY_LOGS> — today's log (never trimmed) + days 2-7 (budget-allocated)
+  const todayLog = teammate.dailyLogs.slice(0, 1);
+  const pastLogs = teammate.dailyLogs.slice(1, 7); // days 2-7
+  let dailyBudget = DAILY_LOG_BUDGET_TOKENS;
+
+  if (todayLog.length > 0 || pastLogs.length > 0) {
+    const logLines = ["<DAILY_LOGS>"];
+
+    // Current daily log (today) — never trimmed, always included
+    for (const log of todayLog) {
+      logLines.push(`### ${log.date}\n${log.content}`);
+    }
+
+    // Days 2-7 — whole entries, up to 24k tokens
+    for (const log of pastLogs) {
+      const entry = `### ${log.date}\n${log.content}`;
+      const cost = estimateTokens(entry);
+      if (cost > dailyBudget) break;
+      logLines.push(entry);
+      dailyBudget -= cost;
+    }
+
+    parts.push(logLines.join("\n") + "\n");
   }
 
-  // ── Task (always included, excluded from budget) ────────────────
-  parts.push(`## Task\n\n${taskPrompt}\n\n---\n\n**REMINDER: Write your text response (TO: user) FIRST, then update session/memory files. A turn with only file edits and no text output is a failed turn.**`);
+  // <USER_PROFILE> — always included when present
+  if (options?.userProfile?.trim()) {
+    parts.push(`<USER_PROFILE>\n${options.userProfile.trim()}\n`);
+  }
+
+  // ── Task-adjacent context (close to task for maximum relevance) ───
+
+  // <RECALL_RESULTS> — budget-allocated, adjacent to task
+  const recallBudget = Math.max(RECALL_MIN_BUDGET_TOKENS, RECALL_MIN_BUDGET_TOKENS + dailyBudget);
+  const recallResults = options?.recallResults ?? [];
+  if (recallResults.length > 0) {
+    const lines = [
+      "<RECALL_RESULTS>",
+      "These memories were retrieved based on relevance to the current task:\n",
+    ];
+    const headerCost = estimateTokens(lines.join("\n"));
+    let recallUsed = headerCost;
+    for (const r of recallResults) {
+      const label = r.contentType
+        ? `[${r.contentType}] ${r.uri}`
+        : r.uri;
+      const entry = `### ${label}\n${r.text}`;
+      const cost = estimateTokens(entry);
+      if (recallUsed + cost > recallBudget + RECALL_OVERFLOW_TOKENS) break;
+      lines.push(entry);
+      recallUsed += cost;
+      // Stop cleanly at budget — but allow the current entry (overflow grace)
+      if (recallUsed >= recallBudget) break;
+    }
+    if (lines.length > 2) {
+      parts.push(lines.join("\n") + "\n");
+    }
+  }
+
+  // <HANDOFF_CONTEXT> — directly task-relevant when present
+  if (options?.handoffContext) {
+    parts.push(`<HANDOFF_CONTEXT>\n${options.handoffContext}\n`);
+  }
+
+  // ── The question ──────────────────────────────────────────────────
+
+  // <TASK> — always included, excluded from budget
+  parts.push(`<TASK>\n${taskPrompt}\n`);
+
+  // ── Bottom edge (high attention) — all instructions merged ────────
+
+  // <INSTRUCTIONS> — output protocol, handoffs, session state, memory updates
+  const instrLines = [
+    "<INSTRUCTIONS>",
+    "",
+    "### Output Protocol (CRITICAL)",
+    "",
+    "**Your #1 job is to produce a visible text response.** Session updates and memory writes are secondary — they support continuity but are not the deliverable. The user sees ONLY your text output. If you update files but return no text, the user sees an empty message and your work is invisible.",
+    "",
+    "Format your response as:",
+    "",
+    "```",
+    "TO: user",
+    "# <Subject line>",
+    "",
+    "<Body — full markdown response>",
+    "```",
+    "",
+    "**Rules:**",
+    "- **You MUST end your turn with visible text output.** A turn that ends with only tool calls and no text is a failed turn.",
+    "- The `# Subject` line is REQUIRED — it becomes the message title.",
+    "- Always write a substantive body. Never return just the subject.",
+    "- Use markdown: headings, lists, code blocks, bold, etc.",
+    "- **Write your text response FIRST, then update session/memory files.** This ensures visible output even if the agent turn ends early.",
+    "",
+    "### Handoffs",
+    "",
+    "To delegate work to a teammate, you MUST include a fenced code block with the language tag `handoff` in your text output. **This is the ONLY way to trigger a handoff.** Mentioning a handoff in plain English does NOT work — the system parses the fenced block, not your prose.",
+    "",
+    "Exact format (include the triple backticks exactly as shown):",
+    "",
+    "    ```handoff",
+    "    @<teammate-name>",
+    "    <task description with full context>",
+    "    ```",
+    "",
+    "Rules:",
+    `- Only hand off to teammates listed in \`<TEAM>\`.`,
+    "- Do as much work as you can BEFORE handing off.",
+    "- Do NOT just say \"I'll hand this off\" in prose — that does nothing. You MUST use the fenced block.",
+  ];
+
+  // Session state (conditional)
+  if (options?.sessionFile) {
+    instrLines.push(
+      "",
+      "### Session State",
+      "",
+      `Your session file is at: \`${options.sessionFile}\``,
+      "",
+      "**After writing your text response**, append a brief entry to this file with:",
+      "- What you did",
+      "- Key decisions made",
+      "- Files changed",
+      "- Anything the next task should know",
+      "",
+      "This is how you maintain continuity across tasks. Always read it, always update it.",
+    );
+  }
+
+  // Memory updates
+  instrLines.push(
+    "",
+    "### Memory Updates",
+    "",
+    "**After writing your text response**, update your memory files:",
+    "",
+    `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist.`,
+    "   - What you did",
+    "   - Key decisions made",
+    "   - Files changed",
+    "   - Anything the next task should know",
+    "",
+    `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`name\`, \`description\`, \`type\`). Update existing memory files if the topic already has one.`,
+    "",
+    "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
+    "",
+    "These files are your persistent memory. Without them, your next session starts from scratch.",
+    "",
+    "**REMINDER: Write your text response (TO: user) FIRST, then update session/memory files. A turn with only file edits and no text output is a failed turn.**",
+  );
+
+  parts.push(instrLines.join("\n"));
 
   return parts.join("\n");
 }

@@ -90,6 +90,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `src/api/**` — AI-powered endpoints (co-owned with Backend)
 - `src/services/**` — Services that consume model output (co-owned with SWE)
 
+### Routing
+
+- `model`, `ML`, `AI`, `training`, `inference`, `embedding`, `prompt`, `prediction`, `dataset`, `evaluation`
+
 ### Key Interfaces
 
 - `src/ml/**` — **Produces** ML predictions consumed by application services

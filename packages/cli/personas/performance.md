@@ -86,6 +86,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `.github/workflows/**` — CI workflows (co-owned with DevOps for benchmark steps)
 - `monitoring/**` — Performance monitoring (co-owned with SRE)
 
+### Routing
+
+- `benchmark`, `profile`, `latency`, `throughput`, `memory`, `optimization`, `p99`, `CPU`, `cache`
+
 ### Key Interfaces
 
 - `benchmarks/**` — **Produces** performance baselines consumed by CI gates

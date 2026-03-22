@@ -87,6 +87,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `package.json` — Mobile dependencies (co-owned with SWE)
 - `src/api/**` — API client layer (co-owned with Backend for contract alignment)
 
+### Routing
+
+- `iOS`, `Android`, `app`, `mobile`, `native`, `offline`, `device`, `push notification`, `app store`
+
 ### Key Interfaces
 
 - `src/**` — **Produces** the mobile application consumed by end users

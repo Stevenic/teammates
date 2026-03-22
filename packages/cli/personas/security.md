@@ -86,6 +86,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `.github/workflows/**` — CI workflows (co-owned with DevOps for security scanning steps)
 - `package.json` — Dependencies (co-owned with SWE for vulnerability review)
 
+### Routing
+
+- `auth`, `vulnerability`, `threat`, `CVE`, `secret`, `permission`, `token`, `encryption`, `OWASP`, `XSS`, `injection`
+
 ### Key Interfaces
 
 - `src/auth/**` — **Produces** auth middleware consumed by route handlers

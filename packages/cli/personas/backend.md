@@ -87,6 +87,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `src/auth/**` — Auth middleware (co-owned with Security)
 - `package.json` — Backend dependencies (co-owned with SWE)
 
+### Routing
+
+- `API`, `endpoint`, `route`, `middleware`, `service`, `request`, `response`, `REST`, `GraphQL`, `server`
+
 ### Key Interfaces
 
 - `src/api/**` — **Produces** API endpoints consumed by frontend and external clients

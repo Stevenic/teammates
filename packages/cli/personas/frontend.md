@@ -88,6 +88,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `src/api/**` — API client layer (co-owned with Backend for contract alignment)
 - `package.json` — Frontend dependencies (co-owned with SWE)
 
+### Routing
+
+- `UI`, `component`, `CSS`, `bundle`, `browser`, `render`, `state`, `responsive`, `DOM`, `client-side`
+
 ### Key Interfaces
 
 - `src/components/**` — **Produces** UI components consumed by page-level code

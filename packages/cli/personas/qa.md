@@ -86,6 +86,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `src/**` — Application code (co-owned with SWE for test-related reviews)
 - `.github/workflows/test*.yml` — Test CI workflows (co-owned with DevOps)
 
+### Routing
+
+- `test`, `quality`, `coverage`, `e2e`, `integration`, `regression`, `flaky`, `fixture`, `assertion`, `mock`
+
 ### Key Interfaces
 
 - `test-utils/**` — **Produces** testing utilities consumed by all test files

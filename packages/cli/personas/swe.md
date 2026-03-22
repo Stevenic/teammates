@@ -83,6 +83,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 
 - `README.md` — Code-related sections (co-owned with PM)
 
+### Routing
+
+- `code`, `implement`, `build`, `bug`, `feature`, `refactor`, `test`, `type error`, `module`, `package`, `dependency`
+
 ### Key Interfaces
 
 - `src/**` — **Produces** the application consumed by users and other packages

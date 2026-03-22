@@ -30,26 +30,27 @@ describe("buildTeammatePrompt", () => {
 
   it("includes the task", () => {
     const prompt = buildTeammatePrompt(makeConfig(), "fix the bug");
-    expect(prompt).toContain("## Task");
+    expect(prompt).toContain("<TASK>");
     expect(prompt).toContain("fix the bug");
   });
 
   it("includes output protocol", () => {
     const prompt = buildTeammatePrompt(makeConfig(), "task");
-    expect(prompt).toContain("## Output Protocol");
+    expect(prompt).toContain("<INSTRUCTIONS>");
+    expect(prompt).toContain("Output Protocol");
     expect(prompt).toContain("TO: user");
     expect(prompt).toContain("```handoff");
   });
 
   it("includes memory updates section", () => {
     const prompt = buildTeammatePrompt(makeConfig(), "task");
-    expect(prompt).toContain("## Memory Updates");
+    expect(prompt).toContain("### Memory Updates");
     expect(prompt).toContain(".teammates/beacon/memory/");
   });
 
   it("skips wisdom section when empty", () => {
     const prompt = buildTeammatePrompt(makeConfig({ wisdom: "" }), "task");
-    expect(prompt).not.toContain("## Your Wisdom");
+    expect(prompt).not.toContain("<WISDOM>");
   });
 
   it("includes wisdom when present", () => {
@@ -57,7 +58,7 @@ describe("buildTeammatePrompt", () => {
       makeConfig({ wisdom: "Some important wisdom" }),
       "task",
     );
-    expect(prompt).toContain("## Your Wisdom");
+    expect(prompt).toContain("<WISDOM>");
     expect(prompt).toContain("Some important wisdom");
   });
 
@@ -73,7 +74,7 @@ describe("buildTeammatePrompt", () => {
       { date: "2026-03-06", content: "Should be excluded" },
     ];
     const prompt = buildTeammatePrompt(makeConfig({ dailyLogs: logs }), "task");
-    expect(prompt).toContain("## Recent Daily Logs");
+    expect(prompt).toContain("<DAILY_LOGS>");
     expect(prompt).toContain("2026-03-13");
     expect(prompt).toContain("2026-03-07");
     expect(prompt).not.toContain("2026-03-06");
@@ -94,7 +95,7 @@ describe("buildTeammatePrompt", () => {
       },
     ];
     const prompt = buildTeammatePrompt(makeConfig(), "task", { roster });
-    expect(prompt).toContain("## Your Team");
+    expect(prompt).toContain("<TEAM>");
     expect(prompt).toContain("@scribe");
     expect(prompt).toContain("Documentation writer.");
     // Should not list self in roster
@@ -105,7 +106,7 @@ describe("buildTeammatePrompt", () => {
     const prompt = buildTeammatePrompt(makeConfig(), "task", {
       handoffContext: "Handed off from scribe with files changed",
     });
-    expect(prompt).toContain("## Handoff Context");
+    expect(prompt).toContain("<HANDOFF_CONTEXT>");
     expect(prompt).toContain("Handed off from scribe");
   });
 
@@ -113,7 +114,7 @@ describe("buildTeammatePrompt", () => {
     const prompt = buildTeammatePrompt(makeConfig(), "task", {
       sessionFile: "/tmp/beacon-session.md",
     });
-    expect(prompt).toContain("## Session State");
+    expect(prompt).toContain("### Session State");
     expect(prompt).toContain("/tmp/beacon-session.md");
   });
 
@@ -152,7 +153,7 @@ describe("buildTeammatePrompt", () => {
       ],
     });
     expect(prompt).toContain("2026-03-17");
-    expect(prompt).toContain("## Relevant Memories");
+    expect(prompt).toContain("<RECALL_RESULTS>");
   });
 
   it("recall gets unused daily log budget", () => {
@@ -170,7 +171,7 @@ describe("buildTeammatePrompt", () => {
         { teammate: "beacon", uri: "memory/big.md", text: recallText, score: 0.9, contentType: "typed_memory" },
       ],
     });
-    expect(prompt).toContain("## Relevant Memories");
+    expect(prompt).toContain("<RECALL_RESULTS>");
     expect(prompt).toContain("memory/big.md");
   });
 
@@ -180,8 +181,8 @@ describe("buildTeammatePrompt", () => {
       weeklyLogs: [{ week: "2026-W11", content: "short summary" }],
     });
     const prompt = buildTeammatePrompt(config, "task");
-    expect(prompt).toContain("## Recent Daily Logs");
-    expect(prompt).not.toContain("## Recent Weekly Summaries");
+    expect(prompt).toContain("<DAILY_LOGS>");
+    expect(prompt).not.toContain("Weekly Summaries");
   });
 
   it("excludes task prompt from budget calculation", () => {
@@ -192,7 +193,7 @@ describe("buildTeammatePrompt", () => {
     });
     const prompt = buildTeammatePrompt(config, bigTask);
     // Daily logs should still be included despite the huge task
-    expect(prompt).toContain("## Recent Daily Logs");
+    expect(prompt).toContain("<DAILY_LOGS>");
     expect(prompt).toContain("small log");
   });
 });
