@@ -8,10 +8,12 @@ export type {
 } from "./adapter.js";
 export {
   buildTeammatePrompt,
+  DAILY_LOG_BUDGET_TOKENS,
   formatHandoffContext,
   queryRecallContext,
   syncRecallIndex,
 } from "./adapter.js";
+export { autoCompactForBudget } from "./compact.js";
 export {
   type AgentPreset,
   CliProxyAdapter,

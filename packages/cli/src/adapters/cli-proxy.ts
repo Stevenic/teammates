@@ -26,7 +26,12 @@ import type {
   InstalledService,
   RosterEntry,
 } from "../adapter.js";
-import { buildTeammatePrompt, queryRecallContext } from "../adapter.js";
+import {
+  DAILY_LOG_BUDGET_TOKENS,
+  buildTeammatePrompt,
+  queryRecallContext,
+} from "../adapter.js";
+import { autoCompactForBudget } from "../compact.js";
 import type {
   HandoffEnvelope,
   SandboxLevel,
@@ -246,6 +251,22 @@ export class CliProxyAdapter implements AgentAdapter {
         ? await queryRecallContext(teammatesDir, teammate.name, prompt)
         : undefined;
 
+      // Auto-compact daily logs if they exceed the token budget
+      if (teammatesDir) {
+        const teammateDir = join(teammatesDir, teammate.name);
+        const compacted = await autoCompactForBudget(
+          teammateDir,
+          DAILY_LOG_BUDGET_TOKENS,
+        );
+        if (compacted) {
+          // Filter compacted dates out of in-memory daily logs
+          const compactedSet = new Set(compacted.compactedDates);
+          teammate.dailyLogs = teammate.dailyLogs.filter(
+            (log) => !compactedSet.has(log.date),
+          );
+        }
+      }
+
       // Read USER.md for injection into the prompt
       let userProfile: string | undefined;
       if (teammatesDir) {
@@ -296,11 +317,7 @@ export class CliProxyAdapter implements AgentAdapter {
     this.pendingTempFiles.add(promptFile);
 
     try {
-      const spawn = await this.spawnAndProxy(
-        teammate,
-        promptFile,
-        fullPrompt,
-      );
+      const spawn = await this.spawnAndProxy(teammate, promptFile, fullPrompt);
       const output = this.preset.parseOutput
         ? this.preset.parseOutput(spawn.output)
         : spawn.output;
@@ -732,7 +749,8 @@ function findNaturalLanguageHandoffs(
       .replace(/[.!]+$/, "") // strip trailing punctuation
       .trim();
     if (!task || task.length < 5) {
-      task = "(handoff detected from natural language — no task details provided)";
+      task =
+        "(handoff detected from natural language — no task details provided)";
     }
     results.push({ target, task });
   }

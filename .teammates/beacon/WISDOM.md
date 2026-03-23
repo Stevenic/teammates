@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-20
+Last compacted: 2026-03-23
 
 ---
 
@@ -15,14 +15,17 @@ WISDOM.md (distilled, read-only except during compaction), typed memory files (`
 ### Context window budget model
 Fixed sections always included (identity, wisdom, today's log, roster, protocol, USER.md). Daily logs (days 2-7) get 24k token pool. Recall gets min 8k + unused daily budget, with 4k overflow grace. Conversation history gets 24k tokens of recent entries + an agent-maintained running summary of older history. Weekly summaries excluded (recall indexes them). USER.md placed just before the task.
 
+### Prompt section ordering — instructions at the end
+Context/reference material (identity, wisdom, logs, recall, roster, services, handoff, date/time, user profile) stays at the top. Task sits in the middle. Instructions (output protocol, session state, memory updates, reminder) go at the end — leverages recency effect for agent attention.
+
 ### Conversation auto-summarization
 When conversation history exceeds 24k tokens, oldest entries are spliced out and queued as a `"summarize"` task to the coding agent. The running summary is invisible to the user. Reset on `/clear`.
 
 ### User avatar system (Campfire Phase 1)
-Users are represented as avatar teammates with `**Type:** human` in SOUL.md. The adapter is hidden — not registered when user has an alias. `selfName` (user alias) is the display identity everywhere; `adapterName` is for internal execution only. `@everyone` excludes both avatar and adapter.
+Users are represented as avatar teammates with `**Type:** human` in SOUL.md. The adapter is hidden — not registered when user has an alias. `selfName` (user alias) is the display identity everywhere; `adapterName` is for internal execution only. `@everyone` excludes both avatar and adapter. Display surfaces (roster, picker, status, errors) show `adapterName` while `selfName` is used for sender label, conversation history, internal routing, and memory folder.
 
 ### Onboarding happens pre-TUI
-User setup (GitHub or manual) runs before the TUI is created via `console.log` + `askInput`/`askChoice`. No mouse tracking issues. Team onboarding only runs if `.teammates/` was missing. `askInline()` is used for in-TUI prompts (e.g., `/configure`) to avoid stdin conflicts with consolonia.
+User setup (GitHub or manual) runs before the TUI is created via `console.log` + `askInput`/`askChoice`. No mouse tracking issues. Team onboarding only runs if `.teammates/` was missing. `askInline()` is used for in-TUI prompts (e.g., `/configure`) to avoid stdin conflicts with consolonia. Persona templates (`packages/cli/personas/`) provide scaffolding — `/init pick` for in-TUI selection.
 
 ### Assignment works via @mention, not /assign
 No `/assign` slash command. Assignment goes through `queueTask()`. Multi-mention dispatches to all mentioned teammates. Paste @mentions are pre-resolved from raw input before placeholder expansion to prevent routing on pasted content.
@@ -33,6 +36,15 @@ Un-mentioned messages route to `lastResult.teammate` first, then `orchestrator.r
 ### Route threshold prevents weak matches
 `Orchestrator.route()` requires a minimum score of 2 (at least one primary keyword match). Single secondary keyword matches (score 1) fall through.
 
+### Recall two-pass architecture
+**Pass 1 (pre-task, no LLM):** `buildQueryVariations()` generates 1-3 queries from task + conversation context. `matchMemoryCatalog()` does frontmatter text matching. `multiSearch()` fuses results with dedup by URI. **Pass 2 (mid-task):** Every teammate prompt includes a recall tool section documenting `teammates-recall search` CLI usage for agent-driven iterative queries.
+
+### Empty response defense — three layers
+1. **Two-phase prompt** — Output protocol before session/memory instructions; agents write text first, then do housekeeping. 2. **Raw retry** — If `rawOutput` is empty and `success` is true, fire retry with `raw: true` (no prompt wrapping). Second retry with minimal "just say Done" prompt. 3. **Synthetic fallback** — `displayTaskResult` generates body from `changedFiles` + `summary` metadata when text is still empty.
+
+### Handoff format requires fenced code blocks
+Agents must use ` ```handoff\n@name\ntask\n``` ` format. Natural-language handoff fallback (`findNaturalLanguageHandoffs()`) catches "hand off to @name" patterns as a safety net, but only fires when zero fenced blocks are found.
+
 ### Recall is bundled infrastructure
 `@teammates/recall` is a direct dependency of `@teammates/cli`. Pre-task recall queries use `skipSync: true` for speed. Sync runs after every task completion and on startup. No watch process needed.
 
@@ -42,8 +54,11 @@ Left: product name + version + adapter name. Right: `? /help` by default, tempor
 ### Debug logging lives in .tmp/debug/
 Every task writes a structured debug log to `.teammates/.tmp/debug/<teammate>-<timestamp>.md`. Claude adapter generates `--debug-file` agent logs in the same directory. Files >24h are cleaned on startup. `/debug` reads the last log and queues analysis to the coding agent.
 
+### Two-tier compaction — scheduled + budget-driven
+`compactDailies()` runs on startup for completed past weeks. `autoCompactForBudget()` runs pre-task in adapters when daily logs exceed `DAILY_LOG_BUDGET_TOKENS` (24k) — it compacts oldest weeks first, including the current week with `partial: true` frontmatter. Partial weeklies are merged by `compactDailies()` when more dailies arrive. Startup compaction uses silent mode — progress bar only unless actual work was done.
+
 ### Clean dist before rebuild
-After modifying any TypeScript source, run `rm -rf dist && npm run build` in the package. Stale artifacts in dist/ can mask compile errors.
+After modifying any TypeScript source, run `rm -rf dist && npm run build` in the package. Stale artifacts in dist/ can mask compile errors. Running CLI must be restarted after rebuilds — Node.js caches modules at startup.
 
 ### Folder naming convention in .teammates/
 No prefix = teammate folder (contains SOUL.md). `_` prefix = shared non-teammate folder, checked in. `.` prefix = local/ephemeral, gitignored. Registry skips `_` and `.` prefixed dirs when scanning for teammates.

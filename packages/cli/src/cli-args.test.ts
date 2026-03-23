@@ -1,8 +1,13 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { findTeammatesDir, parseCliArgs, PKG_VERSION, printUsage } from "./cli-args.js";
+import {
+  findTeammatesDir,
+  PKG_VERSION,
+  parseCliArgs,
+  printUsage,
+} from "./cli-args.js";
 
 describe("parseCliArgs", () => {
   it("returns defaults with no arguments", () => {

@@ -8,8 +8,8 @@
 
 import { platform } from "node:os";
 import {
-  Indexer,
   buildQueryVariations,
+  Indexer,
   matchMemoryCatalog,
   multiSearch,
   type SearchResult,
@@ -98,7 +98,10 @@ export async function queryRecallContext(
     // Build query variations: original + keywords + conversation topic
     // If no separate conversation context provided, use the task prompt itself
     // (which may contain prepended conversation history from the orchestrator)
-    const queries = buildQueryVariations(taskPrompt, conversationContext ?? taskPrompt);
+    const queries = buildQueryVariations(
+      taskPrompt,
+      conversationContext ?? taskPrompt,
+    );
     const primaryQuery = queries[0];
     const additionalQueries = queries.slice(1);
 
@@ -143,24 +146,17 @@ export async function syncRecallIndex(
   }
 }
 
-/**
- * Default token budget for the prompt wrapper (everything except the task).
- * ~64k tokens ≈ 256k chars at ~4 chars/token.
- * The task prompt itself is excluded from this budget — if a user pastes
- * a large input, that's intentional and we don't trim it.
- */
-const DEFAULT_TOKEN_BUDGET = 64_000;
+/** Approximate chars per token for budget estimation. */
 const CHARS_PER_TOKEN = 4;
 
 /**
  * Context budget allocation:
  * - Days 2-7 get up to DAILY_LOG_BUDGET tokens (whole entries)
  * - Recall gets at least RECALL_MIN_BUDGET, plus whatever daily logs didn't use
- * - Last recall entry can push total up to CONTEXT_BUDGET + RECALL_OVERFLOW (36k)
+ * - Last recall entry can push total up to budget + RECALL_OVERFLOW (4k grace)
  * - Weekly summaries are excluded (already indexed by recall)
  */
-const CONTEXT_BUDGET_TOKENS = 32_000;
-const DAILY_LOG_BUDGET_TOKENS = 24_000;
+export const DAILY_LOG_BUDGET_TOKENS = 24_000;
 const RECALL_MIN_BUDGET_TOKENS = 8_000;
 const RECALL_OVERFLOW_TOKENS = 4_000;
 
@@ -226,7 +222,7 @@ export function buildTeammatePrompt(
           : "";
       lines.push(`- **@${t.name}**: ${t.role}${owns}`);
     }
-    parts.push(lines.join("\n") + "\n");
+    parts.push(`${lines.join("\n")}\n`);
   }
 
   // <SERVICES> — installed services
@@ -240,27 +236,35 @@ export function buildTeammatePrompt(
       lines.push(svc.description);
       lines.push(`\n**Usage:** \`${svc.usage}\`\n`);
     }
-    parts.push(lines.join("\n") + "\n");
+    parts.push(`${lines.join("\n")}\n`);
   }
 
   // <RECALL_TOOL> — Pass 2: agent-driven search
-  parts.push(`<RECALL_TOOL>\nYou can search your own memories mid-task for additional context. This is useful when the pre-loaded memories don't cover what you need.\n\n**Usage:** Run this command via your shell/terminal tool:\n\`\`\`\nteammates-recall search "<your query>" --dir .teammates --teammate ${teammate.name} --no-sync --json\n\`\`\`\n\n**Tips:**\n- Use specific, descriptive queries ("hooks lifecycle event naming decision" not "hooks")\n- Search iteratively: query → read result → refine query\n- The \`--json\` flag returns structured results for easier parsing\n- Results include a \`score\` field (0-1) — higher is more relevant\n- You can omit \`--teammate\` to search across all teammates' memories\n`);
+  parts.push(
+    `<RECALL_TOOL>\nYou can search your own memories mid-task for additional context. This is useful when the pre-loaded memories don't cover what you need.\n\n**Usage:** Run this command via your shell/terminal tool:\n\`\`\`\nteammates-recall search "<your query>" --dir .teammates --teammate ${teammate.name} --no-sync --json\n\`\`\`\n\n**Tips:**\n- Use specific, descriptive queries ("hooks lifecycle event naming decision" not "hooks")\n- Search iteratively: query → read result → refine query\n- The \`--json\` flag returns structured results for easier parsing\n- Results include a \`score\` field (0-1) — higher is more relevant\n- You can omit \`--teammate\` to search across all teammates' memories\n`,
+  );
 
   // <ENVIRONMENT> — date/time + platform
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const os = platform();
-  const osLabel = os === "win32" ? "Windows" : os === "darwin" ? "macOS" : "Linux";
-  const slashNote = os === "win32"
-    ? "Use backslashes (`\\`) in file paths."
-    : "Use forward slashes (`/`) in file paths.";
+  const osLabel =
+    os === "win32" ? "Windows" : os === "darwin" ? "macOS" : "Linux";
+  const slashNote =
+    os === "win32"
+      ? "Use backslashes (`\\`) in file paths."
+      : "Use forward slashes (`/`) in file paths.";
 
   // Extract timezone from USER.md if available
-  const tzMatch = options?.userProfile?.match(/\*\*Primary Timezone:\*\*\s*(.+)/);
+  const tzMatch = options?.userProfile?.match(
+    /\*\*Primary Timezone:\*\*\s*(.+)/,
+  );
   const userTimezone = tzMatch?.[1]?.trim();
   const tzLine = userTimezone ? `\n**Timezone:** ${userTimezone}` : "";
 
-  parts.push(`<ENVIRONMENT>\n**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})\n**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}${tzLine}\n**Environment:** ${osLabel} — ${slashNote}\n`);
+  parts.push(
+    `<ENVIRONMENT>\n**Current date:** ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} (${today})\n**Current time:** ${now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}${tzLine}\n**Environment:** ${osLabel} — ${slashNote}\n`,
+  );
 
   // ── Session context (middle-to-lower) ─────────────────────────────
 
@@ -286,7 +290,7 @@ export function buildTeammatePrompt(
       dailyBudget -= cost;
     }
 
-    parts.push(logLines.join("\n") + "\n");
+    parts.push(`${logLines.join("\n")}\n`);
   }
 
   // <USER_PROFILE> — always included when present
@@ -297,7 +301,10 @@ export function buildTeammatePrompt(
   // ── Task-adjacent context (close to task for maximum relevance) ───
 
   // <RECALL_RESULTS> — budget-allocated, adjacent to task
-  const recallBudget = Math.max(RECALL_MIN_BUDGET_TOKENS, RECALL_MIN_BUDGET_TOKENS + dailyBudget);
+  const recallBudget = Math.max(
+    RECALL_MIN_BUDGET_TOKENS,
+    RECALL_MIN_BUDGET_TOKENS + dailyBudget,
+  );
   const recallResults = options?.recallResults ?? [];
   if (recallResults.length > 0) {
     const lines = [
@@ -307,9 +314,7 @@ export function buildTeammatePrompt(
     const headerCost = estimateTokens(lines.join("\n"));
     let recallUsed = headerCost;
     for (const r of recallResults) {
-      const label = r.contentType
-        ? `[${r.contentType}] ${r.uri}`
-        : r.uri;
+      const label = r.contentType ? `[${r.contentType}] ${r.uri}` : r.uri;
       const entry = `### ${label}\n${r.text}`;
       const cost = estimateTokens(entry);
       if (recallUsed + cost > recallBudget + RECALL_OVERFLOW_TOKENS) break;
@@ -319,7 +324,7 @@ export function buildTeammatePrompt(
       if (recallUsed >= recallBudget) break;
     }
     if (lines.length > 2) {
-      parts.push(lines.join("\n") + "\n");
+      parts.push(`${lines.join("\n")}\n`);
     }
   }
 
@@ -373,7 +378,7 @@ export function buildTeammatePrompt(
     "Rules:",
     `- Only hand off to teammates listed in \`<TEAM>\`.`,
     "- Do as much work as you can BEFORE handing off.",
-    "- Do NOT just say \"I'll hand this off\" in prose — that does nothing. You MUST use the fenced block.",
+    '- Do NOT just say "I\'ll hand this off" in prose — that does nothing. You MUST use the fenced block.',
   ];
 
   // Session state (conditional)

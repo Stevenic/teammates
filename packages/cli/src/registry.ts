@@ -228,7 +228,7 @@ function parseType(soul: string): TeammateType {
 function extractPatterns(section: string): string[] {
   const patterns: string[] = [];
   const regex = /`([^`]+)`/g;
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = regex.exec(section)) !== null) {
     patterns.push(match[1]);
   }

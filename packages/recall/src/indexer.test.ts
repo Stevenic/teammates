@@ -107,9 +107,11 @@ describe("Indexer", () => {
       expect(uris).toContain("beacon/memory/project_goals.md");
     });
 
-    it("skips daily logs (YYYY-MM-DD.md pattern)", async () => {
+    it("includes older daily logs but skips today's", async () => {
       const memDir = join(testDir, "beacon", "memory");
       await mkdir(memDir, { recursive: true });
+      const today = new Date().toISOString().slice(0, 10);
+      await writeFile(join(memDir, `${today}.md`), "# Today");
       await writeFile(join(memDir, "2026-03-14.md"), "# Day 1");
       await writeFile(join(memDir, "2026-03-15.md"), "# Day 2");
       await writeFile(join(memDir, "feedback_testing.md"), "# Feedback");
@@ -118,8 +120,9 @@ describe("Indexer", () => {
       const { files } = await indexer.collectFiles("beacon");
 
       const uris = files.map((f) => f.uri);
-      expect(uris).not.toContain("beacon/memory/2026-03-14.md");
-      expect(uris).not.toContain("beacon/memory/2026-03-15.md");
+      expect(uris).not.toContain(`beacon/memory/${today}.md`);
+      expect(uris).toContain("beacon/memory/2026-03-14.md");
+      expect(uris).toContain("beacon/memory/2026-03-15.md");
       expect(uris).toContain("beacon/memory/feedback_testing.md");
     });
 

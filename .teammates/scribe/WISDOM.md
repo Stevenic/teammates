@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-21
+Last compacted: 2026-03-23
 
 ---
 
@@ -31,7 +31,22 @@ Retro proposals don't self-apply. They were proposed 3 times across 2 days befor
 In `.teammates/`: no prefix = teammate folder, `_` prefix = shared checked-in content (`_standups/`, `_tasks/`), `.` prefix = local gitignored content (`.tmp/`, `.index/`).
 
 ### The three-project landscape
-P1 Parity (S16/S17/S26 — CLI feature parity with Claude Code), P2 Campfire (multi-human collaboration), P3 Hands (cross-agent computer use via MCP). Parity ships first because it unblocks everything else. Hands depends on S26 (MCP Passthrough).
+P1 Parity (S16/S17/S26 — CLI feature parity with Claude Code), P2 Campfire v0.5.0 (multi-human collaboration with twins, "no server first" design), P3 Hands (cross-agent computer use via MCP). Parity ships first because it unblocks everything else. Hands depends on S26 (MCP Passthrough).
 
 ### Specs live in scribe/docs/specs/
-All feature specs go in `.teammates/scribe/docs/specs/` with a pointer added to CROSS-TEAM.md Shared Docs. Naming: `S##-slug.md` for parity specs, `F#-slug.md` for novel features, `P#-slug.md` for project-level specs.
+All feature specs go in `.teammates/scribe/docs/specs/` with a pointer added to CROSS-TEAM.md Shared Docs. Naming: `S##-slug.md` for parity specs, `F#-slug.md` for novel features, `P#-slug.md` for project-level specs, `F-slug.md` for unnumbered feature specs.
+
+### Nothing automatic that a human doesn't control
+Twins and AI automation must use a propose-then-approve model. Smart defaults are fine (suggest the right action), but execution requires human confirmation. This applies to PM twin queue reordering, routing decisions, and any action with team-wide impact. User stated this explicitly — it's a hard rule, not a preference.
+
+### Worktrees are per-task, .teammates/ stays in main tree
+Code changes happen in a task worktree (branch: `teammates/<agent>/<task-slug>`), but `.teammates/` operations (memory, handoffs, session state) always happen in the main worktree via absolute path. This keeps handoffs and memory writes immediately visible to all agents. Only create worktrees for tasks touching files outside `.teammates/`.
+
+### Claims live in .git/, never committed
+Advisory file locks (`.git/teammates/claims/`) are inside the shared `.git` dir so all worktrees on the same machine can see them. Claims are NEVER committed to git — Phase 1 is single-machine only. Cross-machine claims require the Campfire server (Phase 2).
+
+### Recall is LLM-free — two-pass architecture
+Recall stays a pure search engine with no LLM dependency. Pass 1 (pre-task, no LLM): adapter fires keyword-extracted queries at recall, injects results into prompt. Pass 2 (during task): agent invokes recall as a tool/MCP server with full context. The agent does the reasoning, recall does the searching.
+
+### Teammates grow, they never shrink
+Evolution is always additive to experience. When a role changes (generalist → specialist), nothing is removed — the teammate evolves. SOUL.md = current state (always in context). RESUME.md = career history (loaded on demand, indexed in vector DB for associative recall). Past experience surfaces automatically through semantic search, not deliberate reflection triggers.

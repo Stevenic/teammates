@@ -149,7 +149,13 @@ describe("buildTeammatePrompt", () => {
     const recallText = "R".repeat(20_000); // ~5k tokens — fits in 8k min
     const prompt = buildTeammatePrompt(config, "task", {
       recallResults: [
-        { teammate: "beacon", uri: "memory/decision_foo.md", text: recallText, score: 0.9, contentType: "typed_memory" },
+        {
+          teammate: "beacon",
+          uri: "memory/decision_foo.md",
+          text: recallText,
+          score: 0.9,
+          contentType: "typed_memory",
+        },
       ],
     });
     expect(prompt).toContain("2026-03-17");
@@ -168,7 +174,13 @@ describe("buildTeammatePrompt", () => {
     const recallText = "R".repeat(80_000); // ~20k tokens — fits in (8k + ~24k unused)
     const prompt = buildTeammatePrompt(config, "task", {
       recallResults: [
-        { teammate: "beacon", uri: "memory/big.md", text: recallText, score: 0.9, contentType: "typed_memory" },
+        {
+          teammate: "beacon",
+          uri: "memory/big.md",
+          text: recallText,
+          score: 0.9,
+          contentType: "typed_memory",
+        },
       ],
     });
     expect(prompt).toContain("<RECALL_RESULTS>");

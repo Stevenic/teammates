@@ -74,15 +74,19 @@ export class Indexer {
       // No WISDOM.md
     }
 
-    // memory/*.md — typed memories only (skip raw daily logs, they're in prompt context)
+    // memory/*.md — typed memories + daily logs (day 2+)
+    // Today's daily log is excluded (still being written). Older dailies are
+    // indexed so recall can surface high-resolution episodic context beyond
+    // the 7-day prompt window. Dailies older than 30 days are purged elsewhere.
     const memoryDir = path.join(teammateDir, "memory");
+    const today = new Date().toISOString().slice(0, 10);
     try {
       const memoryEntries = await fs.readdir(memoryDir);
       for (const entry of memoryEntries) {
         if (!entry.endsWith(".md")) continue;
         const stem = path.basename(entry, ".md");
-        // Skip daily logs (YYYY-MM-DD) — they're already in prompt context
-        if (/^\d{4}-\d{2}-\d{2}$/.test(stem)) continue;
+        // Skip today's daily log — it's still being written and already in prompt context
+        if (stem === today) continue;
         files.push({
           uri: `${teammate}/memory/${entry}`,
           absolutePath: path.join(memoryDir, entry),
@@ -220,6 +224,25 @@ export class Indexer {
     }
 
     return count;
+  }
+
+  /**
+   * Delete a document from a teammate's index by URI.
+   * Used to purge stale daily logs after they age out on disk.
+   */
+  async deleteDocument(teammate: string, uri: string): Promise<void> {
+    const indexPath = this.indexPath(teammate);
+    const index = new LocalDocumentIndex({
+      folderPath: indexPath,
+      embeddings: this._embeddings,
+    });
+
+    if (!(await index.isIndexCreated())) return;
+
+    const docId = await index.getDocumentId(uri);
+    if (docId) {
+      await index.deleteDocument(uri);
+    }
   }
 
   /**

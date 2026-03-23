@@ -1,11 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  DEFAULT_THEME,
-  colorToHex,
-  setTheme,
-  theme,
-  tp,
-} from "./theme.js";
+import { colorToHex, DEFAULT_THEME, setTheme, theme, tp } from "./theme.js";
 
 describe("theme", () => {
   afterEach(() => {
@@ -23,16 +17,16 @@ describe("theme", () => {
   it("setTheme replaces the active theme", () => {
     const custom = {
       ...DEFAULT_THEME,
-      accent: { r: 255, g: 0, b: 0 },
+      accent: { r: 255, g: 0, b: 0, a: 255 },
     };
     setTheme(custom);
-    expect(theme().accent).toEqual({ r: 255, g: 0, b: 0 });
+    expect(theme().accent).toEqual({ r: 255, g: 0, b: 0, a: 255 });
   });
 
   it("setTheme creates a copy (not a reference)", () => {
     const custom = { ...DEFAULT_THEME };
     setTheme(custom);
-    custom.accent = { r: 0, g: 0, b: 0 };
+    custom.accent = { r: 0, g: 0, b: 0, a: 255 };
     // Should not be affected by mutation
     expect(theme().accent).toEqual(DEFAULT_THEME.accent);
   });
@@ -40,19 +34,19 @@ describe("theme", () => {
 
 describe("colorToHex", () => {
   it("converts RGB to uppercase hex string", () => {
-    expect(colorToHex({ r: 58, g: 150, b: 221 })).toBe("#3A96DD");
+    expect(colorToHex({ r: 58, g: 150, b: 221, a: 255 })).toBe("#3A96DD");
   });
 
   it("pads single-digit hex values with zero", () => {
-    expect(colorToHex({ r: 0, g: 0, b: 0 })).toBe("#000000");
+    expect(colorToHex({ r: 0, g: 0, b: 0, a: 255 })).toBe("#000000");
   });
 
   it("converts white correctly", () => {
-    expect(colorToHex({ r: 255, g: 255, b: 255 })).toBe("#FFFFFF");
+    expect(colorToHex({ r: 255, g: 255, b: 255, a: 255 })).toBe("#FFFFFF");
   });
 
   it("converts mid-range values", () => {
-    expect(colorToHex({ r: 128, g: 64, b: 32 })).toBe("#804020");
+    expect(colorToHex({ r: 128, g: 64, b: 32, a: 255 })).toBe("#804020");
   });
 });
 
@@ -97,10 +91,10 @@ describe("tp (themed pen shortcuts)", () => {
   });
 
   it("picks up theme changes", () => {
-    const custom = { ...DEFAULT_THEME, error: { r: 1, g: 2, b: 3 } };
+    const custom = { ...DEFAULT_THEME, error: { r: 1, g: 2, b: 3, a: 255 } };
     setTheme(custom);
     const result = tp.error("x");
-    expect(result[0].style.fg).toEqual({ r: 1, g: 2, b: 3 });
+    expect(result[0].style.fg).toEqual({ r: 1, g: 2, b: 3, a: 255 });
   });
 
   it("accentBright returns a styled span", () => {
