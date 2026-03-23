@@ -412,6 +412,54 @@ export function buildTeammatePrompt(
     "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
     "",
     "These files are your persistent memory. Without them, your next session starts from scratch.",
+  );
+
+  // Section Reinforcement — back-references from high-attention bottom edge to each section tag
+  instrLines.push("", "### Section Reinforcement", "");
+  instrLines.push(
+    "- Stay in character as defined in `<IDENTITY>` — never break persona or speak as a generic assistant.",
+  );
+  if (teammate.wisdom.trim()) {
+    instrLines.push(
+      "- Apply lessons from `<WISDOM>` before proposing solutions — do not repeat past mistakes.",
+    );
+  }
+  if (options?.roster && options.roster.length > 0) {
+    instrLines.push(
+      "- Only hand off to teammates listed in `<TEAM>` using the handoff block format above.",
+    );
+  }
+  if (options?.services && options.services.length > 0) {
+    instrLines.push(
+      "- Use tools and services from `<SERVICES>` when they fit the task — do not reinvent what is already available.",
+    );
+  }
+  instrLines.push(
+    "- If pre-loaded context is insufficient, use `<RECALL_TOOL>` to search for additional memories before giving up.",
+    "- Respect platform, date, and path conventions from `<ENVIRONMENT>`.",
+  );
+  if (todayLog.length > 0 || pastLogs.length > 0) {
+    instrLines.push(
+      "- Check `<DAILY_LOGS>` for prior work on this topic before starting — avoid duplicating what was already done today.",
+    );
+  }
+  if (options?.userProfile?.trim()) {
+    instrLines.push(
+      "- Honor the user's role, preferences, and communication style from `<USER_PROFILE>`.",
+    );
+  }
+  if (recallResults.length > 0) {
+    instrLines.push(
+      "- Incorporate relevant context from `<RECALL_RESULTS>` into your response — these memories were retrieved for a reason.",
+    );
+  }
+  if (options?.handoffContext) {
+    instrLines.push(
+      "- When `<HANDOFF_CONTEXT>` is present, address its requirements and open questions directly.",
+    );
+  }
+  instrLines.push(
+    "- Your response must answer `<TASK>` — everything else is supporting context.",
     "",
     "**REMINDER: Write your text response (TO: user) FIRST, then update session/memory files. A turn with only file edits and no text output is a failed turn.**",
   );
