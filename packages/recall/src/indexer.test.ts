@@ -107,9 +107,11 @@ describe("Indexer", () => {
       expect(uris).toContain("beacon/memory/project_goals.md");
     });
 
-    it("skips daily logs (YYYY-MM-DD.md pattern)", async () => {
+    it("includes older daily logs but skips today's", async () => {
       const memDir = join(testDir, "beacon", "memory");
       await mkdir(memDir, { recursive: true });
+      const today = new Date().toISOString().slice(0, 10);
+      await writeFile(join(memDir, `${today}.md`), "# Today");
       await writeFile(join(memDir, "2026-03-14.md"), "# Day 1");
       await writeFile(join(memDir, "2026-03-15.md"), "# Day 2");
       await writeFile(join(memDir, "feedback_testing.md"), "# Feedback");
@@ -118,8 +120,9 @@ describe("Indexer", () => {
       const { files } = await indexer.collectFiles("beacon");
 
       const uris = files.map((f) => f.uri);
-      expect(uris).not.toContain("beacon/memory/2026-03-14.md");
-      expect(uris).not.toContain("beacon/memory/2026-03-15.md");
+      expect(uris).not.toContain(`beacon/memory/${today}.md`);
+      expect(uris).toContain("beacon/memory/2026-03-14.md");
+      expect(uris).toContain("beacon/memory/2026-03-15.md");
       expect(uris).toContain("beacon/memory/feedback_testing.md");
     });
 
@@ -227,6 +230,78 @@ describe("Indexer", () => {
 
       expect(results.get("beacon")).toBe(1); // WISDOM.md only (SOUL.md not collected)
       expect(results.get("scribe")).toBe(0); // no indexable files
+    });
+  });
+
+  describe("upsertFile", () => {
+    it("upserts a single file into a new index", async () => {
+      const beacon = join(testDir, "beacon");
+      await mkdir(beacon, { recursive: true });
+      const filePath = join(beacon, "WISDOM.md");
+      await writeFile(filePath, "# Upsert test wisdom");
+
+      const indexer = createIndexer(testDir);
+      await indexer.upsertFile("beacon", filePath);
+
+      // Verify index was created by syncing (which reads the index)
+      const count = await indexer.syncTeammate("beacon");
+      expect(count).toBeGreaterThanOrEqual(1);
+    });
+
+    it("upserts into an existing index without rebuilding", async () => {
+      const beacon = join(testDir, "beacon");
+      const memDir = join(beacon, "memory");
+      await mkdir(memDir, { recursive: true });
+      await writeFile(join(beacon, "WISDOM.md"), "# Wisdom");
+
+      const indexer = createIndexer(testDir);
+      // Build initial index
+      await indexer.indexTeammate("beacon");
+
+      // Upsert a new file
+      const newFile = join(memDir, "feedback_test.md");
+      await writeFile(newFile, "# New feedback content");
+      await indexer.upsertFile("beacon", newFile);
+
+      // Sync should see both files
+      const count = await indexer.syncTeammate("beacon");
+      expect(count).toBe(2);
+    });
+
+    it("skips empty files", async () => {
+      const beacon = join(testDir, "beacon");
+      await mkdir(beacon, { recursive: true });
+      const filePath = join(beacon, "WISDOM.md");
+      await writeFile(filePath, "   "); // whitespace only
+
+      const indexer = createIndexer(testDir);
+      // Should not throw, just skip
+      await indexer.upsertFile("beacon", filePath);
+    });
+  });
+
+  describe("syncAll", () => {
+    it("syncs all discovered teammates", async () => {
+      const beacon = join(testDir, "beacon");
+      const scribe = join(testDir, "scribe");
+      await mkdir(beacon, { recursive: true });
+      await mkdir(scribe, { recursive: true });
+      await writeFile(join(beacon, "SOUL.md"), "# Beacon");
+      await writeFile(join(beacon, "WISDOM.md"), "# Beacon wisdom");
+      await writeFile(join(scribe, "SOUL.md"), "# Scribe");
+      await writeFile(join(scribe, "WISDOM.md"), "# Scribe wisdom");
+
+      const indexer = createIndexer(testDir);
+      const results = await indexer.syncAll();
+
+      expect(results.get("beacon")).toBe(1);
+      expect(results.get("scribe")).toBe(1);
+    });
+
+    it("returns empty map when no teammates exist", async () => {
+      const indexer = createIndexer(testDir);
+      const results = await indexer.syncAll();
+      expect(results.size).toBe(0);
     });
   });
 

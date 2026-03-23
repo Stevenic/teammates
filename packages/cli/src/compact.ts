@@ -13,6 +13,9 @@
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+/** How long daily logs are kept on disk before purging (30 days). */
+export const DAILY_LOG_RETENTION_DAYS = 30;
+
 export interface CompactionResult {
   teammate: string;
   weekliesCreated: string[];
@@ -52,7 +55,7 @@ function groupDailiesByWeek<T extends { date: string }>(
 ): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const daily of dailies) {
-    const d = new Date(`${daily.date}T00:00:00Z`);
+    const d = new Date(`${daily.date}T00:00:00`);
     const { year, week } = getISOWeek(d);
     const key = formatWeek(year, week);
     const group = groups.get(key) ?? ([] as T[]);
@@ -93,10 +96,13 @@ function groupWeekliesByMonth<T extends { week: string }>(
 /**
  * Build a weekly summary from daily logs.
  * This is a structural concatenation — the agent can refine it afterward.
+ * When `partial` is true, adds `partial: true` to frontmatter to indicate
+ * the week is incomplete and may be merged with later dailies.
  */
 function buildWeeklySummary(
   weekKey: string,
   dailies: { date: string; content: string }[],
+  partial = false,
 ): string {
   // Sort chronologically
   const sorted = [...dailies].sort((a, b) => a.date.localeCompare(b.date));
@@ -108,6 +114,7 @@ function buildWeeklySummary(
   lines.push(`type: weekly`);
   lines.push(`week: ${weekKey}`);
   lines.push(`period: ${firstDate} to ${lastDate}`);
+  if (partial) lines.push("partial: true");
   lines.push("---");
   lines.push("");
   lines.push(`# Week ${weekKey}`);
@@ -157,6 +164,7 @@ function buildMonthlySummary(
 /**
  * Compact daily logs into weekly summaries for a single teammate.
  * Only compacts complete weeks (not the current week).
+ * If a partial weekly exists for a week, merges new dailies into it.
  */
 export async function compactDailies(teammateDir: string): Promise<{
   created: string[];
@@ -187,12 +195,20 @@ export async function compactDailies(teammateDir: string): Promise<{
   const { year: curYear, week: curWeek } = getISOWeek(now);
   const currentWeek = formatWeek(curYear, curWeek);
 
-  // Check which weekly summaries already exist
+  // Check which weekly summaries already exist and which are partial
   const existingWeeklies = new Set<string>();
+  const partialWeeklies = new Set<string>();
   try {
     const wEntries = await readdir(weeklyDir);
     for (const e of wEntries) {
-      if (e.endsWith(".md")) existingWeeklies.add(basename(e, ".md"));
+      if (!e.endsWith(".md")) continue;
+      const stem = basename(e, ".md");
+      existingWeeklies.add(stem);
+      // Check if this weekly is partial
+      const content = await readFile(join(weeklyDir, e), "utf-8");
+      if (/^partial:\s*true/m.test(content)) {
+        partialWeeklies.add(stem);
+      }
     }
   } catch {
     // No weekly dir yet
@@ -204,7 +220,29 @@ export async function compactDailies(teammateDir: string): Promise<{
   for (const [weekKey, weekDailies] of groups) {
     // Skip current week
     if (weekKey === currentWeek) continue;
-    // Skip if weekly summary already exists
+
+    // If a partial weekly exists for this week, merge new dailies into it
+    if (partialWeeklies.has(weekKey)) {
+      const existingDailies = await extractDailiesFromWeekly(
+        join(weeklyDir, `${weekKey}.md`),
+      );
+      // Merge: combine existing + new, dedup by date
+      const dateSet = new Set(existingDailies.map((d) => d.date));
+      const merged = [...existingDailies];
+      for (const d of weekDailies) {
+        if (!dateSet.has(d.date)) {
+          merged.push({ date: d.date, content: d.content });
+          dateSet.add(d.date);
+        }
+      }
+      // Rewrite as non-partial (complete week now, since current week is excluded)
+      const summary = buildWeeklySummary(weekKey, merged, false);
+      await writeFile(join(weeklyDir, `${weekKey}.md`), summary, "utf-8");
+      created.push(`${weekKey}.md (merged)`);
+      continue;
+    }
+
+    // Skip if weekly summary already exists (non-partial)
     if (existingWeeklies.has(weekKey)) continue;
 
     // Create weekly dir if needed
@@ -216,14 +254,152 @@ export async function compactDailies(teammateDir: string): Promise<{
     await writeFile(weeklyFile, summary, "utf-8");
     created.push(`${weekKey}.md`);
 
-    // Delete the daily logs that were compacted
-    for (const daily of weekDailies) {
-      await unlink(join(memoryDir, daily.file)).catch(() => {});
-      removed.push(daily.file);
-    }
+    // Daily logs are kept on disk for DAILY_LOG_RETENTION_DAYS (purged separately)
   }
 
   return { created, removed };
+}
+
+/**
+ * Extract daily log entries from a weekly summary file.
+ * Parses `## YYYY-MM-DD` sections back into individual entries.
+ */
+async function extractDailiesFromWeekly(
+  weeklyPath: string,
+): Promise<{ date: string; content: string }[]> {
+  let raw: string;
+  try {
+    raw = await readFile(weeklyPath, "utf-8");
+  } catch {
+    return [];
+  }
+  // Strip frontmatter
+  raw = raw.replace(/^---[\s\S]*?---\s*\n/, "");
+  // Split on ## YYYY-MM-DD headers
+  const entries: { date: string; content: string }[] = [];
+  const parts = raw.split(/^## (\d{4}-\d{2}-\d{2})\s*$/m);
+  // parts[0] = preamble (# Week header), then alternating: date, content, date, content...
+  for (let i = 1; i < parts.length; i += 2) {
+    const date = parts[i];
+    const content = (parts[i + 1] ?? "").trim();
+    if (date && content) {
+      entries.push({ date, content });
+    }
+  }
+  return entries;
+}
+
+/** Approximate chars per token for budget estimation. */
+const CHARS_PER_TOKEN = 4;
+
+/** Estimate tokens from character count. */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+/**
+ * Auto-compact oldest daily logs into weekly summaries when the total
+ * daily log token count exceeds the budget. Unlike `compactDailies()`,
+ * this WILL compact the current week if needed, marking the result as
+ * `partial: true` in frontmatter. Partial weeklies are later merged
+ * by `compactDailies()` when more dailies arrive.
+ *
+ * @param teammateDir - Path to the teammate directory
+ * @param budgetTokens - Maximum token budget for daily logs
+ * @returns What was compacted, or null if budget was not exceeded
+ */
+export async function autoCompactForBudget(
+  teammateDir: string,
+  budgetTokens: number,
+): Promise<{ created: string[]; compactedDates: string[] } | null> {
+  const memoryDir = join(teammateDir, "memory");
+  const weeklyDir = join(memoryDir, "weekly");
+
+  // Read all daily logs
+  const entries = await readdir(memoryDir).catch(() => [] as string[]);
+  const dailies: { date: string; content: string; file: string }[] = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".md")) continue;
+    const stem = basename(entry, ".md");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(stem)) continue;
+    const content = await readFile(join(memoryDir, entry), "utf-8");
+    dailies.push({ date: stem, content, file: entry });
+  }
+
+  if (dailies.length === 0) return null;
+
+  // Sort chronologically (oldest first)
+  dailies.sort((a, b) => a.date.localeCompare(b.date));
+
+  // Estimate total token cost (excluding today — today is always in prompt)
+  const today = new Date().toISOString().slice(0, 10);
+  const pastDailies = dailies.filter((d) => d.date !== today);
+  const totalTokens = pastDailies.reduce(
+    (sum, d) => sum + estimateTokens(`### ${d.date}\n${d.content}`),
+    0,
+  );
+
+  // If under budget, nothing to do
+  if (totalTokens <= budgetTokens) return null;
+
+  // Group by ISO week
+  const groups = groupDailiesByWeek(pastDailies);
+
+  // Sort week keys chronologically (oldest first)
+  const sortedWeeks = [...groups.keys()].sort();
+
+  // Determine current week
+  const now = new Date();
+  const { year: curYear, week: curWeek } = getISOWeek(now);
+  const currentWeek = formatWeek(curYear, curWeek);
+
+  // Check existing weeklies
+  const existingWeeklies = new Set<string>();
+  try {
+    const wEntries = await readdir(weeklyDir);
+    for (const e of wEntries) {
+      if (e.endsWith(".md")) existingWeeklies.add(basename(e, ".md"));
+    }
+  } catch {
+    // No weekly dir yet
+  }
+
+  // Compact oldest weeks first until remaining dailies fit in budget
+  let remainingTokens = totalTokens;
+  const created: string[] = [];
+  const compactedDates: string[] = [];
+
+  for (const weekKey of sortedWeeks) {
+    if (remainingTokens <= budgetTokens) break;
+
+    // Skip weeks that already have a (non-partial) weekly summary
+    if (existingWeeklies.has(weekKey)) continue;
+
+    const weekDailies = groups.get(weekKey)!;
+    const weekTokens = weekDailies.reduce(
+      (sum, d) => sum + estimateTokens(`### ${d.date}\n${d.content}`),
+      0,
+    );
+
+    // Mark as partial if this is the current week
+    const isPartial = weekKey === currentWeek;
+
+    await mkdir(weeklyDir, { recursive: true });
+    const summary = buildWeeklySummary(weekKey, weekDailies, isPartial);
+    await writeFile(join(weeklyDir, `${weekKey}.md`), summary, "utf-8");
+    created.push(`${weekKey}.md${isPartial ? " (partial)" : ""}`);
+
+    for (const d of weekDailies) {
+      compactedDates.push(d.date);
+    }
+
+    remainingTokens -= weekTokens;
+  }
+
+  if (created.length === 0) return null;
+
+  return { created, compactedDates };
 }
 
 /**
@@ -387,18 +563,30 @@ export async function buildWisdomPrompt(
 
   const parts: string[] = [];
   parts.push("# Wisdom Distillation Task\n");
-  parts.push("Update your WISDOM.md by distilling durable knowledge from your typed memories, recent daily logs, and weekly summaries.\n");
+  parts.push(
+    "Update your WISDOM.md by distilling durable knowledge from your typed memories, recent daily logs, and weekly summaries.\n",
+  );
 
   parts.push("## Rules\n");
-  parts.push("- WISDOM.md contains **distilled principles and patterns** — not a changelog or task list");
-  parts.push("- Each entry should be a reusable insight: a convention, decision, pattern, gotcha, or codebase fact");
+  parts.push(
+    "- WISDOM.md contains **distilled principles and patterns** — not a changelog or task list",
+  );
+  parts.push(
+    "- Each entry should be a reusable insight: a convention, decision, pattern, gotcha, or codebase fact",
+  );
   parts.push("- Keep entries concise (2-4 lines each) with a bold title");
   parts.push("- Remove entries that are outdated or no longer accurate");
-  parts.push("- Update entries whose details have changed (e.g., line counts, file counts)");
+  parts.push(
+    "- Update entries whose details have changed (e.g., line counts, file counts)",
+  );
   parts.push("- Add new entries for durable knowledge not yet captured");
   parts.push(`- Set \`Last compacted: ${today}\` at the top`);
-  parts.push("- Do NOT include task-specific details, conversation history, or ephemeral state");
-  parts.push("- Do NOT include anything already in your SOUL.md (ownership, routing, technologies, etc.)\n");
+  parts.push(
+    "- Do NOT include task-specific details, conversation history, or ephemeral state",
+  );
+  parts.push(
+    "- Do NOT include anything already in your SOUL.md (ownership, routing, technologies, etc.)\n",
+  );
 
   if (currentWisdom) {
     parts.push("## Current WISDOM.md\n");
@@ -426,7 +614,37 @@ export async function buildWisdomPrompt(
   }
 
   parts.push("\n## Instructions\n");
-  parts.push(`Read your current WISDOM.md at \`.teammates/${teammateName}/WISDOM.md\` and rewrite it with updated, distilled entries. Write the file directly — this is the one time you are allowed to edit WISDOM.md.`);
+  parts.push(
+    `Read your current WISDOM.md at \`.teammates/${teammateName}/WISDOM.md\` and rewrite it with updated, distilled entries. Write the file directly — this is the one time you are allowed to edit WISDOM.md.`,
+  );
 
   return parts.join("\n");
+}
+
+/**
+ * Purge daily logs older than DAILY_LOG_RETENTION_DAYS from disk.
+ * Returns the list of deleted filenames.
+ */
+export async function purgeStaleDailies(
+  teammateDir: string,
+): Promise<string[]> {
+  const memoryDir = join(teammateDir, "memory");
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - DAILY_LOG_RETENTION_DAYS);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  const entries = await readdir(memoryDir).catch(() => [] as string[]);
+  const purged: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".md")) continue;
+    const stem = basename(entry, ".md");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(stem)) continue;
+    if (stem < cutoffStr) {
+      await unlink(join(memoryDir, entry)).catch(() => {});
+      purged.push(entry);
+    }
+  }
+
+  return purged;
 }

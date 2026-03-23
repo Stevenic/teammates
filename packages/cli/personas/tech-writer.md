@@ -87,6 +87,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `**/README.md` — Package-level docs (co-owned with package owners)
 - `src/**/*.ts` — JSDoc/TSDoc comments (co-owned with SWE)
 
+### Routing
+
+- `documentation`, `guide`, `tutorial`, `API docs`, `changelog`, `migration`, `README`, `example`, `reference`
+
 ### Key Interfaces
 
 - `docs/**` — **Produces** documentation consumed by external users

@@ -45,7 +45,7 @@ export interface SearchResult {
 /**
  * Classify a URI into a content type for priority scoring.
  */
-function classifyUri(uri: string): string {
+export function classifyUri(uri: string): string {
   if (uri.includes("/memory/weekly/")) return "weekly";
   if (uri.includes("/memory/monthly/")) return "monthly";
   // Typed memories are in memory/ but not daily logs (YYYY-MM-DD) and not in subdirs

@@ -86,6 +86,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `src/api/**` — API endpoints (co-owned with SWE for data access patterns)
 - `docker-compose.yml` — Database service configuration (co-owned with DevOps)
 
+### Routing
+
+- `database`, `migration`, `schema`, `query`, `SQL`, `seed`, `ORM`, `index`, `table`, `data model`
+
 ### Key Interfaces
 
 - `src/models/**` — **Produces** data types consumed by application code

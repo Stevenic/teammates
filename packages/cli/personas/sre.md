@@ -87,6 +87,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `.github/workflows/**` — CI workflows (co-owned with DevOps for deployment health gates)
 - `infrastructure/**` — Infrastructure (co-owned with DevOps for scaling and redundancy)
 
+### Routing
+
+- `monitoring`, `alert`, `SLO`, `incident`, `health check`, `latency`, `uptime`, `runbook`, `error budget`, `on-call`
+
 ### Key Interfaces
 
 - `monitoring/**` — **Produces** alerting rules consumed by on-call rotation

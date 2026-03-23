@@ -15,7 +15,7 @@
  * teammate name during scaffolding.
  */
 
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -102,7 +102,9 @@ export async function loadPersonas(): Promise<Persona[]> {
     /* personas dir missing — return empty */
   }
 
-  personas.sort((a, b) => a.tier - b.tier || a.persona.localeCompare(b.persona));
+  personas.sort(
+    (a, b) => a.tier - b.tier || a.persona.localeCompare(b.persona),
+  );
   return personas;
 }
 

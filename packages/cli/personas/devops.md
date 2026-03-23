@@ -87,6 +87,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `package.json` — Scripts section (co-owned with SWE)
 - `.env.example` — Environment variable documentation
 
+### Routing
+
+- `CI`, `CD`, `pipeline`, `deploy`, `release`, `workflow`, `action`, `build`, `publish`, `infrastructure`, `Docker`
+
 ### Key Interfaces
 
 - `.github/workflows/**` — **Produces** CI/CD pipelines consumed by the team

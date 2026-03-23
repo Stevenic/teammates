@@ -248,7 +248,5 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   } >> "$GITHUB_STEP_SUMMARY"
 fi
 
-# Exit with non-zero only if there are multi-primary conflicts (data quality issue)
-if [[ $multi_primary_count -gt 0 ]]; then
-  exit 1
-fi
+# Multi-primary is informational (co-ownership is valid) — never block merges
+exit 0

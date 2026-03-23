@@ -23,7 +23,12 @@ import type {
   InstalledService,
   RosterEntry,
 } from "../adapter.js";
-import { buildTeammatePrompt, queryRecallContext } from "../adapter.js";
+import {
+  DAILY_LOG_BUDGET_TOKENS,
+  buildTeammatePrompt,
+  queryRecallContext,
+} from "../adapter.js";
+import { autoCompactForBudget } from "../compact.js";
 import type { TaskResult, TeammateConfig } from "../types.js";
 import { parseResult } from "./cli-proxy.js";
 
@@ -122,6 +127,21 @@ export class CopilotAdapter implements AgentAdapter {
       const recall = teammatesDir
         ? await queryRecallContext(teammatesDir, teammate.name, prompt)
         : undefined;
+
+      // Auto-compact daily logs if they exceed the token budget
+      if (teammatesDir) {
+        const teammateDir = join(teammatesDir, teammate.name);
+        const compacted = await autoCompactForBudget(
+          teammateDir,
+          DAILY_LOG_BUDGET_TOKENS,
+        );
+        if (compacted) {
+          const compactedSet = new Set(compacted.compactedDates);
+          teammate.dailyLogs = teammate.dailyLogs.filter(
+            (log) => !compactedSet.has(log.date),
+          );
+        }
+      }
 
       // Read USER.md for injection into the prompt
       let userProfile: string | undefined;

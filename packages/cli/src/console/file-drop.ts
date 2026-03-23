@@ -150,7 +150,7 @@ export class FileDropHandler {
     const pathPattern =
       /(?:"([A-Za-z]:\\[^"]+)"|'([A-Za-z]:\\[^']+)'|([A-Za-z]:\\[^\s]+)|"(\/[^"]+)"|'(\/[^']+)'|(\/[^\s]+\.\w{1,5}))/g;
 
-    let match;
+    let match: RegExpExecArray | null;
     const replacements: { from: string; to: string }[] = [];
 
     while ((match = pathPattern.exec(input)) !== null) {

@@ -2,7 +2,15 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { compactDailies, compactEpisodic, compactWeeklies } from "./compact.js";
+import {
+  DAILY_LOG_RETENTION_DAYS,
+  autoCompactForBudget,
+  buildWisdomPrompt,
+  compactDailies,
+  compactEpisodic,
+  compactWeeklies,
+  purgeStaleDailies,
+} from "./compact.js";
 
 let testDir: string;
 
@@ -38,10 +46,8 @@ describe("compactDailies", () => {
 
     expect(result.created).toHaveLength(1);
     expect(result.created[0]).toBe("2024-W10.md");
-    expect(result.removed).toHaveLength(3);
-    expect(result.removed).toContain("2024-03-05.md");
-    expect(result.removed).toContain("2024-03-06.md");
-    expect(result.removed).toContain("2024-03-07.md");
+    // Daily logs are no longer deleted during compaction (kept 30 days)
+    expect(result.removed).toHaveLength(0);
 
     // Verify the weekly summary was actually written
     const weeklyDir = join(memDir, "weekly");
@@ -81,7 +87,8 @@ describe("compactDailies", () => {
     const result = await compactDailies(testDir);
 
     expect(result.created).toHaveLength(2);
-    expect(result.removed).toHaveLength(4);
+    // Daily logs are no longer deleted during compaction (kept 30 days)
+    expect(result.removed).toHaveLength(0);
   });
 
   it("skips weeks that already have a weekly summary", async () => {
@@ -259,7 +266,8 @@ describe("compactEpisodic", () => {
 
     expect(result.teammate).toBe("test");
     expect(result.weekliesCreated).toHaveLength(1);
-    expect(result.dailiesRemoved).toHaveLength(2);
+    // Daily logs are no longer deleted during compaction (kept 30 days)
+    expect(result.dailiesRemoved).toHaveLength(0);
     // The newly created weekly (2024-W10) is >52 weeks old, so compactWeeklies
     // immediately compacts it into a monthly summary
     expect(result.monthliesCreated).toHaveLength(1);
@@ -274,5 +282,418 @@ describe("compactEpisodic", () => {
     expect(result.monthliesCreated).toEqual([]);
     expect(result.dailiesRemoved).toEqual([]);
     expect(result.weekliesRemoved).toEqual([]);
+  });
+});
+
+describe("buildWisdomPrompt", () => {
+  it("returns null when no typed memories or daily logs exist", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    const result = await buildWisdomPrompt(testDir, "test");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when memory dir does not exist", async () => {
+    const result = await buildWisdomPrompt(testDir, "test");
+    expect(result).toBeNull();
+  });
+
+  it("includes typed memory files in the prompt", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(
+      join(memDir, "feedback_testing.md"),
+      "---\nname: Testing feedback\ntype: feedback\n---\nAlways run tests before committing.",
+    );
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+    expect(result).toContain("## Typed Memories");
+    expect(result).toContain("feedback_testing.md");
+    expect(result).toContain("Always run tests before committing.");
+  });
+
+  it("includes recent daily logs in the prompt", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    const today = new Date().toISOString().slice(0, 10);
+    await writeFile(join(memDir, `${today}.md`), "# Today\n\nDid some work.");
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+    expect(result).toContain("## Recent Daily Logs");
+    expect(result).toContain("Did some work.");
+  });
+
+  it("includes current WISDOM.md in the prompt when it exists", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(
+      join(testDir, "WISDOM.md"),
+      "# Beacon — Wisdom\n\n### Important pattern\nAlways check types.",
+    );
+    await writeFile(
+      join(memDir, "decision_types.md"),
+      "---\nname: Type checking\ntype: decision\n---\nUse strict mode.",
+    );
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+    expect(result).toContain("## Current WISDOM.md");
+    expect(result).toContain("Important pattern");
+  });
+
+  it("skips daily log files from typed memories", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(join(memDir, "2026-03-20.md"), "# Daily log content");
+    await writeFile(
+      join(memDir, "feedback_test.md"),
+      "---\nname: Test\ntype: feedback\n---\nSome feedback.",
+    );
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+
+    // Typed memories should NOT include the daily log
+    const typedSection = result!.indexOf("## Typed Memories");
+    const dailySection = result!.indexOf("## Recent Daily Logs");
+    if (typedSection >= 0) {
+      const typedContent = result!.slice(
+        typedSection,
+        dailySection > typedSection ? dailySection : undefined,
+      );
+      expect(typedContent).not.toContain("2026-03-20.md");
+    }
+  });
+
+  it("includes distillation rules", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(
+      join(memDir, "ref_test.md"),
+      "---\nname: Ref\ntype: reference\n---\nA reference.",
+    );
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+    expect(result).toContain("## Rules");
+    expect(result).toContain("distilled principles");
+    expect(result).toContain("Last compacted:");
+  });
+
+  it("limits daily logs to 7 most recent", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    // Create 10 daily logs
+    for (let i = 1; i <= 10; i++) {
+      const day = i.toString().padStart(2, "0");
+      await writeFile(join(memDir, `2026-03-${day}.md`), `# Day ${i}`);
+    }
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+
+    // Should include most recent 7, not all 10
+    // Count the day headers in the Recent Daily Logs section
+    const dailySection = result!.slice(result!.indexOf("## Recent Daily Logs"));
+    const dayHeaders = dailySection.match(/### 2026-03-\d{2}/g);
+    expect(dayHeaders).toHaveLength(7);
+  });
+
+  it("includes teammate name in instructions", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(
+      join(memDir, "ref_x.md"),
+      "---\nname: X\ntype: reference\n---\nContent.",
+    );
+
+    const result = await buildWisdomPrompt(testDir, "mybot");
+    expect(result).not.toBeNull();
+    expect(result).toContain(".teammates/mybot/WISDOM.md");
+  });
+});
+
+describe("autoCompactForBudget", () => {
+  it("returns null when daily logs are under budget", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    // Write a small daily log from a past week
+    await writeFile(join(memDir, "2024-03-05.md"), "# Short log");
+
+    const result = await autoCompactForBudget(testDir, 100_000);
+    expect(result).toBeNull();
+  });
+
+  it("compacts oldest weeks when over budget", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    // Create large daily logs in two past weeks (W10 and W11)
+    const bigContent = "x".repeat(50_000); // ~12,500 tokens each
+    await writeFile(join(memDir, "2024-03-05.md"), bigContent); // W10
+    await writeFile(join(memDir, "2024-03-06.md"), bigContent); // W10
+    await writeFile(join(memDir, "2024-03-12.md"), bigContent); // W11
+    await writeFile(join(memDir, "2024-03-13.md"), bigContent); // W11
+
+    // Budget that fits ~2 logs but not 4
+    const result = await autoCompactForBudget(testDir, 30_000);
+    expect(result).not.toBeNull();
+    expect(result!.created.length).toBeGreaterThanOrEqual(1);
+    // Oldest week (W10) should be compacted first
+    expect(result!.created[0]).toContain("2024-W10");
+    expect(result!.compactedDates).toContain("2024-03-05");
+    expect(result!.compactedDates).toContain("2024-03-06");
+
+    // Verify weekly file was written
+    const weeklyDir = join(memDir, "weekly");
+    const files = await readdir(weeklyDir);
+    expect(files).toContain("2024-W10.md");
+  });
+
+  it("marks current week compaction as partial", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    // Create a large daily log in a past week and one for today's week
+    const bigContent = "x".repeat(100_000); // ~25,000 tokens
+    await writeFile(join(memDir, "2024-03-05.md"), bigContent); // W10
+
+    // Create a log in current week (not today specifically)
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    await writeFile(join(memDir, `${yesterdayStr}.md`), bigContent);
+
+    // Very tight budget forces compacting both weeks
+    const result = await autoCompactForBudget(testDir, 1_000);
+    expect(result).not.toBeNull();
+
+    // Check if any entry is marked partial (current week)
+    const weeklyDir = join(memDir, "weekly");
+    const files = await readdir(weeklyDir);
+
+    let hasPartial = false;
+    for (const f of files) {
+      const content = await readFile(join(weeklyDir, f), "utf-8");
+      if (content.includes("partial: true")) {
+        hasPartial = true;
+      }
+    }
+
+    // If yesterday is in a different week than today, there may not be a partial
+    // But W10 should always be compacted
+    expect(result!.created.some((c) => c.includes("2024-W10"))).toBe(true);
+    // If the current week was compacted, it should be partial
+    const currentWeekCompacted = result!.created.find((c) =>
+      c.includes("(partial)"),
+    );
+    if (currentWeekCompacted) {
+      expect(hasPartial).toBe(true);
+    }
+  });
+
+  it("skips today's log when calculating budget", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    // Write today's log (should not be compacted)
+    const today = new Date().toISOString().slice(0, 10);
+    const bigContent = "x".repeat(200_000);
+    await writeFile(join(memDir, `${today}.md`), bigContent);
+
+    // Even with a tiny budget, today should not trigger compaction
+    const result = await autoCompactForBudget(testDir, 1_000);
+    // No past dailies to compact, so result should be null
+    expect(result).toBeNull();
+  });
+
+  it("returns null when memory dir does not exist", async () => {
+    const result = await autoCompactForBudget(testDir, 24_000);
+    expect(result).toBeNull();
+  });
+
+  it("does not compact weeks that already have a weekly summary", async () => {
+    const memDir = join(testDir, "memory");
+    const weeklyDir = join(memDir, "weekly");
+    await mkdir(weeklyDir, { recursive: true });
+
+    const bigContent = "x".repeat(100_000);
+    await writeFile(join(memDir, "2024-03-05.md"), bigContent); // W10
+    await writeFile(join(memDir, "2024-03-12.md"), bigContent); // W11
+
+    // Pre-existing weekly for W10
+    await writeFile(join(weeklyDir, "2024-W10.md"), "# Already compacted");
+
+    const result = await autoCompactForBudget(testDir, 1_000);
+    expect(result).not.toBeNull();
+    // Should compact W11, not W10
+    expect(result!.created.some((c) => c.includes("2024-W11"))).toBe(true);
+    expect(result!.created.some((c) => c.includes("2024-W10"))).toBe(false);
+  });
+});
+
+describe("compactDailies — partial merge", () => {
+  it("merges new dailies into a partial weekly", async () => {
+    const memDir = join(testDir, "memory");
+    const weeklyDir = join(memDir, "weekly");
+    await mkdir(weeklyDir, { recursive: true });
+
+    // Create a partial weekly for W10 with only 2024-03-05
+    const partialContent = [
+      "---",
+      "type: weekly",
+      "week: 2024-W10",
+      "period: 2024-03-05 to 2024-03-05",
+      "partial: true",
+      "---",
+      "",
+      "# Week 2024-W10",
+      "",
+      "## 2024-03-05",
+      "",
+      "# Tuesday work",
+      "",
+    ].join("\n");
+    await writeFile(join(weeklyDir, "2024-W10.md"), partialContent);
+
+    // Add new dailies for the same week
+    await writeFile(join(memDir, "2024-03-06.md"), "# Wednesday work");
+    await writeFile(join(memDir, "2024-03-07.md"), "# Thursday work");
+
+    const result = await compactDailies(testDir);
+
+    expect(result.created).toHaveLength(1);
+    expect(result.created[0]).toBe("2024-W10.md (merged)");
+
+    // Verify the merged weekly has all 3 days and no partial flag
+    const content = await readFile(join(weeklyDir, "2024-W10.md"), "utf-8");
+    expect(content).toContain("2024-03-05");
+    expect(content).toContain("2024-03-06");
+    expect(content).toContain("2024-03-07");
+    expect(content).toContain("Tuesday work");
+    expect(content).toContain("Wednesday work");
+    expect(content).toContain("Thursday work");
+    expect(content).not.toContain("partial: true");
+  });
+
+  it("does not duplicate dates when merging", async () => {
+    const memDir = join(testDir, "memory");
+    const weeklyDir = join(memDir, "weekly");
+    await mkdir(weeklyDir, { recursive: true });
+
+    // Partial weekly with 2024-03-05
+    const partialContent = [
+      "---",
+      "type: weekly",
+      "week: 2024-W10",
+      "period: 2024-03-05 to 2024-03-05",
+      "partial: true",
+      "---",
+      "",
+      "# Week 2024-W10",
+      "",
+      "## 2024-03-05",
+      "",
+      "# Original Tuesday",
+      "",
+    ].join("\n");
+    await writeFile(join(weeklyDir, "2024-W10.md"), partialContent);
+
+    // Same date exists as a daily log (shouldn't duplicate)
+    await writeFile(join(memDir, "2024-03-05.md"), "# Updated Tuesday");
+    await writeFile(join(memDir, "2024-03-06.md"), "# Wednesday");
+
+    const result = await compactDailies(testDir);
+
+    const content = await readFile(join(weeklyDir, "2024-W10.md"), "utf-8");
+    // Should contain the original (from partial), not duplicated
+    const tuesdayMatches = content.match(/## 2024-03-05/g);
+    expect(tuesdayMatches).toHaveLength(1);
+  });
+
+  it("skips non-partial existing weeklies", async () => {
+    const memDir = join(testDir, "memory");
+    const weeklyDir = join(memDir, "weekly");
+    await mkdir(weeklyDir, { recursive: true });
+
+    // Complete (non-partial) weekly
+    const completeContent = [
+      "---",
+      "type: weekly",
+      "week: 2024-W10",
+      "period: 2024-03-05 to 2024-03-07",
+      "---",
+      "",
+      "# Week 2024-W10",
+      "",
+      "## 2024-03-05",
+      "",
+      "# Content",
+      "",
+    ].join("\n");
+    await writeFile(join(weeklyDir, "2024-W10.md"), completeContent);
+
+    await writeFile(join(memDir, "2024-03-06.md"), "# New daily");
+
+    const result = await compactDailies(testDir);
+
+    expect(result.created).toHaveLength(0);
+  });
+});
+
+describe("purgeStaleDailies", () => {
+  it("deletes daily logs older than retention period", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    // Create a daily log well past the retention period
+    const old = new Date();
+    old.setDate(old.getDate() - DAILY_LOG_RETENTION_DAYS - 5);
+    const oldDate = old.toISOString().slice(0, 10);
+    await writeFile(join(memDir, `${oldDate}.md`), "# Old log");
+
+    // Create a recent daily log
+    const recent = new Date();
+    recent.setDate(recent.getDate() - 2);
+    const recentDate = recent.toISOString().slice(0, 10);
+    await writeFile(join(memDir, `${recentDate}.md`), "# Recent log");
+
+    // Create a typed memory (should not be touched)
+    await writeFile(join(memDir, "feedback_test.md"), "# Feedback");
+
+    const purged = await purgeStaleDailies(testDir);
+
+    expect(purged).toContain(`${oldDate}.md`);
+    expect(purged).not.toContain(`${recentDate}.md`);
+    expect(purged).not.toContain("feedback_test.md");
+
+    // Verify the old file is gone and others remain
+    const remaining = await readdir(memDir);
+    expect(remaining).not.toContain(`${oldDate}.md`);
+    expect(remaining).toContain(`${recentDate}.md`);
+    expect(remaining).toContain("feedback_test.md");
+  });
+
+  it("returns empty array when no stale logs exist", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    const today = new Date().toISOString().slice(0, 10);
+    await writeFile(join(memDir, `${today}.md`), "# Today");
+
+    const purged = await purgeStaleDailies(testDir);
+    expect(purged).toHaveLength(0);
   });
 });

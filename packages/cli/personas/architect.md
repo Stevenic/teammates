@@ -85,6 +85,10 @@ Each session, you wake up fresh. These files _are_ your memory. Read them. Updat
 - `packages/*/package.json` — Package dependencies (co-owned with SWE)
 - `tsconfig.json` / build configuration — Compilation boundaries
 
+### Routing
+
+- `architecture`, `ADR`, `boundary`, `dependency`, `contract`, `design`, `system design`, `module`, `abstraction`
+
 ### Key Interfaces
 
 - `docs/architecture/**` — **Produces** ADRs and design docs consumed by the team

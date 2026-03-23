@@ -94,8 +94,12 @@ export class Orchestrator {
     }
 
     this.onEvent({ type: "task_assigned", assignment });
-    const prevPresence = this.statuses.get(assignment.teammate)?.presence ?? "online";
-    this.statuses.set(assignment.teammate, { state: "working", presence: prevPresence });
+    const prevPresence =
+      this.statuses.get(assignment.teammate)?.presence ?? "online";
+    this.statuses.set(assignment.teammate, {
+      state: "working",
+      presence: prevPresence,
+    });
 
     // Get or create session
     let sessionId = this.sessions.get(assignment.teammate);
@@ -117,7 +121,8 @@ export class Orchestrator {
     this.onEvent({ type: "task_completed", result });
 
     // Update status (preserve presence)
-    const postPresence = this.statuses.get(assignment.teammate)?.presence ?? "online";
+    const postPresence =
+      this.statuses.get(assignment.teammate)?.presence ?? "online";
     this.statuses.set(assignment.teammate, {
       state: "idle",
       presence: postPresence,

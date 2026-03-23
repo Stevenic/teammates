@@ -19,7 +19,11 @@ import type { PresenceState } from "./types.js";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-export type ServiceStatus = "bundled" | "missing" | "not-configured" | "configured";
+export type ServiceStatus =
+  | "bundled"
+  | "missing"
+  | "not-configured"
+  | "configured";
 
 export interface ServiceInfo {
   name: string;
@@ -138,17 +142,30 @@ export class AnimatedBanner extends Control {
     lines.push(concat(tp.accent(tmBot), tp.muted(gap + info.cwd)));
     // Service status rows
     for (const svc of info.services) {
-      const isBundledOrConfigured = svc.status === "bundled" || svc.status === "configured";
-      const icon = isBundledOrConfigured ? "● " : svc.status === "not-configured" ? "◐ " : "○ ";
+      const isBundledOrConfigured =
+        svc.status === "bundled" || svc.status === "configured";
+      const icon = isBundledOrConfigured
+        ? "● "
+        : svc.status === "not-configured"
+          ? "◐ "
+          : "○ ";
       const color = isBundledOrConfigured ? tp.success : tp.warning;
-      const label = svc.status === "bundled"
-        ? "bundled"
-        : svc.status === "configured"
-          ? "configured"
-          : svc.status === "not-configured"
-            ? `not configured — /configure ${svc.name.toLowerCase()}`
-            : `missing — /configure ${svc.name.toLowerCase()}`;
-      lines.push(concat(tp.text(tmPad + gap), color(icon), color(svc.name), tp.muted(` ${label}`)));
+      const label =
+        svc.status === "bundled"
+          ? "bundled"
+          : svc.status === "configured"
+            ? "configured"
+            : svc.status === "not-configured"
+              ? `not configured — /configure ${svc.name.toLowerCase()}`
+              : `missing — /configure ${svc.name.toLowerCase()}`;
+      lines.push(
+        concat(
+          tp.text(tmPad + gap),
+          color(icon),
+          color(svc.name),
+          tp.muted(` ${label}`),
+        ),
+      );
     }
 
     // blank

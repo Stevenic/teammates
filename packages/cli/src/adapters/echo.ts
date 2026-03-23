@@ -24,7 +24,9 @@ export class EchoAdapter implements AgentAdapter {
     prompt: string,
     options?: { raw?: boolean },
   ): Promise<TaskResult> {
-    const fullPrompt = options?.raw ? prompt : buildTeammatePrompt(teammate, prompt);
+    const fullPrompt = options?.raw
+      ? prompt
+      : buildTeammatePrompt(teammate, prompt);
 
     return {
       teammate: teammate.name,
