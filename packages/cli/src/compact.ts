@@ -52,7 +52,7 @@ function groupDailiesByWeek<T extends { date: string }>(
 ): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const daily of dailies) {
-    const d = new Date(`${daily.date}T00:00:00Z`);
+    const d = new Date(`${daily.date}T00:00:00`);
     const { year, week } = getISOWeek(d);
     const key = formatWeek(year, week);
     const group = groups.get(key) ?? ([] as T[]);

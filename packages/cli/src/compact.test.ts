@@ -2,7 +2,12 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { compactDailies, compactEpisodic, compactWeeklies } from "./compact.js";
+import {
+  buildWisdomPrompt,
+  compactDailies,
+  compactEpisodic,
+  compactWeeklies,
+} from "./compact.js";
 
 let testDir: string;
 
@@ -274,5 +279,137 @@ describe("compactEpisodic", () => {
     expect(result.monthliesCreated).toEqual([]);
     expect(result.dailiesRemoved).toEqual([]);
     expect(result.weekliesRemoved).toEqual([]);
+  });
+});
+
+describe("buildWisdomPrompt", () => {
+  it("returns null when no typed memories or daily logs exist", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    const result = await buildWisdomPrompt(testDir, "test");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when memory dir does not exist", async () => {
+    const result = await buildWisdomPrompt(testDir, "test");
+    expect(result).toBeNull();
+  });
+
+  it("includes typed memory files in the prompt", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(
+      join(memDir, "feedback_testing.md"),
+      "---\nname: Testing feedback\ntype: feedback\n---\nAlways run tests before committing.",
+    );
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+    expect(result).toContain("## Typed Memories");
+    expect(result).toContain("feedback_testing.md");
+    expect(result).toContain("Always run tests before committing.");
+  });
+
+  it("includes recent daily logs in the prompt", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    const today = new Date().toISOString().slice(0, 10);
+    await writeFile(join(memDir, `${today}.md`), "# Today\n\nDid some work.");
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+    expect(result).toContain("## Recent Daily Logs");
+    expect(result).toContain("Did some work.");
+  });
+
+  it("includes current WISDOM.md in the prompt when it exists", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(
+      join(testDir, "WISDOM.md"),
+      "# Beacon — Wisdom\n\n### Important pattern\nAlways check types.",
+    );
+    await writeFile(
+      join(memDir, "decision_types.md"),
+      "---\nname: Type checking\ntype: decision\n---\nUse strict mode.",
+    );
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+    expect(result).toContain("## Current WISDOM.md");
+    expect(result).toContain("Important pattern");
+  });
+
+  it("skips daily log files from typed memories", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(join(memDir, "2026-03-20.md"), "# Daily log content");
+    await writeFile(
+      join(memDir, "feedback_test.md"),
+      "---\nname: Test\ntype: feedback\n---\nSome feedback.",
+    );
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+
+    // Typed memories should NOT include the daily log
+    const typedSection = result!.indexOf("## Typed Memories");
+    const dailySection = result!.indexOf("## Recent Daily Logs");
+    if (typedSection >= 0) {
+      const typedContent = result!.slice(
+        typedSection,
+        dailySection > typedSection ? dailySection : undefined,
+      );
+      expect(typedContent).not.toContain("2026-03-20.md");
+    }
+  });
+
+  it("includes distillation rules", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(join(memDir, "ref_test.md"), "---\nname: Ref\ntype: reference\n---\nA reference.");
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+    expect(result).toContain("## Rules");
+    expect(result).toContain("distilled principles");
+    expect(result).toContain("Last compacted:");
+  });
+
+  it("limits daily logs to 7 most recent", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    // Create 10 daily logs
+    for (let i = 1; i <= 10; i++) {
+      const day = i.toString().padStart(2, "0");
+      await writeFile(join(memDir, `2026-03-${day}.md`), `# Day ${i}`);
+    }
+
+    const result = await buildWisdomPrompt(testDir, "beacon");
+    expect(result).not.toBeNull();
+
+    // Should include most recent 7, not all 10
+    // Count the day headers in the Recent Daily Logs section
+    const dailySection = result!.slice(result!.indexOf("## Recent Daily Logs"));
+    const dayHeaders = dailySection.match(/### 2026-03-\d{2}/g);
+    expect(dayHeaders).toHaveLength(7);
+  });
+
+  it("includes teammate name in instructions", async () => {
+    const memDir = join(testDir, "memory");
+    await mkdir(memDir, { recursive: true });
+
+    await writeFile(join(memDir, "ref_x.md"), "---\nname: X\ntype: reference\n---\nContent.");
+
+    const result = await buildWisdomPrompt(testDir, "mybot");
+    expect(result).not.toBeNull();
+    expect(result).toContain(".teammates/mybot/WISDOM.md");
   });
 });

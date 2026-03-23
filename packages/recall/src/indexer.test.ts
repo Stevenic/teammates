@@ -230,6 +230,78 @@ describe("Indexer", () => {
     });
   });
 
+  describe("upsertFile", () => {
+    it("upserts a single file into a new index", async () => {
+      const beacon = join(testDir, "beacon");
+      await mkdir(beacon, { recursive: true });
+      const filePath = join(beacon, "WISDOM.md");
+      await writeFile(filePath, "# Upsert test wisdom");
+
+      const indexer = createIndexer(testDir);
+      await indexer.upsertFile("beacon", filePath);
+
+      // Verify index was created by syncing (which reads the index)
+      const count = await indexer.syncTeammate("beacon");
+      expect(count).toBeGreaterThanOrEqual(1);
+    });
+
+    it("upserts into an existing index without rebuilding", async () => {
+      const beacon = join(testDir, "beacon");
+      const memDir = join(beacon, "memory");
+      await mkdir(memDir, { recursive: true });
+      await writeFile(join(beacon, "WISDOM.md"), "# Wisdom");
+
+      const indexer = createIndexer(testDir);
+      // Build initial index
+      await indexer.indexTeammate("beacon");
+
+      // Upsert a new file
+      const newFile = join(memDir, "feedback_test.md");
+      await writeFile(newFile, "# New feedback content");
+      await indexer.upsertFile("beacon", newFile);
+
+      // Sync should see both files
+      const count = await indexer.syncTeammate("beacon");
+      expect(count).toBe(2);
+    });
+
+    it("skips empty files", async () => {
+      const beacon = join(testDir, "beacon");
+      await mkdir(beacon, { recursive: true });
+      const filePath = join(beacon, "WISDOM.md");
+      await writeFile(filePath, "   "); // whitespace only
+
+      const indexer = createIndexer(testDir);
+      // Should not throw, just skip
+      await indexer.upsertFile("beacon", filePath);
+    });
+  });
+
+  describe("syncAll", () => {
+    it("syncs all discovered teammates", async () => {
+      const beacon = join(testDir, "beacon");
+      const scribe = join(testDir, "scribe");
+      await mkdir(beacon, { recursive: true });
+      await mkdir(scribe, { recursive: true });
+      await writeFile(join(beacon, "SOUL.md"), "# Beacon");
+      await writeFile(join(beacon, "WISDOM.md"), "# Beacon wisdom");
+      await writeFile(join(scribe, "SOUL.md"), "# Scribe");
+      await writeFile(join(scribe, "WISDOM.md"), "# Scribe wisdom");
+
+      const indexer = createIndexer(testDir);
+      const results = await indexer.syncAll();
+
+      expect(results.get("beacon")).toBe(1);
+      expect(results.get("scribe")).toBe(1);
+    });
+
+    it("returns empty map when no teammates exist", async () => {
+      const indexer = createIndexer(testDir);
+      const results = await indexer.syncAll();
+      expect(results.size).toBe(0);
+    });
+  });
+
   describe("syncTeammate", () => {
     it("falls back to full index when no index exists", async () => {
       const beacon = join(testDir, "beacon");
