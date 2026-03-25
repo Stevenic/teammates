@@ -66,6 +66,9 @@ Active user tasks display as `<spinner> <teammate>... <task text> (2m 5s)`. Form
 ### Filter by task, not by agent
 When suppressing events for background/system tasks, filter at the task level (via flags on `TaskAssignment`/`TaskResult`), never at the agent level. Agent-level suppression (`silentAgents`) blocks ALL events for that agent — including concurrent user tasks. The `system` flag on events is the correct pattern. `silentAgents` is only used for the short-lived defensive retry window.
 
+### Two-tier compaction — scheduled + budget-driven
+`compactDailies()` runs on startup for completed past weeks. `autoCompactForBudget()` runs pre-task in adapters when daily logs exceed `DAILY_LOG_BUDGET_TOKENS` (24k) — it compacts oldest weeks first, including the current week with `partial: true` frontmatter. Partial weeklies are merged by `compactDailies()` when more dailies arrive. Startup compaction uses silent mode — progress bar only unless actual work was done.
+
 ### Clean dist before rebuild
 After modifying any TypeScript source, run `rm -rf dist && npm run build` in the package. Stale artifacts in dist/ can mask compile errors. Running CLI must be restarted after rebuilds — Node.js caches modules at startup.
 
