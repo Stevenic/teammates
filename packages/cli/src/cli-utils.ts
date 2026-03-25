@@ -61,6 +61,107 @@ export const IMAGE_EXTS = new Set([
   ".ico",
 ]);
 
+// ─── Conversation history helpers ────────────────────────────────────
+
+/** A single entry in the conversation history. */
+export interface ConversationEntry {
+  role: string;
+  text: string;
+}
+
+/**
+ * Strip protocol artifacts (TO: header, handoff blocks, trailing JSON) from
+ * an agent's raw output, returning just the message body.
+ */
+export function cleanResponseBody(rawOutput: string): string {
+  return rawOutput
+    .replace(/^TO:\s*\S+\s*\n/im, "")
+    .replace(/```handoff\s*\n@\w+\s*\n[\s\S]*?```/g, "")
+    .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
+    .trim();
+}
+
+/**
+ * Format a conversation entry for inclusion in a prompt.
+ * Single-line text stays inline; multi-line text gets the body on the next line.
+ */
+export function formatConversationEntry(role: string, text: string): string {
+  return text.includes("\n")
+    ? `**${role}:**\n${text}\n`
+    : `**${role}:** ${text}\n`;
+}
+
+/**
+ * Build the conversation context section for a teammate prompt.
+ * Works backwards from newest entries, including whole entries up to the budget.
+ */
+export function buildConversationContext(
+  history: ConversationEntry[],
+  summary: string,
+  budget: number,
+): string {
+  if (history.length === 0 && !summary) return "";
+
+  const parts: string[] = ["## Conversation History\n"];
+
+  if (summary) {
+    parts.push(`### Previous Conversation Summary\n\n${summary}\n`);
+  }
+
+  const entries: string[] = [];
+  let used = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const entry = formatConversationEntry(history[i].role, history[i].text);
+    if (used + entry.length > budget && entries.length > 0) break;
+    entries.unshift(entry);
+    used += entry.length;
+  }
+  if (entries.length > 0) parts.push(entries.join("\n"));
+
+  return parts.join("\n");
+}
+
+/**
+ * Find the split index where older conversation entries should be summarized.
+ * Returns 0 if everything fits within the budget (nothing to summarize).
+ */
+export function findSummarizationSplit(
+  history: ConversationEntry[],
+  budget: number,
+): number {
+  let recentChars = 0;
+  let splitIdx = history.length;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const entry = formatConversationEntry(history[i].role, history[i].text);
+    if (recentChars + entry.length > budget) break;
+    recentChars += entry.length;
+    splitIdx = i;
+  }
+  return splitIdx === history.length ? 0 : splitIdx;
+}
+
+/**
+ * Build the summarization prompt text from entries being pushed out of the budget.
+ */
+export function buildSummarizationPrompt(
+  entries: ConversationEntry[],
+  existingSummary: string,
+): string {
+  const entriesText = entries
+    .map((e) =>
+      e.text.includes("\n")
+        ? `**${e.role}:**\n${e.text}`
+        : `**${e.role}:** ${e.text}`,
+    )
+    .join("\n\n");
+
+  const instructions = `## Instructions\n\nReturn ONLY the ${existingSummary ? "updated " : ""}summary — no preamble, no explanation. The summary should:\n- Be a concise bulleted list of key topics discussed, decisions made, and work completed\n- Preserve important context that future messages might reference\n- Drop trivial or redundant details\n- Stay under 2000 characters\n- Do NOT include any output protocol (no TO:, no # Subject, no handoff blocks)`;
+
+  return existingSummary
+    ? `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Update the existing summary to incorporate the new conversation entries below.\n\n## Current Summary\n\n${existingSummary}\n\n## New Entries to Incorporate\n\n${entriesText}\n\n${instructions}`
+    : `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Summarize the conversation entries below.\n\n## Entries to Summarize\n\n${entriesText}\n\n${instructions}`;
+}
+
 /** Check if a string looks like an image file path. */
 export function isImagePath(text: string): boolean {
   // Must look like a file path (contains slash or backslash, or starts with drive letter)

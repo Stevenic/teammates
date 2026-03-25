@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  buildConversationContext,
+  buildSummarizationPrompt,
+  type ConversationEntry,
+  cleanResponseBody,
   findAtMention,
+  findSummarizationSplit,
+  formatConversationEntry,
   IMAGE_EXTS,
   isImagePath,
   relativeTime,
@@ -221,5 +227,240 @@ describe("IMAGE_EXTS", () => {
 
   it("has exactly 8 entries", () => {
     expect(IMAGE_EXTS.size).toBe(8);
+  });
+});
+
+// ── cleanResponseBody ──────────────────────────────────────────────
+
+describe("cleanResponseBody", () => {
+  it("strips TO: header", () => {
+    const raw = "TO: user\n# Subject\n\nBody text here";
+    expect(cleanResponseBody(raw)).toBe("# Subject\n\nBody text here");
+  });
+
+  it("strips TO: header case-insensitively", () => {
+    const raw = "to: User\n# Subject\n\nBody text here";
+    expect(cleanResponseBody(raw)).toBe("# Subject\n\nBody text here");
+  });
+
+  it("strips handoff blocks", () => {
+    const raw =
+      "Some text\n\n```handoff\n@scribe\nDo this task\n```\n\nMore text";
+    expect(cleanResponseBody(raw)).toContain("Some text");
+    expect(cleanResponseBody(raw)).toContain("More text");
+    expect(cleanResponseBody(raw)).not.toContain("handoff");
+    expect(cleanResponseBody(raw)).not.toContain("@scribe");
+  });
+
+  it("strips multiple handoff blocks", () => {
+    const raw =
+      "Text\n```handoff\n@scribe\ntask1\n```\nmiddle\n```handoff\n@beacon\ntask2\n```\nend";
+    expect(cleanResponseBody(raw)).toBe("Text\n\nmiddle\n\nend");
+  });
+
+  it("strips trailing JSON blocks", () => {
+    const raw = 'Body text\n\n```json\n{ "summary": "done" }\n```';
+    expect(cleanResponseBody(raw)).toBe("Body text");
+  });
+
+  it("strips all protocol artifacts together", () => {
+    const raw =
+      'TO: user\n# Done\n\nI finished the task.\n\n```handoff\n@pipeline\nDeploy it\n```\n\n```json\n{ "summary": "Done" }\n```';
+    expect(cleanResponseBody(raw)).toBe("# Done\n\nI finished the task.");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(cleanResponseBody("")).toBe("");
+  });
+
+  it("returns body unchanged when no protocol artifacts exist", () => {
+    expect(cleanResponseBody("Just a plain message")).toBe(
+      "Just a plain message",
+    );
+  });
+
+  it("trims surrounding whitespace", () => {
+    expect(cleanResponseBody("  \n  Hello  \n  ")).toBe("Hello");
+  });
+});
+
+// ── formatConversationEntry ────────────────────────────────────────
+
+describe("formatConversationEntry", () => {
+  it("formats single-line text inline", () => {
+    expect(formatConversationEntry("scribe", "Task completed")).toBe(
+      "**scribe:** Task completed\n",
+    );
+  });
+
+  it("formats multi-line text with body on next line", () => {
+    expect(formatConversationEntry("beacon", "Line 1\nLine 2")).toBe(
+      "**beacon:**\nLine 1\nLine 2\n",
+    );
+  });
+
+  it("treats single line with no newline as inline", () => {
+    expect(formatConversationEntry("user", "hello")).toBe("**user:** hello\n");
+  });
+});
+
+// ── buildConversationContext ────────────────────────────────────────
+
+describe("buildConversationContext", () => {
+  it("returns empty string for empty history and no summary", () => {
+    expect(buildConversationContext([], "", 1000)).toBe("");
+  });
+
+  it("includes summary when present", () => {
+    const result = buildConversationContext(
+      [],
+      "Previous topics discussed",
+      1000,
+    );
+    expect(result).toContain("## Conversation History");
+    expect(result).toContain("### Previous Conversation Summary");
+    expect(result).toContain("Previous topics discussed");
+  });
+
+  it("includes all entries when within budget", () => {
+    const history: ConversationEntry[] = [
+      { role: "stevenic", text: "Hello" },
+      { role: "scribe", text: "Hi there" },
+      { role: "stevenic", text: "Do the thing" },
+    ];
+    const result = buildConversationContext(history, "", 10_000);
+    expect(result).toContain("**stevenic:** Hello");
+    expect(result).toContain("**scribe:** Hi there");
+    expect(result).toContain("**stevenic:** Do the thing");
+  });
+
+  it("drops oldest entries when over budget", () => {
+    const history: ConversationEntry[] = [
+      { role: "old", text: "A".repeat(500) },
+      { role: "mid", text: "B".repeat(500) },
+      { role: "new", text: "C".repeat(500) },
+    ];
+    // Budget enough for ~2 entries but not 3
+    const budget = 1100;
+    const result = buildConversationContext(history, "", budget);
+    expect(result).not.toContain("**old:**");
+    expect(result).toContain("**new:**");
+  });
+
+  it("always includes at least the newest entry even if over budget", () => {
+    const history: ConversationEntry[] = [
+      { role: "beacon", text: "A".repeat(2000) },
+    ];
+    const result = buildConversationContext(history, "", 100);
+    expect(result).toContain("**beacon:**");
+  });
+
+  it("formats multi-line entries with body on next line", () => {
+    const history: ConversationEntry[] = [
+      { role: "scribe", text: "Line 1\nLine 2\nLine 3" },
+    ];
+    const result = buildConversationContext(history, "", 10_000);
+    expect(result).toContain("**scribe:**\nLine 1\nLine 2\nLine 3");
+  });
+
+  it("includes both summary and entries", () => {
+    const history: ConversationEntry[] = [
+      { role: "stevenic", text: "Latest message" },
+    ];
+    const result = buildConversationContext(
+      history,
+      "Earlier we discussed X",
+      10_000,
+    );
+    expect(result).toContain("### Previous Conversation Summary");
+    expect(result).toContain("Earlier we discussed X");
+    expect(result).toContain("**stevenic:** Latest message");
+  });
+});
+
+// ── findSummarizationSplit ─────────────────────────────────────────
+
+describe("findSummarizationSplit", () => {
+  it("returns 0 when everything fits in budget", () => {
+    const history: ConversationEntry[] = [
+      { role: "a", text: "short" },
+      { role: "b", text: "also short" },
+    ];
+    expect(findSummarizationSplit(history, 10_000)).toBe(0);
+  });
+
+  it("returns 0 for empty history", () => {
+    expect(findSummarizationSplit([], 1000)).toBe(0);
+  });
+
+  it("returns split index when history exceeds budget", () => {
+    const history: ConversationEntry[] = [
+      { role: "old1", text: "A".repeat(400) },
+      { role: "old2", text: "B".repeat(400) },
+      { role: "new1", text: "C".repeat(400) },
+      { role: "new2", text: "D".repeat(400) },
+    ];
+    // Budget fits ~2 entries (~430 chars each with formatting)
+    const budget = 900;
+    const split = findSummarizationSplit(history, budget);
+    expect(split).toBeGreaterThan(0);
+    expect(split).toBeLessThan(history.length);
+  });
+
+  it("keeps newest entries and pushes oldest out", () => {
+    const history: ConversationEntry[] = [
+      { role: "oldest", text: "X".repeat(300) },
+      { role: "middle", text: "Y".repeat(300) },
+      { role: "newest", text: "Z".repeat(300) },
+    ];
+    // Budget fits 1 entry
+    const budget = 350;
+    const split = findSummarizationSplit(history, budget);
+    // Split should be 2 — entries 0 and 1 get summarized, entry 2 (newest) stays
+    expect(split).toBe(2);
+  });
+
+  it("returns 0 when single entry fits", () => {
+    const history: ConversationEntry[] = [{ role: "a", text: "hello" }];
+    expect(findSummarizationSplit(history, 10_000)).toBe(0);
+  });
+});
+
+// ── buildSummarizationPrompt ───────────────────────────────────────
+
+describe("buildSummarizationPrompt", () => {
+  const entries: ConversationEntry[] = [
+    { role: "stevenic", text: "Build the feature" },
+    { role: "beacon", text: "Done, here's what I did" },
+  ];
+
+  it("builds a fresh summarization prompt when no existing summary", () => {
+    const prompt = buildSummarizationPrompt(entries, "");
+    expect(prompt).toContain("Summarize the conversation entries below");
+    expect(prompt).toContain("**stevenic:** Build the feature");
+    expect(prompt).toContain("**beacon:** Done, here's what I did");
+    expect(prompt).not.toContain("Current Summary");
+  });
+
+  it("builds an update prompt when existing summary is present", () => {
+    const prompt = buildSummarizationPrompt(entries, "Previously discussed X");
+    expect(prompt).toContain("Update the existing summary");
+    expect(prompt).toContain("## Current Summary");
+    expect(prompt).toContain("Previously discussed X");
+    expect(prompt).toContain("## New Entries to Incorporate");
+  });
+
+  it("includes instruction constraints", () => {
+    const prompt = buildSummarizationPrompt(entries, "");
+    expect(prompt).toContain("Stay under 2000 characters");
+    expect(prompt).toContain("Do NOT include any output protocol");
+  });
+
+  it("formats multi-line entries correctly", () => {
+    const multiLine: ConversationEntry[] = [
+      { role: "scribe", text: "Line 1\nLine 2" },
+    ];
+    const prompt = buildSummarizationPrompt(multiLine, "");
+    expect(prompt).toContain("**scribe:**\nLine 1\nLine 2");
   });
 });

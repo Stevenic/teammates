@@ -6,8 +6,8 @@ Last compacted: 2026-03-25
 
 ---
 
-### Codebase map — three packages, ~33k LOC
-CLI has 42 source files (~5,200 lines in cli.ts); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~5,200 lines), `chat-view.ts` (~1,500 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~780 lines). Key extracted modules: `adapter.ts` (~510), `compact.ts` (~650), `banner.ts` (~410), `personas.ts` (~140), `cli-args.ts` (~155). When debugging, start with cli.ts and cli-proxy.ts.
+### Codebase map — three packages
+CLI has 29 source files (~5,200 lines in cli.ts); consolonia has 42 files; recall has 7 files. The big files are `cli.ts` (~5,200 lines), `chat-view.ts` (~1,500 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~780 lines). Key extracted modules: `adapter.ts` (~510), `compact.ts` (~650), `banner.ts` (~410), `cli-utils.ts` (~170), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
 
 ### Three-tier memory system
 WISDOM.md (distilled, read-only except during compaction), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). The CLI reads WISDOM.md, the indexer indexes WISDOM.md + memory/*.md, and the prompt tells teammates to write typed memories.
@@ -18,8 +18,8 @@ Fixed sections always included (identity, wisdom, today's log, roster, protocol,
 ### Prompt section ordering — instructions at the end
 Context/reference material (identity, wisdom, logs, recall, roster, services, handoff, date/time, user profile) stays at the top. Task sits in the middle. Instructions (output protocol, session state, memory updates, reminder) go at the end — leverages recency effect for agent attention.
 
-### Conversation auto-summarization
-When conversation history exceeds 24k tokens, oldest entries are spliced out and queued as a `"summarize"` task to the coding agent. The running summary is invisible to the user. Reset on `/clear`.
+### Conversation history stores full bodies
+`storeResult()` stores the full cleaned `rawOutput` (protocol artifacts stripped), not just `result.summary`. `buildConversationContext()` formats multi-line entries with body on the next line. When history exceeds 24k tokens, oldest entries are spliced out and queued as a `"summarize"` task. The running summary is invisible to the user. Reset on `/clear`.
 
 ### User avatar system (Campfire Phase 1)
 Users are represented as avatar teammates with `**Type:** human` in SOUL.md. The adapter is hidden — not registered when user has an alias. `selfName` (user alias) is the display identity everywhere; `adapterName` is for internal execution only. `@everyone` excludes both avatar and adapter. Display surfaces (roster, picker, status, errors) show `adapterName` while `selfName` is used for sender label, conversation history, internal routing, and memory folder.
@@ -66,11 +66,11 @@ Active user tasks display as `<spinner> <teammate>... <task text> (2m 5s)`. Form
 ### Filter by task, not by agent
 When suppressing events for background/system tasks, filter at the task level (via flags on `TaskAssignment`/`TaskResult`), never at the agent level. Agent-level suppression (`silentAgents`) blocks ALL events for that agent — including concurrent user tasks. The `system` flag on events is the correct pattern. `silentAgents` is only used for the short-lived defensive retry window.
 
-### Two-tier compaction — scheduled + budget-driven
-`compactDailies()` runs on startup for completed past weeks. `autoCompactForBudget()` runs pre-task in adapters when daily logs exceed `DAILY_LOG_BUDGET_TOKENS` (24k) — it compacts oldest weeks first, including the current week with `partial: true` frontmatter. Partial weeklies are merged by `compactDailies()` when more dailies arrive. Startup compaction uses silent mode — progress bar only unless actual work was done.
-
 ### Clean dist before rebuild
 After modifying any TypeScript source, run `rm -rf dist && npm run build` in the package. Stale artifacts in dist/ can mask compile errors. Running CLI must be restarted after rebuilds — Node.js caches modules at startup.
+
+### Lint after every build
+After every build, run `npx biome check --write --unsafe` on changed files. If fixes are applied, rebuild to verify they compile cleanly. This is mandatory — lint errors should never be left behind.
 
 ### Folder naming convention in .teammates/
 No prefix = teammate folder (contains SOUL.md). `_` prefix = shared non-teammate folder, checked in. `.` prefix = local/ephemeral, gitignored. Registry skips `_` and `.` prefixed dirs when scanning for teammates.
@@ -83,3 +83,6 @@ All ✔/✖/⚠ emojis get double-space after them for consistent rendering acro
 
 ### Persona template system
 15 persona templates in `packages/cli/personas/` with YAML frontmatter (persona, alias, tier, description) and SOUL.md body with `<Name>` placeholders. `loadPersonas()` reads and sorts by tier. `scaffoldFromPersona()` creates teammate folder. Tier 1 = Core (SWE, PM, QA, DevOps), Tier 2 = Specialized. Wired into both pre-TUI onboarding and `/init pick`.
+
+### Extracted pure functions live in cli-utils.ts
+Testable pure functions extracted from cli.ts: `relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`, `cleanResponseBody`, `formatConversationEntry`, `buildConversationContext`, `findSummarizationSplit`, `buildSummarizationPrompt`. New extractions should follow this pattern — pure logic in cli-utils.ts, wired into cli.ts via imports.

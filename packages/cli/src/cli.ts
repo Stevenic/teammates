@@ -45,7 +45,11 @@ import {
   resolveAdapter,
 } from "./cli-args.js";
 import {
+  buildConversationContext as buildConvCtx,
+  buildSummarizationPrompt,
+  cleanResponseBody,
   findAtMention,
+  findSummarizationSplit,
   isImagePath,
   relativeTime,
   wrapLine,
@@ -97,9 +101,14 @@ class TeammatesREPL {
   private storeResult(result: TaskResult): void {
     this.lastResult = result;
     this.lastResults.set(result.teammate, result);
+
+    // Store the full response body in conversation history — not just the
+    // subject line.  The 24k-token budget + auto-summarization handle size.
+    const body = cleanResponseBody(result.rawOutput ?? "");
+
     this.conversationHistory.push({
       role: result.teammate,
-      text: result.summary,
+      text: body || result.summary,
     });
   }
 
@@ -223,31 +232,11 @@ class TeammatesREPL {
   private static readonly CONV_HISTORY_CHARS = 24_000 * 4;
 
   private buildConversationContext(): string {
-    if (this.conversationHistory.length === 0 && !this.conversationSummary)
-      return "";
-
-    const budget = TeammatesREPL.CONV_HISTORY_CHARS;
-    const parts: string[] = ["## Conversation History\n"];
-
-    // Include running summary of older conversation if present
-    if (this.conversationSummary) {
-      parts.push(
-        `### Previous Conversation Summary\n\n${this.conversationSummary}\n`,
-      );
-    }
-
-    // Work backwards from newest — include whole entries up to 24k tokens
-    const entries: string[] = [];
-    let used = 0;
-    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
-      const line = `**${this.conversationHistory[i].role}:** ${this.conversationHistory[i].text}\n`;
-      if (used + line.length > budget && entries.length > 0) break;
-      entries.unshift(line);
-      used += line.length;
-    }
-    if (entries.length > 0) parts.push(entries.join("\n"));
-
-    return parts.join("\n");
+    return buildConvCtx(
+      this.conversationHistory,
+      this.conversationSummary,
+      TeammatesREPL.CONV_HISTORY_CHARS,
+    );
   }
 
   /**
@@ -256,30 +245,18 @@ class TeammatesREPL {
    * and queue a summarization task to the coding agent.
    */
   private maybeQueueSummarization(): void {
-    const budget = TeammatesREPL.CONV_HISTORY_CHARS;
-
-    // Calculate how many recent entries fit in the budget (newest first)
-    let recentChars = 0;
-    let splitIdx = this.conversationHistory.length;
-    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
-      const line = `**${this.conversationHistory[i].role}:** ${this.conversationHistory[i].text}\n`;
-      if (recentChars + line.length > budget) break;
-      recentChars += line.length;
-      splitIdx = i;
-    }
+    const splitIdx = findSummarizationSplit(
+      this.conversationHistory,
+      TeammatesREPL.CONV_HISTORY_CHARS,
+    );
 
     if (splitIdx === 0) return; // everything fits — nothing to summarize
 
-    // Collect entries that are being pushed out
     const toSummarize = this.conversationHistory.slice(0, splitIdx);
-    const entriesText = toSummarize
-      .map((e) => `**${e.role}:** ${e.text}`)
-      .join("\n");
-
-    // Build the summarization prompt
-    const prompt = this.conversationSummary
-      ? `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Update the existing summary to incorporate the new conversation entries below.\n\n## Current Summary\n\n${this.conversationSummary}\n\n## New Entries to Incorporate\n\n${entriesText}\n\n## Instructions\n\nReturn ONLY the updated summary — no preamble, no explanation. The summary should:\n- Be a concise bulleted list of key topics discussed, decisions made, and work completed\n- Preserve important context that future messages might reference\n- Drop trivial or redundant details\n- Stay under 2000 characters\n- Do NOT include any output protocol (no TO:, no # Subject, no handoff blocks)`
-      : `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Summarize the conversation entries below.\n\n## Entries to Summarize\n\n${entriesText}\n\n## Instructions\n\nReturn ONLY the summary — no preamble, no explanation. The summary should:\n- Be a concise bulleted list of key topics discussed, decisions made, and work completed\n- Preserve important context that future messages might reference\n- Drop trivial or redundant details\n- Stay under 2000 characters\n- Do NOT include any output protocol (no TO:, no # Subject, no handoff blocks)`;
+    const prompt = buildSummarizationPrompt(
+      toSummarize,
+      this.conversationSummary,
+    );
 
     // Remove the summarized entries — they'll be captured in the summary
     this.conversationHistory.splice(0, splitIdx);
@@ -452,11 +429,11 @@ class TeammatesREPL {
     // Keep adding segments from the front until we'd exceed maxLen
     let front = parts[0];
     for (let i = 1; i < parts.length - 1; i++) {
-      const candidate = front + sep + parts[i] + sep + "..." + sep + last;
+      const candidate = `${front + sep + parts[i] + sep}...${sep}${last}`;
       if (candidate.length > maxLen) break;
       front += sep + parts[i];
     }
-    return front + sep + "..." + sep + last;
+    return `${front + sep}...${sep}${last}`;
   }
 
   /** Format elapsed seconds as (Ns), (Nm Ns), or (Nh Nm Ns). */
@@ -486,9 +463,10 @@ class TeammatesREPL {
     const elapsedStr = TeammatesREPL.formatElapsed(elapsed);
 
     // Build the tag: (1/3 - 2m 5s) when multiple, (2m 5s) when single
-    const tag = total > 1
-      ? `(${idx + 1}/${total} - ${elapsedStr.slice(1, -1)})`
-      : elapsedStr;
+    const tag =
+      total > 1
+        ? `(${idx + 1}/${total} - ${elapsedStr.slice(1, -1)})`
+        : elapsedStr;
 
     // Target 80 chars total: "<spinner> <name>... <task> <tag>"
     const prefix = `${spinChar} ${displayName}... `;
@@ -4091,9 +4069,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       targetName = this.lastResult.teammate;
     } else {
       this.feedLine(
-        tp.muted(
-          "  No debug info available. Try: /debug [teammate] [focus]",
-        ),
+        tp.muted("  No debug info available. Try: /debug [teammate] [focus]"),
       );
       this.refreshView();
       return;
@@ -4693,8 +4669,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (syncSpinner) syncSpinner.succeed(`${name}: index synced`);
         if (this.chatView) {
           if (!silent) this.chatView.setProgress(null);
-          if (!silent)
-            this.feedLine(tp.success(`  ✔  ${name}: index synced`));
+          if (!silent) this.feedLine(tp.success(`  ✔  ${name}: index synced`));
         }
       } catch {
         /* sync failed — non-fatal */
@@ -4869,9 +4844,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     const indexer = new Indexer({ teammatesDir: this.teammatesDir });
     for (const name of teammates) {
       try {
-        const purged = await purgeStaleDailies(
-          join(this.teammatesDir, name),
-        );
+        const purged = await purgeStaleDailies(join(this.teammatesDir, name));
         for (const file of purged) {
           const uri = `${name}/memory/${file}`;
           await indexer.deleteDocument(name, uri).catch(() => {});
