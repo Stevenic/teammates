@@ -323,6 +323,7 @@ export class CliProxyAdapter implements AgentAdapter {
         : spawn.output;
       const teammateNames = this.roster.map((r) => r.name);
       const result = parseResult(teammate.name, output, teammateNames, prompt);
+      result.fullPrompt = fullPrompt;
       result.diagnostics = {
         exitCode: spawn.exitCode,
         signal: spawn.signal,

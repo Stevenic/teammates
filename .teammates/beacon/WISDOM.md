@@ -2,12 +2,12 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-23
+Last compacted: 2026-03-25
 
 ---
 
-### Codebase map — three packages, ~30k LOC
-CLI has 38 source files (~12,700 lines); consolonia has 51 files (~15,500 lines); recall has 8 files (~1,500 lines). The big files are `cli.ts` (~4,700 lines), `chat-view.ts` (~1,500 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~700 lines). Key extracted modules: `banner.ts` (~390), `adapter.ts` (~345), `cli-args.ts` (~155). When debugging, start with cli.ts and cli-proxy.ts.
+### Codebase map — three packages, ~33k LOC
+CLI has 42 source files (~5,200 lines in cli.ts); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~5,200 lines), `chat-view.ts` (~1,500 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~780 lines). Key extracted modules: `adapter.ts` (~510), `compact.ts` (~650), `banner.ts` (~410), `personas.ts` (~140), `cli-args.ts` (~155). When debugging, start with cli.ts and cli-proxy.ts.
 
 ### Three-tier memory system
 WISDOM.md (distilled, read-only except during compaction), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). The CLI reads WISDOM.md, the indexer indexes WISDOM.md + memory/*.md, and the prompt tells teammates to write typed memories.
@@ -49,13 +49,22 @@ Agents must use ` ```handoff\n@name\ntask\n``` ` format. Natural-language handof
 `@teammates/recall` is a direct dependency of `@teammates/cli`. Pre-task recall queries use `skipSync: true` for speed. Sync runs after every task completion and on startup. No watch process needed.
 
 ### Banner is segmented — left footer + right footer
-Left: product name + version + adapter name. Right: `? /help` by default, temporarily replaced by ESC/Ctrl+C hints. Services show presence-colored dots (green/yellow/red). `updateServices()` refreshes the banner live after `/configure`.
+Left: product name + version + adapter name + project directory path (smart-truncated via `truncatePath()`). Right: `? /help` by default, temporarily replaced by ESC/Ctrl+C hints. Services show presence-colored dots (green/yellow/red). `updateServices()` refreshes the banner live after `/configure`.
 
 ### Debug logging lives in .tmp/debug/
-Every task writes a structured debug log to `.teammates/.tmp/debug/<teammate>-<timestamp>.md`. Claude adapter generates `--debug-file` agent logs in the same directory. Files >24h are cleaned on startup. `/debug` reads the last log and queues analysis to the coding agent.
+Every task writes a structured debug log to `.teammates/.tmp/debug/<teammate>-<timestamp>.md` including the full prompt sent to the agent (via `fullPrompt` on `TaskResult`). Files >24h are cleaned on startup. `/debug [teammate] [focus]` reads the last log and queues analysis to the coding agent — optional focus text narrows the analysis scope. Adapters set `result.fullPrompt` after building the prompt; `lastTaskPrompts` stores it for `/debug`.
 
 ### Two-tier compaction — scheduled + budget-driven
-`compactDailies()` runs on startup for completed past weeks. `autoCompactForBudget()` runs pre-task in adapters when daily logs exceed `DAILY_LOG_BUDGET_TOKENS` (24k) — it compacts oldest weeks first, including the current week with `partial: true` frontmatter. Partial weeklies are merged by `compactDailies()` when more dailies arrive. Startup compaction uses silent mode — progress bar only unless actual work was done.
+`compactDailies()` runs on startup for completed past weeks. `autoCompactForBudget()` runs pre-task in adapters when daily logs exceed `DAILY_LOG_BUDGET_TOKENS` (24k) — it compacts oldest weeks first, including the current week with `partial: true` frontmatter. Partial weeklies are merged by `compactDailies()` when more dailies arrive. Startup compaction uses silent mode — progress bar only unless actual work was done. `runCompact()` also triggers `autoCompactForBudget` before episodic compaction.
+
+### Non-blocking system task lane
+System-initiated tasks (compaction, summarization, wisdom distillation) run concurrently without blocking user tasks via task-level `system` flag on `TaskAssignment` and `TaskResult`. An agent can run 0+ system tasks and 0-1 user tasks simultaneously. System tasks use unique `sys-<teammate>-<timestamp>` IDs, tracked in `systemActive` map. `kickDrain()` extracts them from the queue before processing user tasks. System tasks are fully background — no progress bar, no `/status` display, errors only (with `(system)` label in the feed). The `system` flag on events allows concurrent system + user tasks for the same agent without interference.
+
+### Progress bar — 80-char target with elapsed time
+Active user tasks display as `<spinner> <teammate>... <task text> (2m 5s)`. Format targets 80 chars total — task text is dynamically truncated to fit. `formatElapsed()` escalates: `(5s)` → `(2m 5s)` → `(1h 2m 5s)`. Multiple concurrent tasks show cycling tag: `(1/3 - 2m 5s)`. Both ChatView and fallback PromptInput paths share the same format.
+
+### Filter by task, not by agent
+When suppressing events for background/system tasks, filter at the task level (via flags on `TaskAssignment`/`TaskResult`), never at the agent level. Agent-level suppression (`silentAgents`) blocks ALL events for that agent — including concurrent user tasks. The `system` flag on events is the correct pattern. `silentAgents` is only used for the short-lived defensive retry window.
 
 ### Clean dist before rebuild
 After modifying any TypeScript source, run `rm -rf dist && npm run build` in the package. Stale artifacts in dist/ can mask compile errors. Running CLI must be restarted after rebuilds — Node.js caches modules at startup.
@@ -68,3 +77,6 @@ No-arg commands (/exit, /status, /help) execute immediately when selected from t
 
 ### Emoji spacing convention
 All ✔/✖/⚠ emojis get double-space after them for consistent rendering across terminals. Applied globally in cli.ts.
+
+### Persona template system
+15 persona templates in `packages/cli/personas/` with YAML frontmatter (persona, alias, tier, description) and SOUL.md body with `<Name>` placeholders. `loadPersonas()` reads and sorts by tier. `scaffoldFromPersona()` creates teammate folder. Tier 1 = Core (SWE, PM, QA, DevOps), Tier 2 = Specialized. Wired into both pre-TUI onboarding and `/init pick`.

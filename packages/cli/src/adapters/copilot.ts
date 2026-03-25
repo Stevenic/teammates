@@ -224,7 +224,9 @@ export class CopilotAdapter implements AgentAdapter {
         (reply?.data as { content?: string })?.content ?? outputParts.join("");
 
       const teammateNames = this.roster.map((r) => r.name);
-      return parseResult(teammate.name, output, teammateNames, prompt);
+      const result = parseResult(teammate.name, output, teammateNames, prompt);
+      result.fullPrompt = fullPrompt;
+      return result;
     } finally {
       // Disconnect the session (preserves data for potential resume)
       await session.disconnect().catch(() => {});

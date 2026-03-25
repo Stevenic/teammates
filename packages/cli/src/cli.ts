@@ -12,7 +12,7 @@
 import { exec as execCb, execSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 
 import {
@@ -297,6 +297,8 @@ class TeammatesREPL {
   private taskQueue: QueueEntry[] = [];
   /** Per-agent active tasks — one per agent running in parallel. */
   private agentActive: Map<string, QueueEntry> = new Map();
+  /** Active system tasks — multiple can run concurrently per agent. */
+  private systemActive: Map<string, QueueEntry> = new Map();
   /** Agents currently in a silent retry — suppress all events. */
   private silentAgents: Set<string> = new Set();
   /** Per-agent drain locks — prevents double-draining a single agent. */
@@ -353,8 +355,10 @@ class TeammatesREPL {
   private userAlias: string | null = null;
 
   // ── Animated status tracker ─────────────────────────────────────
-  private activeTasks: Map<string, { teammate: string; task: string }> =
-    new Map();
+  private activeTasks: Map<
+    string,
+    { teammate: string; task: string; startTime: number }
+  > = new Map();
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private statusFrame = 0;
   private statusRotateIndex = 0;
@@ -436,54 +440,84 @@ class TeammatesREPL {
     }
   }
 
+  /**
+   * Truncate a path for display, collapsing middle segments if too long.
+   * E.g. C:\source\some\deep\project → C:\source\...\project
+   */
+  private static truncatePath(fullPath: string, maxLen = 30): string {
+    if (fullPath.length <= maxLen) return fullPath;
+    const parts = fullPath.split(sep);
+    if (parts.length <= 2) return fullPath;
+    const last = parts[parts.length - 1];
+    // Keep adding segments from the front until we'd exceed maxLen
+    let front = parts[0];
+    for (let i = 1; i < parts.length - 1; i++) {
+      const candidate = front + sep + parts[i] + sep + "..." + sep + last;
+      if (candidate.length > maxLen) break;
+      front += sep + parts[i];
+    }
+    return front + sep + "..." + sep + last;
+  }
+
+  /** Format elapsed seconds as (Ns), (Nm Ns), or (Nh Nm Ns). */
+  private static formatElapsed(totalSeconds: number): string {
+    const s = totalSeconds % 60;
+    const m = Math.floor(totalSeconds / 60) % 60;
+    const h = Math.floor(totalSeconds / 3600);
+    if (h > 0) return `(${h}h ${m}m ${s}s)`;
+    if (m > 0) return `(${m}m ${s}s)`;
+    return `(${s}s)`;
+  }
+
   /** Render one frame of the status animation. */
   private renderStatusFrame(): void {
     if (this.activeTasks.size === 0) return;
 
     const entries = Array.from(this.activeTasks.values());
-    const idx = this.statusRotateIndex % entries.length;
-    const { teammate, task } = entries[idx];
+    const total = entries.length;
+    const idx = this.statusRotateIndex % total;
+    const { teammate, task, startTime } = entries[idx];
     const displayName =
       teammate === this.selfName ? this.adapterName : teammate;
 
     const spinChar =
       TeammatesREPL.SPINNER[this.statusFrame % TeammatesREPL.SPINNER.length];
-    const taskPreview = task.length > 50 ? `${task.slice(0, 47)}...` : task;
-    const queueInfo =
-      this.activeTasks.size > 1 ? ` (${idx + 1}/${this.activeTasks.size})` : "";
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const elapsedStr = TeammatesREPL.formatElapsed(elapsed);
+
+    // Build the tag: (1/3 - 2m 5s) when multiple, (2m 5s) when single
+    const tag = total > 1
+      ? `(${idx + 1}/${total} - ${elapsedStr.slice(1, -1)})`
+      : elapsedStr;
+
+    // Target 80 chars total: "<spinner> <name>... <task> <tag>"
+    const prefix = `${spinChar} ${displayName}... `;
+    const suffix = ` ${tag}`;
+    const maxTask = 80 - prefix.length - suffix.length;
+    const cleanTask = task.replace(/[\r\n]+/g, " ").trim();
+    const taskText =
+      maxTask <= 3
+        ? ""
+        : cleanTask.length > maxTask
+          ? `${cleanTask.slice(0, maxTask - 1)}…`
+          : cleanTask;
 
     if (this.chatView) {
-      // Strip newlines and truncate task text for single-line display
-      const cleanTask = task.replace(/[\r\n]+/g, " ").trim();
-      const maxLen = Math.max(
-        20,
-        (process.stdout.columns || 80) - displayName.length - 10,
-      );
-      const taskText =
-        cleanTask.length > maxLen
-          ? `${cleanTask.slice(0, maxLen - 1)}…`
-          : cleanTask;
-      const queueTag =
-        this.activeTasks.size > 1
-          ? ` (${idx + 1}/${this.activeTasks.size})`
-          : "";
-
       this.chatView.setProgress(
         concat(
-          tp.accent(`${spinChar} ${displayName}… `),
-          tp.muted(taskText + queueTag),
+          tp.accent(`${spinChar} ${displayName}... `),
+          tp.muted(`${taskText}${suffix}`),
         ),
       );
       this.app.refresh();
     } else {
-      // Mostly bright blue, periodically flicker to dark blue
       const spinColor =
         this.statusFrame % 8 === 0 ? chalk.blue : chalk.blueBright;
       const line =
         `  ${spinColor(spinChar)} ` +
         chalk.bold(displayName) +
-        chalk.gray(`… ${taskPreview}`) +
-        (queueInfo ? chalk.gray(queueInfo) : "");
+        chalk.gray(`... ${taskText}`) +
+        chalk.gray(suffix);
       this.input.setStatus(line);
     }
   }
@@ -1300,9 +1334,28 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.kickDrain();
   }
 
-  /** Start draining per-agent queues in parallel. Each agent gets its own drain loop. */
+  /** Returns true if the queue entry is a system-initiated (non-blocking) task. */
+  private isSystemTask(entry: QueueEntry): boolean {
+    return (
+      entry.type === "compact" ||
+      entry.type === "summarize" ||
+      (entry.type === "agent" && entry.system === true)
+    );
+  }
+
+  /** Start draining per-agent queues in parallel. Each agent gets its own drain loop.
+   *  System tasks are extracted and run concurrently without blocking user tasks. */
   private kickDrain(): void {
-    // Find agents that have queued tasks but no active drain
+    // Extract system tasks and fire them concurrently (non-blocking)
+    for (let i = this.taskQueue.length - 1; i >= 0; i--) {
+      const entry = this.taskQueue[i];
+      if (this.isSystemTask(entry)) {
+        this.taskQueue.splice(i, 1);
+        this.runSystemTask(entry);
+      }
+    }
+
+    // Find agents that have user tasks but no active drain
     const agentsWithWork = new Set<string>();
     for (const entry of this.taskQueue) {
       agentsWithWork.add(entry.teammate);
@@ -1314,6 +1367,52 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         });
         this.agentDrainLocks.set(agent, lock);
       }
+    }
+  }
+
+  /**
+   * Run a system-initiated task concurrently without blocking user tasks.
+   * Purely background — no progress bar, no /status. Only reports errors.
+   */
+  private async runSystemTask(entry: QueueEntry): Promise<void> {
+    const taskId = `sys-${entry.teammate}-${Date.now()}`;
+    this.systemActive.set(taskId, entry);
+
+    const startTime = Date.now();
+    try {
+      if (entry.type === "compact") {
+        await this.runCompact(entry.teammate, true);
+      } else if (entry.type === "summarize") {
+        const result = await this.orchestrator.assign({
+          teammate: entry.teammate,
+          task: entry.task,
+          system: true,
+        });
+        const raw = result.rawOutput ?? "";
+        this.conversationSummary = raw
+          .replace(/^TO:\s*\S+\s*\n/im, "")
+          .replace(/^#\s+.+\n*/m, "")
+          .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
+          .trim();
+      } else {
+        // System agent tasks (e.g. wisdom distillation)
+        const result = await this.orchestrator.assign({
+          teammate: entry.teammate,
+          task: entry.task,
+          system: true,
+        });
+        // Write debug entry for system tasks too
+        this.writeDebugEntry(entry.teammate, entry.task, result, startTime);
+      }
+    } catch (err: any) {
+      // System task errors always show in feed
+      const msg = err?.message ?? String(err);
+      const displayName =
+        entry.teammate === this.selfName ? this.adapterName : entry.teammate;
+      this.feedLine(tp.error(`  ✖  @${displayName} (system): ${msg}`));
+      this.refreshView();
+    } finally {
+      this.systemActive.delete(taskId);
     }
   }
 
@@ -2968,6 +3067,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         tp.dim(` v${PKG_VERSION}`),
         tp.muted("  "),
         tp.text(this.adapterName),
+        tp.muted("  "),
+        tp.dim(TeammatesREPL.truncatePath(dirname(this.teammatesDir))),
       ),
       footerRight: tp.muted("? /help "),
       footerStyle: { fg: t.textDim },
@@ -2977,6 +3078,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       tp.dim(` v${PKG_VERSION}`),
       tp.muted("  "),
       tp.text(this.adapterName),
+      tp.muted("  "),
+      tp.dim(TeammatesREPL.truncatePath(dirname(this.teammatesDir))),
     );
     this.defaultFooterRight = tp.muted("? /help ");
 
@@ -3699,7 +3802,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       {
         name: "debug",
         aliases: ["raw"],
-        usage: "/debug [teammate]",
+        usage: "/debug [teammate] [focus]",
         description: "Analyze the last agent task with the coding agent",
         run: (args) => this.cmdDebug(args),
       },
@@ -3827,17 +3930,25 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     switch (event.type) {
       case "task_assigned": {
+        // System tasks (compaction, summarization, wisdom distillation) are
+        // invisible — don't track them in the progress bar.
+        if (event.assignment.system) break;
+
         // Track this task and start the animated status bar
         const key = event.assignment.teammate;
         this.activeTasks.set(key, {
           teammate: event.assignment.teammate,
           task: event.assignment.task,
+          startTime: Date.now(),
         });
         this.startStatusAnimation();
         break;
       }
 
       case "task_completed": {
+        // System task completions — don't touch activeTasks (was never added)
+        if (event.result.system) break;
+
         // Remove from active tasks and stop spinner.
         // Result display is deferred to drainAgentQueue() so the defensive
         // retry can update rawOutput before anything is shown to the user.
@@ -3952,11 +4063,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   private async cmdDebug(argsStr: string): Promise<void> {
-    const arg = argsStr.trim().replace(/^@/, "");
+    const parts = argsStr.trim().split(/\s+/);
+    const firstArg = (parts[0] ?? "").replace(/^@/, "");
+    // Everything after the teammate name is the debug focus
+    const debugFocus = parts.slice(1).join(" ").trim() || undefined;
 
     // Resolve which teammate to debug
     let targetName: string;
-    if (arg === "everyone") {
+    if (firstArg === "everyone") {
       // Pick all teammates with debug files, queue one analysis per teammate
       const names: string[] = [];
       for (const [name] of this.lastDebugFiles) {
@@ -3968,29 +4082,32 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         return;
       }
       for (const name of names) {
-        this.queueDebugAnalysis(name);
+        this.queueDebugAnalysis(name, debugFocus);
       }
       return;
-    } else if (arg) {
-      targetName = arg;
+    } else if (firstArg) {
+      targetName = firstArg;
     } else if (this.lastResult) {
       targetName = this.lastResult.teammate;
     } else {
       this.feedLine(
-        tp.muted("  No debug info available. Try: /debug [teammate]"),
+        tp.muted(
+          "  No debug info available. Try: /debug [teammate] [focus]",
+        ),
       );
       this.refreshView();
       return;
     }
 
-    this.queueDebugAnalysis(targetName);
+    this.queueDebugAnalysis(targetName, debugFocus);
   }
 
   /**
    * Queue a debug analysis task — sends the last request + debug log
    * to the base coding agent for analysis.
+   * @param debugFocus Optional focus area the user wants to investigate
    */
-  private queueDebugAnalysis(teammate: string): void {
+  private queueDebugAnalysis(teammate: string, debugFocus?: string): void {
     const debugFile = this.lastDebugFiles.get(teammate);
     const lastPrompt = this.lastTaskPrompts.get(teammate);
 
@@ -4010,8 +4127,12 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       return;
     }
 
+    const focusLine = debugFocus
+      ? `\n\n**Focus your analysis on:** ${debugFocus}`
+      : "";
+
     const analysisPrompt = [
-      `Analyze the following debug log from @${teammate}'s last task execution. Identify any issues, errors, or anomalies. If the response was empty, explain likely causes. Provide a concise diagnosis and suggest fixes if applicable.`,
+      `Analyze the following debug log from @${teammate}'s last task execution. Identify any issues, errors, or anomalies. If the response was empty, explain likely causes. Provide a concise diagnosis and suggest fixes if applicable.${focusLine}`,
       "",
       "## Last Request Sent to Agent",
       "",
@@ -4024,6 +4145,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     // Show the debug log path — ctrl+click to open
     this.feedLine(concat(tp.muted("  Debug log: "), tp.accent(debugFile)));
+    if (debugFocus) {
+      this.feedLine(tp.muted(`  Focus: ${debugFocus}`));
+    }
     this.feedLine(tp.muted("  Queuing analysis…"));
     this.refreshView();
 
@@ -4063,10 +4187,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.refreshView();
   }
 
-  /** Drain tasks for a single agent — runs in parallel with other agents. */
+  /** Drain user tasks for a single agent — runs in parallel with other agents.
+   *  System tasks are handled separately by runSystemTask(). */
   private async drainAgentQueue(agent: string): Promise<void> {
     while (true) {
-      const idx = this.taskQueue.findIndex((e) => e.teammate === agent);
+      const idx = this.taskQueue.findIndex(
+        (e) => e.teammate === agent && !this.isSystemTask(e),
+      );
       if (idx < 0) break;
 
       const entry = this.taskQueue.splice(idx, 1)[0];
@@ -4074,22 +4201,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
       const startTime = Date.now();
       try {
-        if (entry.type === "compact") {
-          await this.runCompact(entry.teammate);
-        } else if (entry.type === "summarize") {
-          // Internal housekeeping — summarize older conversation history
-          const result = await this.orchestrator.assign({
-            teammate: entry.teammate,
-            task: entry.task,
-          });
-          // Extract the summary from the agent's output (strip protocol artifacts)
-          const raw = result.rawOutput ?? "";
-          this.conversationSummary = raw
-            .replace(/^TO:\s*\S+\s*\n/im, "")
-            .replace(/^#\s+.+\n*/m, "")
-            .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
-            .trim();
-        } else {
+        {
           // btw and debug tasks skip conversation context (not part of main thread)
           const extraContext =
             entry.type === "btw" || entry.type === "debug"
@@ -4215,6 +4327,15 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         "",
       ];
 
+      // Include the full prompt sent to the agent (with identity, memory, etc.)
+      const fullPrompt = result?.fullPrompt;
+      if (fullPrompt) {
+        lines.push("## Full Prompt");
+        lines.push("");
+        lines.push(fullPrompt);
+        lines.push("");
+      }
+
       if (error) {
         lines.push("## Result");
         lines.push("");
@@ -4273,7 +4394,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       lines.push("");
       writeFileSync(debugFile, lines.join("\n"), "utf-8");
       this.lastDebugFiles.set(teammate, debugFile);
-      this.lastTaskPrompts.set(teammate, task);
+      this.lastTaskPrompts.set(teammate, fullPrompt ?? task);
     } catch {
       // Don't let debug logging break task execution
     }
@@ -4499,12 +4620,12 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   private async runCompact(name: string, silent = false): Promise<void> {
     const teammateDir = join(this.teammatesDir, name);
 
-    if (this.chatView) {
+    if (!silent && this.chatView) {
       this.chatView.setProgress(`Compacting ${name}...`);
       this.refreshView();
     }
     let spinner: Ora | null = null;
-    if (!this.chatView) {
+    if (!silent && !this.chatView) {
       spinner = ora({ text: `Compacting ${name}...`, color: "cyan" }).start();
     }
 
@@ -4553,16 +4674,16 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           this.feedLine(tp.success(`  ✔  ${name}: ${parts.join(", ")}`));
       }
 
-      if (this.chatView) this.chatView.setProgress(null);
+      if (!silent && this.chatView) this.chatView.setProgress(null);
 
       // Sync recall index for this teammate (bundled library call)
       try {
-        if (this.chatView) {
+        if (!silent && this.chatView) {
           this.chatView.setProgress(`Syncing ${name} index...`);
           this.refreshView();
         }
         let syncSpinner: Ora | null = null;
-        if (!this.chatView) {
+        if (!silent && !this.chatView) {
           syncSpinner = ora({
             text: `Syncing ${name} index...`,
             color: "cyan",
@@ -4571,7 +4692,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         await syncRecallIndex(this.teammatesDir, name);
         if (syncSpinner) syncSpinner.succeed(`${name}: index synced`);
         if (this.chatView) {
-          this.chatView.setProgress(null);
+          if (!silent) this.chatView.setProgress(null);
           if (!silent)
             this.feedLine(tp.success(`  ✔  ${name}: index synced`));
         }
@@ -4587,9 +4708,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
             type: "agent",
             teammate: name,
             task: wisdomPrompt,
+            system: true,
           });
-          if (this.chatView && !silent)
-            this.feedLine(tp.muted(`  ↻ ${name}: queued wisdom distillation`));
+          this.kickDrain();
         }
       } catch {
         /* wisdom prompt build failed — non-fatal */
@@ -4598,7 +4719,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       const msg = err instanceof Error ? err.message : String(err);
       if (spinner) spinner.fail(`${name}: ${msg}`);
       if (this.chatView) {
-        this.chatView.setProgress(null);
+        if (!silent) this.chatView.setProgress(null);
         // Errors always show in feed
         this.feedLine(tp.error(`  ✖  ${name}: ${msg}`));
       }
@@ -4740,15 +4861,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     // 1. Run compaction for all teammates (auto-compact + episodic + sync + wisdom)
     //    Progress bar shows status; feed only shows lines when actual work is done
     for (const name of teammates) {
-      if (this.chatView) {
-        this.chatView.setProgress(`Maintaining @${name}...`);
-        this.refreshView();
-      }
       await this.runCompact(name, true);
-    }
-    if (this.chatView) {
-      this.chatView.setProgress(null);
-      this.refreshView();
     }
 
     // 2. Purge daily logs older than 30 days (disk + Vectra)

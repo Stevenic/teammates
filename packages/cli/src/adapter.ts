@@ -362,7 +362,6 @@ export function buildTeammatePrompt(
     "- The `# Subject` line is REQUIRED — it becomes the message title.",
     "- Always write a substantive body. Never return just the subject.",
     "- Use markdown: headings, lists, code blocks, bold, etc.",
-    "- **Write your text response FIRST, then update session/memory files.** This ensures visible output even if the agent turn ends early.",
     "",
     "### Handoffs",
     "",
@@ -389,7 +388,7 @@ export function buildTeammatePrompt(
       "",
       `Your session file is at: \`${options.sessionFile}\``,
       "",
-      "**After writing your text response**, append a brief entry to this file with:",
+      "**After completing the task**, append a brief entry to this file with:",
       "- What you did",
       "- Key decisions made",
       "- Files changed",
@@ -404,7 +403,7 @@ export function buildTeammatePrompt(
     "",
     "### Memory Updates",
     "",
-    "**After writing your text response**, update your memory files:",
+    "**After completing the task**, update your memory files:",
     "",
     `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist.`,
     "   - What you did",
@@ -466,7 +465,7 @@ export function buildTeammatePrompt(
   instrLines.push(
     "- Your response must answer `<TASK>` — everything else is supporting context.",
     "",
-    "**REMINDER: Write your text response (TO: user) FIRST, then update session/memory files. A turn with only file edits and no text output is a failed turn.**",
+    "**REMINDER: You MUST end your turn with visible text output. A turn with only file edits and no text is a failed turn.**",
   );
 
   parts.push(instrLines.join("\n"));

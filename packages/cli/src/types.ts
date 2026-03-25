@@ -77,6 +77,8 @@ export interface HandoffEnvelope {
 export interface TaskResult {
   /** The teammate that executed the task */
   teammate: string;
+  /** Whether this was a system-initiated task */
+  system?: boolean;
   /** Whether the task completed successfully */
   success: boolean;
   /** Summary of what was done */
@@ -87,6 +89,8 @@ export interface TaskResult {
   handoffs: HandoffEnvelope[];
   /** Raw output from the agent */
   rawOutput?: string;
+  /** The full prompt sent to the agent (for debug logging) */
+  fullPrompt?: string;
   /** Process diagnostics for debugging empty/failed responses */
   diagnostics?: {
     /** Process exit code (null if killed by signal) */
@@ -112,6 +116,8 @@ export interface TaskAssignment {
   extraContext?: string;
   /** When true, skip identity/memory prompt wrapping — send task as-is */
   raw?: boolean;
+  /** When true, this is a system-initiated task — suppress progress bar */
+  system?: boolean;
 }
 
 /** Orchestrator event for logging/hooks */
@@ -122,7 +128,7 @@ export type OrchestratorEvent =
 
 /** A task queue entry — either an agent task or an internal operation. */
 export type QueueEntry =
-  | { type: "agent"; teammate: string; task: string }
+  | { type: "agent"; teammate: string; task: string; system?: boolean }
   | { type: "compact"; teammate: string; task: string }
   | { type: "retro"; teammate: string; task: string }
   | { type: "btw"; teammate: string; task: string }

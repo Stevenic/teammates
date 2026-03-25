@@ -118,6 +118,8 @@ export class Orchestrator {
     const result = await this.adapter.executeTask(sessionId, teammate, prompt, {
       raw: assignment.raw,
     });
+    // Propagate system flag so event handlers can distinguish system vs user tasks
+    if (assignment.system) result.system = true;
     this.onEvent({ type: "task_completed", result });
 
     // Update status (preserve presence)
