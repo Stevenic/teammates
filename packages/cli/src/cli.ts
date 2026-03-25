@@ -315,6 +315,14 @@ class TeammatesREPL {
     why: string;
     actionIdx: number;
   }[] = [];
+  /** Pending cross-folder violations awaiting user decision. */
+  private pendingViolations: {
+    id: string;
+    teammate: string;
+    files: string[];
+    actionIdx: number;
+  }[] = [];
+
   /** Maps reply action IDs to their context (teammate + message). */
   private _replyContexts: Map<string, { teammate: string; message: string }> =
     new Map();
@@ -901,6 +909,145 @@ class TeammatesREPL {
           this.makeSpan({ text: "  rejected", style: { fg: theme().error } }),
         );
         this.showHandoffDropdown();
+      }
+      return;
+    }
+  }
+
+  /**
+   * Audit a task result for cross-folder writes.
+   * AI teammates must not write to another teammate's folder.
+   * Returns violating file paths (relative), or empty array if clean.
+   */
+  private auditCrossFolderWrites(
+    teammate: string,
+    changedFiles: string[],
+  ): string[] {
+    // Normalize .teammates/ prefix for comparison
+    const tmPrefix = ".teammates/";
+    const ownPrefix = `${tmPrefix}${teammate}/`;
+
+    return changedFiles.filter((f) => {
+      const normalized = f.replace(/\\/g, "/");
+      // Only care about files inside .teammates/
+      if (!normalized.startsWith(tmPrefix)) return false;
+      // Own folder is fine
+      if (normalized.startsWith(ownPrefix)) return false;
+      // Shared folders (_prefix) are fine
+      const subPath = normalized.slice(tmPrefix.length);
+      if (subPath.startsWith("_")) return false;
+      // Ephemeral folders (.prefix) are fine
+      if (subPath.startsWith(".")) return false;
+      // Root-level shared files (USER.md, settings.json, CROSS-TEAM.md, etc.)
+      if (!subPath.includes("/")) return false;
+      // Everything else is a violation
+      return true;
+    });
+  }
+
+  /**
+   * Show cross-folder violation warning with [revert] / [allow] actions.
+   */
+  private showViolationWarning(teammate: string, violations: string[]): void {
+    const t = theme();
+    this.feedLine(
+      tp.warning(`  ⚠  @${teammate} wrote to another teammate's folder:`),
+    );
+    for (const f of violations) {
+      this.feedLine(tp.muted(`     ${f}`));
+    }
+
+    if (this.chatView) {
+      const violationId = `violation-${Date.now()}`;
+      const actionIdx = this.chatView.feedLineCount;
+      this.chatView.appendActionList([
+        {
+          id: `revert-${violationId}`,
+          normalStyle: this.makeSpan({
+            text: "  [revert]",
+            style: { fg: t.error },
+          }),
+          hoverStyle: this.makeSpan({
+            text: "  [revert]",
+            style: { fg: t.accent },
+          }),
+        },
+        {
+          id: `allow-${violationId}`,
+          normalStyle: this.makeSpan({
+            text: " [allow]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.makeSpan({
+            text: " [allow]",
+            style: { fg: t.accent },
+          }),
+        },
+      ]);
+      this.pendingViolations.push({
+        id: violationId,
+        teammate,
+        files: violations,
+        actionIdx,
+      });
+    }
+  }
+
+  /**
+   * Handle revert/allow actions for cross-folder violations.
+   */
+  private handleViolationAction(actionId: string): void {
+    const revertMatch = actionId.match(/^revert-(violation-.+)$/);
+    if (revertMatch) {
+      const vId = revertMatch[1];
+      const idx = this.pendingViolations.findIndex((v) => v.id === vId);
+      if (idx >= 0 && this.chatView) {
+        const v = this.pendingViolations.splice(idx, 1)[0];
+        // Revert violating files via git checkout
+        for (const f of v.files) {
+          try {
+            execSync(`git checkout -- "${f}"`, {
+              cwd: resolve(this.teammatesDir, ".."),
+              stdio: "pipe",
+            });
+          } catch {
+            // File might be untracked — try git rm
+            try {
+              execSync(`git rm -f "${f}"`, {
+                cwd: resolve(this.teammatesDir, ".."),
+                stdio: "pipe",
+              });
+            } catch {
+              // Best effort — file may already be clean
+            }
+          }
+        }
+        this.chatView.updateFeedLine(
+          v.actionIdx,
+          this.makeSpan({
+            text: `  reverted ${v.files.length} file(s)`,
+            style: { fg: theme().success },
+          }),
+        );
+        this.refreshView();
+      }
+      return;
+    }
+
+    const allowMatch = actionId.match(/^allow-(violation-.+)$/);
+    if (allowMatch) {
+      const vId = allowMatch[1];
+      const idx = this.pendingViolations.findIndex((v) => v.id === vId);
+      if (idx >= 0 && this.chatView) {
+        const v = this.pendingViolations.splice(idx, 1)[0];
+        this.chatView.updateFeedLine(
+          v.actionIdx,
+          this.makeSpan({
+            text: "  allowed",
+            style: { fg: theme().textDim },
+          }),
+        );
+        this.refreshView();
       }
       return;
     }
@@ -3183,6 +3330,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         id.startsWith("retro-reject-")
       ) {
         this.handleRetroAction(id);
+      } else if (id.startsWith("revert-") || id.startsWith("allow-")) {
+        this.handleViolationAction(id);
       } else if (id.startsWith("approve-") || id.startsWith("reject-")) {
         this.handleHandoffAction(id);
       } else if (id.startsWith("reply-")) {
@@ -4236,6 +4385,18 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
           // Display the (possibly retried) result to the user
           this.displayTaskResult(result, entry.type);
+
+          // Audit cross-folder writes for AI teammates
+          const tmConfig = this.orchestrator.getRegistry().get(entry.teammate);
+          if (tmConfig?.type === "ai" && result.changedFiles.length > 0) {
+            const violations = this.auditCrossFolderWrites(
+              entry.teammate,
+              result.changedFiles,
+            );
+            if (violations.length > 0) {
+              this.showViolationWarning(entry.teammate, violations);
+            }
+          }
 
           // Write debug entry — skip for debug analysis tasks (avoid recursion)
           if (entry.type !== "debug") {

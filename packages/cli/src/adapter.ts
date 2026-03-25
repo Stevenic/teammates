@@ -398,6 +398,18 @@ export function buildTeammatePrompt(
     );
   }
 
+  // Cross-folder write boundary (AI teammates only)
+  if (teammate.type === "ai") {
+    instrLines.push(
+      "",
+      "### Folder Boundaries (ENFORCED)",
+      "",
+      `**You MUST NOT create, edit, or delete files inside another teammate's folder (\`.teammates/<other>/\`).** Your folder is \`.teammates/${teammate.name}/\` — you may only write inside it. Shared folders (\`.teammates/_*/\`) and ephemeral folders (\`.teammates/.*/\`) are also writable.`,
+      "",
+      "If your task requires changes to another teammate's files, you MUST hand off that work using the handoff block format above. Violation of this rule will cause your changes to be flagged and potentially reverted.",
+    );
+  }
+
   // Memory updates
   instrLines.push(
     "",
