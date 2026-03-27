@@ -73,6 +73,11 @@ export class Orchestrator {
     return this.registry;
   }
 
+  /** Get the adapter for direct access (used by /interrupt) */
+  getAdapter(): AgentAdapter {
+    return this.adapter;
+  }
+
   /**
    * Assign a task to a specific teammate and execute it.
    * If the result contains a handoff, follows the chain automatically.

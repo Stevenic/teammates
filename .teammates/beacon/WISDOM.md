@@ -2,12 +2,12 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-25
+Last compacted: 2026-03-27
 
 ---
 
 ### Codebase map — three packages
-CLI has 29 source files (~5,200 lines in cli.ts); consolonia has 42 files; recall has 7 files. The big files are `cli.ts` (~5,200 lines), `chat-view.ts` (~1,500 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~780 lines). Key extracted modules: `adapter.ts` (~510), `compact.ts` (~650), `banner.ts` (~410), `cli-utils.ts` (~170), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
+CLI has 30 source files (~5,560 lines in cli.ts); consolonia has 42 files; recall has 7 files. The big files are `cli.ts` (~5,560 lines), `chat-view.ts` (~1,520 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~530), `compact.ts` (~650), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~170), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
 
 ### Three-tier memory system
 WISDOM.md (distilled, read-only except during compaction), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). The CLI reads WISDOM.md, the indexer indexes WISDOM.md + memory/*.md, and the prompt tells teammates to write typed memories.
@@ -65,6 +65,15 @@ Active user tasks display as `<spinner> <teammate>... <task text> (2m 5s)`. Form
 
 ### Filter by task, not by agent
 When suppressing events for background/system tasks, filter at the task level (via flags on `TaskAssignment`/`TaskResult`), never at the agent level. Agent-level suppression (`silentAgents`) blocks ALL events for that agent — including concurrent user tasks. The `system` flag on events is the correct pattern. `silentAgents` is only used for the short-lived defensive retry window.
+
+### Cross-folder write boundary enforcement
+AI teammates must not write to another teammate's folder. Two layers: (1) prompt rule in `adapter.ts` — `### Folder Boundaries (ENFORCED)` section injected for `type: "ai"` only, (2) post-task audit via `auditCrossFolderWrites()` in `cli.ts` — scans `changedFiles` for paths inside `.teammates/<other>/`, shows `[revert]`/`[allow]` actions. Allowed: own folder, `_` prefix (shared), `.` prefix (ephemeral), root-level `.teammates/` files.
+
+### Interrupt-and-resume — deferred promise pattern
+`/interrupt <teammate> [message]` kills a running agent and resumes with context. `spawnAndProxy` uses a deferred promise — `done` is shared between `executeTask` (normal await) and `killAgent` (SIGTERM → 5s → SIGKILL, then await `done`). `activeProcesses` map tracks `{ child, done, debugFile }` per teammate. Resume prompt wraps the parsed conversation log in `<RESUME_CONTEXT>` and goes through normal `buildTeammatePrompt` wrapping. The `killAgent?()` method is optional on `AgentAdapter`.
+
+### Log parser extracts structure, not content
+`log-parser.ts` parses Claude debug logs, Codex JSONL, and raw agent output into a timeline of actions (Read, Write, Search, etc.). `formatLogTimeline()` groups 4+ consecutive same-action entries to collapse bulk operations. `buildConversationLog()` orchestrates parsing with token budget truncation. Extracts file paths and search queries, NOT full file contents — keeps resume prompts compact.
 
 ### Clean dist before rebuild
 After modifying any TypeScript source, run `rm -rf dist && npm run build` in the package. Stale artifacts in dist/ can mask compile errors. Running CLI must be restarted after rebuilds — Node.js caches modules at startup.

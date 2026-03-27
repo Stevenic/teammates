@@ -27,8 +27,8 @@ import type {
   RosterEntry,
 } from "../adapter.js";
 import {
-  DAILY_LOG_BUDGET_TOKENS,
   buildTeammatePrompt,
+  DAILY_LOG_BUDGET_TOKENS,
   queryRecallContext,
 } from "../adapter.js";
 import { autoCompactForBudget } from "../compact.js";
@@ -184,6 +184,11 @@ export class CliProxyAdapter implements AgentAdapter {
   private sessionsDir = "";
   /** Temp prompt files that need cleanup — guards against crashes before finally. */
   private pendingTempFiles: Set<string> = new Set();
+  /** Active child processes per teammate — used by killAgent() for interruption. */
+  private activeProcesses: Map<
+    string,
+    { child: ChildProcess; done: Promise<SpawnResult>; debugFile?: string }
+  > = new Map();
 
   constructor(options: CliProxyOptions) {
     this.options = options;
@@ -449,6 +454,22 @@ export class CliProxyAdapter implements AgentAdapter {
     return this.sessionFiles.get(teammateName);
   }
 
+  async killAgent(teammate: string): Promise<SpawnResult | null> {
+    const entry = this.activeProcesses.get(teammate);
+    if (!entry || entry.child.killed) return null;
+
+    // Kill with SIGTERM → 5s → SIGKILL
+    entry.child.kill("SIGTERM");
+    setTimeout(() => {
+      if (!entry.child.killed) {
+        entry.child.kill("SIGKILL");
+      }
+    }, 5_000);
+
+    // Wait for the process to exit — the spawnAndProxy close handler resolves this
+    return entry.done;
+  }
+
   async destroySession(_sessionId: string): Promise<void> {
     // Clean up any leaked temp prompt files
     for (const file of this.pendingTempFiles) {
@@ -471,140 +492,152 @@ export class CliProxyAdapter implements AgentAdapter {
     promptFile: string,
     fullPrompt: string,
   ): Promise<SpawnResult> {
-    return new Promise((resolve, reject) => {
-      // Always generate a debug log file for presets that support it (e.g. Claude's --debug-file).
-      // Written to .teammates/.tmp/debug/ so startup maintenance can clean old logs.
-      let debugFile: string | undefined;
-      if (this.preset.supportsDebugFile) {
-        const debugDir = join(
-          teammate.cwd ?? process.cwd(),
-          ".teammates",
-          ".tmp",
-          "debug",
-        );
-        try {
-          mkdirSync(debugDir, { recursive: true });
-        } catch {
-          /* best effort */
-        }
-        debugFile = join(debugDir, `agent-${teammate.name}-${Date.now()}.log`);
+    // Create a deferred promise so killAgent() can await the same result
+    let resolveOuter!: (result: SpawnResult) => void;
+    let rejectOuter!: (err: Error) => void;
+    const done = new Promise<SpawnResult>((res, rej) => {
+      resolveOuter = res;
+      rejectOuter = rej;
+    });
+
+    // Always generate a debug log file for presets that support it (e.g. Claude's --debug-file).
+    // Written to .teammates/.tmp/debug/ so startup maintenance can clean old logs.
+    let debugFile: string | undefined;
+    if (this.preset.supportsDebugFile) {
+      const debugDir = join(
+        teammate.cwd ?? process.cwd(),
+        ".teammates",
+        ".tmp",
+        "debug",
+      );
+      try {
+        mkdirSync(debugDir, { recursive: true });
+      } catch {
+        /* best effort */
       }
+      debugFile = join(debugDir, `agent-${teammate.name}-${Date.now()}.log`);
+    }
 
-      const args = [
-        ...this.preset.buildArgs(
-          { promptFile, prompt: fullPrompt, debugFile },
-          teammate,
-          this.options,
-        ),
-        ...(this.options.extraFlags ?? []),
-      ];
+    const args = [
+      ...this.preset.buildArgs(
+        { promptFile, prompt: fullPrompt, debugFile },
+        teammate,
+        this.options,
+      ),
+      ...(this.options.extraFlags ?? []),
+    ];
 
-      const command = this.options.commandPath ?? this.preset.command;
-      const env = { ...process.env, ...this.preset.env };
-      const timeout = this.options.timeout ?? 600_000;
-      const interactive = this.preset.interactive ?? false;
-      const useStdin = this.preset.stdinPrompt ?? false;
+    const command = this.options.commandPath ?? this.preset.command;
+    const env = { ...process.env, ...this.preset.env };
+    const timeout = this.options.timeout ?? 600_000;
+    const interactive = this.preset.interactive ?? false;
+    const useStdin = this.preset.stdinPrompt ?? false;
 
-      // Suppress Node.js ExperimentalWarning (e.g. SQLite) in agent
-      // subprocesses so it doesn't leak into the terminal UI.
-      const existingNodeOpts = env.NODE_OPTIONS ?? "";
-      if (!existingNodeOpts.includes("--disable-warning=ExperimentalWarning")) {
-        env.NODE_OPTIONS = existingNodeOpts
-          ? `${existingNodeOpts} --disable-warning=ExperimentalWarning`
-          : "--disable-warning=ExperimentalWarning";
+    // Suppress Node.js ExperimentalWarning (e.g. SQLite) in agent
+    // subprocesses so it doesn't leak into the terminal UI.
+    const existingNodeOpts = env.NODE_OPTIONS ?? "";
+    if (!existingNodeOpts.includes("--disable-warning=ExperimentalWarning")) {
+      env.NODE_OPTIONS = existingNodeOpts
+        ? `${existingNodeOpts} --disable-warning=ExperimentalWarning`
+        : "--disable-warning=ExperimentalWarning";
+    }
+
+    // On Windows, npm-installed CLIs are .cmd wrappers that require shell.
+    // When using shell mode, pass command+args as a single string to avoid
+    // Node DEP0190 deprecation warning about unescaped args with shell: true.
+    const needsShell = this.preset.shell ?? process.platform === "win32";
+    const spawnCmd = needsShell ? [command, ...args].join(" ") : command;
+    const spawnArgs = needsShell ? [] : args;
+    const child: ChildProcess = spawn(spawnCmd, spawnArgs, {
+      cwd: teammate.cwd ?? process.cwd(),
+      env,
+      stdio: [interactive || useStdin ? "pipe" : "ignore", "pipe", "pipe"],
+      shell: needsShell,
+    });
+
+    // Register the active process for killAgent() access
+    this.activeProcesses.set(teammate.name, { child, done, debugFile });
+
+    // Pipe prompt via stdin if the preset requires it
+    if (useStdin && child.stdin) {
+      child.stdin.write(fullPrompt);
+      child.stdin.end();
+    }
+
+    // ── Timeout with SIGTERM → SIGKILL escalation ──────────────
+    let killed = false;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    const timeoutTimer = setTimeout(() => {
+      if (!child.killed) {
+        killed = true;
+        child.kill("SIGTERM");
+        // If SIGTERM doesn't work after 5s, force-kill
+        killTimer = setTimeout(() => {
+          if (!child.killed) {
+            child.kill("SIGKILL");
+          }
+        }, 5_000);
       }
+    }, timeout);
 
-      // On Windows, npm-installed CLIs are .cmd wrappers that require shell.
-      // When using shell mode, pass command+args as a single string to avoid
-      // Node DEP0190 deprecation warning about unescaped args with shell: true.
-      const needsShell = this.preset.shell ?? process.platform === "win32";
-      const spawnCmd = needsShell ? [command, ...args].join(" ") : command;
-      const spawnArgs = needsShell ? [] : args;
-      const child: ChildProcess = spawn(spawnCmd, spawnArgs, {
-        cwd: teammate.cwd ?? process.cwd(),
-        env,
-        stdio: [interactive || useStdin ? "pipe" : "ignore", "pipe", "pipe"],
-        shell: needsShell,
-      });
-
-      // Pipe prompt via stdin if the preset requires it
-      if (useStdin && child.stdin) {
-        child.stdin.write(fullPrompt);
-        child.stdin.end();
-      }
-
-      // ── Timeout with SIGTERM → SIGKILL escalation ──────────────
-      let killed = false;
-      let killTimer: ReturnType<typeof setTimeout> | null = null;
-      const timeoutTimer = setTimeout(() => {
-        if (!child.killed) {
-          killed = true;
-          child.kill("SIGTERM");
-          // If SIGTERM doesn't work after 5s, force-kill
-          killTimer = setTimeout(() => {
-            if (!child.killed) {
-              child.kill("SIGKILL");
-            }
-          }, 5_000);
-        }
-      }, timeout);
-
-      // Connect user's stdin → child only if agent may ask questions
-      let onUserInput: ((chunk: Buffer) => void) | null = null;
-      if (interactive && !useStdin && child.stdin) {
-        onUserInput = (chunk: Buffer) => {
-          child.stdin?.write(chunk);
-        };
-        if (process.stdin.isTTY) {
-          process.stdin.setRawMode(false);
-        }
-        process.stdin.resume();
-        process.stdin.on("data", onUserInput);
-      }
-
-      const stdoutBufs: Buffer[] = [];
-      const stderrBufs: Buffer[] = [];
-
-      child.stdout?.on("data", (chunk: Buffer) => {
-        stdoutBufs.push(chunk);
-      });
-
-      child.stderr?.on("data", (chunk: Buffer) => {
-        stderrBufs.push(chunk);
-      });
-
-      const cleanup = () => {
-        clearTimeout(timeoutTimer);
-        if (killTimer) clearTimeout(killTimer);
-        if (onUserInput) {
-          process.stdin.removeListener("data", onUserInput);
-        }
+    // Connect user's stdin → child only if agent may ask questions
+    let onUserInput: ((chunk: Buffer) => void) | null = null;
+    if (interactive && !useStdin && child.stdin) {
+      onUserInput = (chunk: Buffer) => {
+        child.stdin?.write(chunk);
       };
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      process.stdin.resume();
+      process.stdin.on("data", onUserInput);
+    }
 
-      child.on("close", (code, signal) => {
-        cleanup();
-        const stdout = Buffer.concat(stdoutBufs).toString("utf-8");
-        const stderr = Buffer.concat(stderrBufs).toString("utf-8");
-        const output = stdout + (stderr ? `\n${stderr}` : "");
+    const stdoutBufs: Buffer[] = [];
+    const stderrBufs: Buffer[] = [];
 
-        resolve({
-          output: killed
-            ? `${output}\n\n[TIMEOUT] Agent process killed after ${timeout}ms`
-            : output,
-          stdout,
-          stderr,
-          exitCode: code,
-          signal: signal ?? null,
-          timedOut: killed,
-          debugFile,
-        });
-      });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdoutBufs.push(chunk);
+    });
 
-      child.on("error", (err) => {
-        cleanup();
-        reject(new Error(`Failed to spawn ${command}: ${err.message}`));
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrBufs.push(chunk);
+    });
+
+    const cleanup = () => {
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+      if (onUserInput) {
+        process.stdin.removeListener("data", onUserInput);
+      }
+      this.activeProcesses.delete(teammate.name);
+    };
+
+    child.on("close", (code, signal) => {
+      cleanup();
+      const stdout = Buffer.concat(stdoutBufs).toString("utf-8");
+      const stderr = Buffer.concat(stderrBufs).toString("utf-8");
+      const output = stdout + (stderr ? `\n${stderr}` : "");
+
+      resolveOuter({
+        output: killed
+          ? `${output}\n\n[TIMEOUT] Agent process killed after ${timeout}ms`
+          : output,
+        stdout,
+        stderr,
+        exitCode: code,
+        signal: signal ?? null,
+        timedOut: killed,
+        debugFile,
       });
     });
+
+    child.on("error", (err) => {
+      cleanup();
+      rejectOuter(new Error(`Failed to spawn ${command}: ${err.message}`));
+    });
+
+    return done;
   }
 }
 

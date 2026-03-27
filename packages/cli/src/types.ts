@@ -128,12 +128,36 @@ export type OrchestratorEvent =
 
 /** A task queue entry — either an agent task or an internal operation. */
 export type QueueEntry =
-  | { type: "agent"; teammate: string; task: string; system?: boolean }
+  | {
+      type: "agent";
+      teammate: string;
+      task: string;
+      system?: boolean;
+      migration?: boolean;
+    }
   | { type: "compact"; teammate: string; task: string }
   | { type: "retro"; teammate: string; task: string }
   | { type: "btw"; teammate: string; task: string }
   | { type: "debug"; teammate: string; task: string }
   | { type: "summarize"; teammate: string; task: string };
+
+/** State captured when an agent is interrupted mid-task. */
+export interface InterruptState {
+  /** The teammate that was interrupted */
+  teammate: string;
+  /** The original task prompt (user-facing, not the full wrapped prompt) */
+  originalTask: string;
+  /** The full prompt sent to the agent (identity + memory + task) */
+  originalFullPrompt: string;
+  /** Condensed conversation log from the interrupted session */
+  conversationLog: string;
+  /** How long the agent ran before interruption (ms) */
+  elapsedMs: number;
+  /** Number of tool calls made before interruption */
+  toolCallCount: number;
+  /** Files written/modified before interruption */
+  filesChanged: string[];
+}
 
 /** A registered slash command. */
 export interface SlashCommand {

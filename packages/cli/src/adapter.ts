@@ -46,6 +46,15 @@ export interface AgentAdapter {
   /** Get the session file path for a teammate (if session is active). */
   getSessionFile?(teammateName: string): string | undefined;
 
+  /**
+   * Kill a running agent and return its partial output.
+   * Used by the interrupt-and-resume system to capture in-progress work.
+   * Returns null if no agent is running for this teammate.
+   */
+  killAgent?(
+    teammate: string,
+  ): Promise<import("./adapters/cli-proxy.js").SpawnResult | null>;
+
   /** Clean up a session. */
   destroySession?(sessionId: string): Promise<void>;
 
@@ -156,7 +165,7 @@ const CHARS_PER_TOKEN = 4;
  * - Last recall entry can push total up to budget + RECALL_OVERFLOW (4k grace)
  * - Weekly summaries are excluded (already indexed by recall)
  */
-export const DAILY_LOG_BUDGET_TOKENS = 24_000;
+export const DAILY_LOG_BUDGET_TOKENS = 12_000;
 const RECALL_MIN_BUDGET_TOKENS = 8_000;
 const RECALL_OVERFLOW_TOKENS = 4_000;
 
@@ -305,7 +314,17 @@ export function buildTeammatePrompt(
     RECALL_MIN_BUDGET_TOKENS,
     RECALL_MIN_BUDGET_TOKENS + dailyBudget,
   );
-  const recallResults = options?.recallResults ?? [];
+
+  // Filter recall results that duplicate daily log content already in the prompt
+  const dailyLogDates = new Set(
+    teammate.dailyLogs.slice(0, 7).map((log) => log.date),
+  );
+  const recallResults = (options?.recallResults ?? []).filter((r) => {
+    const dailyMatch = r.uri.match(/memory\/(\d{4}-\d{2}-\d{2})\.md/);
+    if (dailyMatch && dailyLogDates.has(dailyMatch[1])) return false;
+    return true;
+  });
+
   if (recallResults.length > 0) {
     const lines = [
       "<RECALL_RESULTS>",
@@ -343,6 +362,8 @@ export function buildTeammatePrompt(
   // <INSTRUCTIONS> — output protocol, handoffs, session state, memory updates
   const instrLines = [
     "<INSTRUCTIONS>",
+    "",
+    "**Your FIRST priority is answering the user's request in `<TASK>`. Session updates, memory writes, and continuity housekeeping are SECONDARY — do them AFTER producing your text response, not before.**",
     "",
     "### Output Protocol (CRITICAL)",
     "",
@@ -476,6 +497,23 @@ export function buildTeammatePrompt(
   }
   instrLines.push(
     "- Your response must answer `<TASK>` — everything else is supporting context.",
+  );
+
+  // Echo the user's actual request at the bottom edge for maximum attention.
+  // The orchestrator prepends conversation history before a "---" separator,
+  // so the user's raw message is the last segment after splitting on "---".
+  const segments = taskPrompt.split(/\n\n---\n\n/);
+  const userRequest = segments[segments.length - 1].trim();
+  if (userRequest.length > 0 && userRequest.length < 500) {
+    instrLines.push("", `**THE USER'S REQUEST:** ${userRequest}`);
+  } else if (userRequest.length >= 500) {
+    instrLines.push(
+      "",
+      "**IMPORTANT: The user's actual request is at the end of `<TASK>`. Read and address it before doing anything else.**",
+    );
+  }
+
+  instrLines.push(
     "",
     "**REMINDER: You MUST end your turn with visible text output. A turn with only file edits and no text is a failed turn.**",
   );
