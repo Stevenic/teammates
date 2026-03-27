@@ -1,4 +1,5 @@
 ---
+version: 0.6.1
 name: Human control principle
 description: Nothing automatic that a human doesn't control — twins propose, humans approve. Applies to all twin actions affecting other teammates.
 type: feedback

@@ -10,9 +10,15 @@
  */
 
 import { exec as execCb, execSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 
 import {
@@ -48,8 +54,10 @@ import {
   buildConversationContext as buildConvCtx,
   buildSummarizationPrompt,
   cleanResponseBody,
+  compressConversationEntries,
   findAtMention,
   findSummarizationSplit,
+  formatConversationEntry,
   isImagePath,
   relativeTime,
   wrapLine,
@@ -197,8 +205,11 @@ class TeammatesREPL {
     if (this.chatView && cleaned) {
       const t = theme();
       const teammate = result.teammate;
-      const replyId = `reply-${teammate}-${Date.now()}`;
+      const ts = Date.now();
+      const replyId = `reply-${teammate}-${ts}`;
+      const copyId = `copy-${teammate}-${ts}`;
       this._replyContexts.set(replyId, { teammate, message: cleaned });
+      this._copyContexts.set(copyId, cleaned);
       this.chatView.appendActionList([
         {
           id: replyId,
@@ -212,7 +223,7 @@ class TeammatesREPL {
           }),
         },
         {
-          id: "copy",
+          id: copyId,
           normalStyle: this.makeSpan({
             text: " [copy]",
             style: { fg: t.textDim },
@@ -232,36 +243,35 @@ class TeammatesREPL {
     this.showPrompt();
   }
 
-  /** Token budget for recent conversation history (24k tokens ≈ 96k chars). */
-  private static readonly CONV_HISTORY_CHARS = 24_000 * 4;
+  /** Target context window in tokens. Conversation history budget is derived from this. */
+  private static readonly TARGET_CONTEXT_TOKENS = 128_000;
 
-  /** Threshold (chars) above which conversation history is written to a temp file. */
-  private static readonly CONV_FILE_THRESHOLD = 8_000;
+  /** Estimated tokens used by non-conversation prompt sections (identity, wisdom, logs, recall, instructions, task). */
+  private static readonly PROMPT_OVERHEAD_TOKENS = 32_000;
 
-  private buildConversationContext(): string {
-    const context = buildConvCtx(
-      this.conversationHistory,
-      this.conversationSummary,
-      TeammatesREPL.CONV_HISTORY_CHARS,
-    );
+  /** Chars-per-token approximation (matches adapter.ts). */
+  private static readonly CHARS_PER_TOKEN = 4;
 
-    // If the conversation context is very long, write it to a temp file
-    // and return a pointer instead — reduces inline prompt noise.
-    if (context.length > TeammatesREPL.CONV_FILE_THRESHOLD) {
-      const tmpDir = join(this.teammatesDir, ".tmp");
-      mkdirSync(tmpDir, { recursive: true });
-      const convFile = join(tmpDir, "conversation.md");
-      writeFileSync(convFile, context, "utf-8");
-      return `## Conversation History\n\nThe full conversation history is in \`.teammates/.tmp/conversation.md\`. Read it before responding to understand prior context.`;
-    }
+  /** Character budget for conversation history = (target − overhead) × chars/token. */
+  private static readonly CONV_HISTORY_CHARS =
+    (TeammatesREPL.TARGET_CONTEXT_TOKENS -
+      TeammatesREPL.PROMPT_OVERHEAD_TOKENS) *
+    TeammatesREPL.CHARS_PER_TOKEN;
 
-    return context;
+  private buildConversationContext(
+    _teammate?: string,
+    snapshot?: { history: { role: string; text: string }[]; summary: string },
+  ): string {
+    const history = snapshot ? snapshot.history : this.conversationHistory;
+    const summary = snapshot ? snapshot.summary : this.conversationSummary;
+
+    return buildConvCtx(history, summary, TeammatesREPL.CONV_HISTORY_CHARS);
   }
 
   /**
-   * Check if conversation history exceeds the 24k token budget.
+   * Check if conversation history exceeds the token budget.
    * If so, take the older entries that won't fit, combine with existing summary,
-   * and queue a summarization task to the coding agent.
+   * and queue a summarization task to the coding agent for high-quality compression.
    */
   private maybeQueueSummarization(): void {
     const splitIdx = findSummarizationSplit(
@@ -288,6 +298,35 @@ class TeammatesREPL {
     });
     this.kickDrain();
   }
+
+  /**
+   * Pre-dispatch compression: if conversation history exceeds the token budget,
+   * mechanically compress older entries into bullet summaries BEFORE building the
+   * prompt. This ensures the prompt always fits within the target context window,
+   * even if the async agent-quality summarization hasn't completed yet.
+   */
+  private preDispatchCompress(): void {
+    const totalChars = this.conversationHistory.reduce(
+      (sum, e) => sum + formatConversationEntry(e.role, e.text).length,
+      0,
+    );
+
+    if (totalChars <= TeammatesREPL.CONV_HISTORY_CHARS) return;
+
+    const splitIdx = findSummarizationSplit(
+      this.conversationHistory,
+      TeammatesREPL.CONV_HISTORY_CHARS,
+    );
+
+    if (splitIdx === 0) return;
+
+    const toCompress = this.conversationHistory.slice(0, splitIdx);
+    this.conversationSummary = compressConversationEntries(
+      toCompress,
+      this.conversationSummary,
+    );
+    this.conversationHistory.splice(0, splitIdx);
+  }
   private adapterName: string;
   private teammatesDir!: string;
   private taskQueue: QueueEntry[] = [];
@@ -311,6 +350,8 @@ class TeammatesREPL {
   private ctrlcPending = false; // true after first Ctrl+C, waiting for second
   private ctrlcTimer: ReturnType<typeof setTimeout> | null = null;
   private lastCleanedOutput = ""; // last teammate output for clipboard copy
+  /** Maps copy action IDs to the cleaned output text for that response. */
+  private _copyContexts: Map<string, string> = new Map();
   private autoApproveHandoffs = false;
   /** Last debug log file path per teammate — for /debug analysis. */
   private lastDebugFiles: Map<string, string> = new Map();
@@ -1400,8 +1441,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       const names = allNames.filter(
         (n) => n !== this.selfName && n !== this.adapterName,
       );
+      // Atomic snapshot: freeze conversation state ONCE so all agents see
+      // the same context regardless of concurrent preDispatchCompress mutations.
+      const contextSnapshot = {
+        history: this.conversationHistory.map((e) => ({ ...e })),
+        summary: this.conversationSummary,
+      };
       for (const teammate of names) {
-        this.taskQueue.push({ type: "agent", teammate, task });
+        this.taskQueue.push({ type: "agent", teammate, task, contextSnapshot });
       }
       const bg = this._userBg;
       const t = theme();
@@ -1572,6 +1619,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           } catch {
             /* re-index failed — non-fatal, next startup will retry */
           }
+          // Persist version LAST — only after all migration tasks finish
+          this.commitVersionUpdate();
         }
       }
     }
@@ -2184,8 +2233,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     const userMdPath = join(teammatesDir, "USER.md");
     try {
       const content = readFileSync(userMdPath, "utf-8");
-      // Template placeholders contain "<your name>" — treat as not set up
-      return !content.trim() || content.includes("<your name>");
+      // Template placeholders contain "<Your name>" — treat as not set up
+      return !content.trim() || content.toLowerCase().includes("<your name>");
     } catch {
       // File doesn't exist
       return true;
@@ -2680,6 +2729,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       compact: new Set([0]),
       debug: new Set([0]),
       retro: new Set([0]),
+      interrupt: new Set([0]),
+      int: new Set([0]),
     };
 
   /** Build param-completion items for the current line, if any. */
@@ -2688,6 +2739,49 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     argsBefore: string,
     partial: string,
   ): DropdownItem[] {
+    // Script subcommand + name completion for /script
+    if (cmdName === "script") {
+      const completedArgs = argsBefore.trim()
+        ? argsBefore.trim().split(/\s+/).length
+        : 0;
+      const lower = partial.toLowerCase();
+
+      if (completedArgs === 0) {
+        // First arg — suggest subcommands
+        const subs = [
+          { name: "list", desc: "List saved scripts" },
+          { name: "run", desc: "Run an existing script" },
+        ];
+        return subs
+          .filter((s) => s.name.startsWith(lower))
+          .map((s) => ({
+            label: s.name,
+            description: s.desc,
+            completion: `/script ${s.name} `,
+          }));
+      }
+
+      if (completedArgs === 1 && argsBefore.trim() === "run") {
+        // Second arg after "run" — suggest script filenames
+        const scriptsDir = join(this.teammatesDir, this.selfName, "scripts");
+        let files: string[] = [];
+        try {
+          files = readdirSync(scriptsDir).filter((f) => !f.startsWith("."));
+        } catch {
+          // directory doesn't exist yet
+        }
+        return files
+          .filter((f) => f.toLowerCase().startsWith(lower))
+          .map((f) => ({
+            label: f,
+            description: "saved script",
+            completion: `/script run ${f}`,
+          }));
+      }
+
+      return [];
+    }
+
     // Service name completion for /configure
     if (cmdName === "configure" || cmdName === "config") {
       const completedArgs = argsBefore.trim()
@@ -3359,8 +3453,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.chatView.on("action", (id: string) => {
       if (id.startsWith("copy-cmd:")) {
         this.doCopy(id.slice("copy-cmd:".length));
-      } else if (id === "copy") {
-        this.doCopy(this.lastCleanedOutput || undefined);
+      } else if (id.startsWith("copy-")) {
+        const text = this._copyContexts.get(id);
+        this.doCopy(text || this.lastCleanedOutput || undefined);
       } else if (
         id.startsWith("retro-approve-") ||
         id.startsWith("retro-reject-")
@@ -3979,7 +4074,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       {
         name: "interrupt",
         aliases: ["int"],
-        usage: "/interrupt <teammate> [message]",
+        usage: "/interrupt [teammate] [message]",
         description:
           "Interrupt a running agent and resume with a steering message",
         run: (args) => this.cmdInterrupt(args),
@@ -4034,6 +4129,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         description:
           "Ask a quick side question without interrupting the main conversation",
         run: (args) => this.cmdBtw(args),
+      },
+      {
+        name: "script",
+        aliases: [],
+        usage: "/script [list | run <name> | what should the script do?]",
+        description: "Write and run reusable scripts via the coding agent",
+        run: (args) => this.cmdScript(args),
       },
       {
         name: "theme",
@@ -4357,7 +4459,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   /**
-   * /interrupt <teammate> [message] — Kill a running agent and resume with context.
+   * /interrupt [teammate] [message] — Kill a running agent and resume with context.
    */
   private async cmdInterrupt(argsStr: string): Promise<void> {
     const parts = argsStr.trim().split(/\s+/);
@@ -4367,7 +4469,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       "Wrap up your current work and report what you've done so far.";
 
     if (!teammateName) {
-      this.feedLine(tp.warning("  Usage: /interrupt <teammate> [message]"));
+      this.feedLine(tp.warning("  Usage: /interrupt [teammate] [message]"));
       this.refreshView();
       return;
     }
@@ -4553,10 +4655,16 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       try {
         {
           // btw and debug tasks skip conversation context (not part of main thread)
-          const extraContext =
-            entry.type === "btw" || entry.type === "debug"
-              ? ""
-              : this.buildConversationContext();
+          const isMainThread = entry.type !== "btw" && entry.type !== "debug";
+          // Snapshot-aware context building: if the entry has a frozen snapshot
+          // (@everyone), use it directly — no mutation of shared state.
+          // Otherwise, compress live state as before.
+          const snapshot =
+            entry.type === "agent" ? entry.contextSnapshot : undefined;
+          if (isMainThread && !snapshot) this.preDispatchCompress();
+          const extraContext = isMainThread
+            ? this.buildConversationContext(entry.teammate, snapshot)
+            : "";
           let result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
@@ -5295,6 +5403,13 @@ Issues that can't be resolved unilaterally — they need input from other teamma
         }
       }
       this.pendingMigrationSyncs = migrationCount;
+      // If no migration tasks were actually queued, commit version now
+      if (migrationCount === 0) {
+        this.commitVersionUpdate();
+      }
+    } else if (versionUpdate) {
+      // No migration needed — commit the version update immediately
+      this.commitVersionUpdate();
     }
 
     this.kickDrain();
@@ -5324,10 +5439,35 @@ Issues that can't be resolved unilaterally — they need input from other teamma
 
   /**
    * Check if the CLI version has changed since last run.
-   * Updates settings.json with the current version.
-   * Returns the previous version if it changed, null otherwise.
+   * Does NOT update settings.json — call `commitVersionUpdate()` after
+   * migration tasks are complete to persist the new version.
    */
   private checkVersionUpdate(): { previous: string; current: string } | null {
+    const settingsPath = join(this.teammatesDir, "settings.json");
+    let settings: {
+      version?: number;
+      cliVersion?: string;
+      services?: unknown[];
+    } = {};
+
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    } catch {
+      // No settings file or invalid JSON
+    }
+
+    const previous = settings.cliVersion ?? "";
+    const current = PKG_VERSION;
+
+    if (previous === current) return null;
+    return { previous, current };
+  }
+
+  /**
+   * Persist the current CLI version to settings.json.
+   * Called after all migration tasks complete (or immediately if no migration needed).
+   */
+  private commitVersionUpdate(): void {
     const settingsPath = join(this.teammatesDir, "settings.json");
     let settings: {
       version?: number;
@@ -5344,15 +5484,6 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     const previous = settings.cliVersion ?? "";
     const current = PKG_VERSION;
 
-    if (previous === current) return null;
-
-    // Detect major/minor version change (not just patch)
-    const [prevMajor, prevMinor] = previous.split(".").map(Number);
-    const [curMajor, curMinor] = current.split(".").map(Number);
-    const isMajorMinor =
-      previous !== "" && (prevMajor !== curMajor || prevMinor !== curMinor);
-
-    // Update the stored version
     settings.cliVersion = current;
     if (!settings.version) settings.version = 1;
     try {
@@ -5365,13 +5496,17 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       /* write failed — non-fatal */
     }
 
+    // Detect major/minor version change (not just patch)
+    const [prevMajor, prevMinor] = previous.split(".").map(Number);
+    const [curMajor, curMinor] = current.split(".").map(Number);
+    const isMajorMinor =
+      previous !== "" && (prevMajor !== curMajor || prevMinor !== curMinor);
+
     if (isMajorMinor) {
       this.feedLine(tp.accent(`  ✔  Updated from v${previous} → v${current}`));
       this.feedLine();
       this.refreshView();
     }
-
-    return { previous, current };
   }
 
   private async cmdCopy(): Promise<void> {
@@ -5560,6 +5695,149 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     });
     this.feedLine(
       concat(tp.muted("  Side question → "), tp.accent(`@${this.adapterName}`)),
+    );
+    this.feedLine();
+    this.refreshView();
+    this.kickDrain();
+  }
+
+  private async cmdScript(argsStr: string): Promise<void> {
+    const args = argsStr.trim();
+    const scriptsDir = join(this.teammatesDir, this.selfName, "scripts");
+
+    // /script (no args) — show usage
+    if (!args) {
+      this.feedLine();
+      this.feedLine(tp.bold("  /script — write and run reusable scripts"));
+      this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
+      this.feedLine(
+        concat(
+          tp.accent("  /script list".padEnd(36)),
+          tp.text("List saved scripts"),
+        ),
+      );
+      this.feedLine(
+        concat(
+          tp.accent("  /script run <name>".padEnd(36)),
+          tp.text("Run an existing script"),
+        ),
+      );
+      this.feedLine(
+        concat(
+          tp.accent("  /script <description>".padEnd(36)),
+          tp.text("Create and run a new script"),
+        ),
+      );
+      this.feedLine();
+      this.feedLine(tp.muted(`  Scripts are saved to ${scriptsDir}`));
+      this.feedLine();
+      this.refreshView();
+      return;
+    }
+
+    // /script list — list saved scripts
+    if (args === "list") {
+      let files: string[] = [];
+      try {
+        files = readdirSync(scriptsDir).filter((f) => !f.startsWith("."));
+      } catch {
+        // directory doesn't exist yet
+      }
+
+      this.feedLine();
+      if (files.length === 0) {
+        this.feedLine(tp.muted("  No scripts saved yet."));
+        this.feedLine(tp.muted("  Use /script <description> to create one."));
+      } else {
+        this.feedLine(tp.bold("  Saved scripts"));
+        this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
+        for (const f of files) {
+          this.feedLine(concat(tp.accent(`  ${f}`)));
+        }
+      }
+      this.feedLine();
+      this.refreshView();
+      return;
+    }
+
+    // /script run <name> — run an existing script
+    if (args.startsWith("run ")) {
+      const name = args.slice(4).trim();
+      if (!name) {
+        this.feedLine(tp.muted("  Usage: /script run <name>"));
+        this.refreshView();
+        return;
+      }
+
+      // Find the script file (try exact match, then with common extensions)
+      const candidates = [
+        name,
+        `${name}.sh`,
+        `${name}.ts`,
+        `${name}.js`,
+        `${name}.ps1`,
+        `${name}.py`,
+      ];
+      let scriptPath: string | null = null;
+      for (const c of candidates) {
+        const p = join(scriptsDir, c);
+        if (existsSync(p)) {
+          scriptPath = p;
+          break;
+        }
+      }
+
+      if (!scriptPath) {
+        this.feedLine(tp.warning(`  Script not found: ${name}`));
+        this.feedLine(tp.muted("  Use /script list to see available scripts."));
+        this.refreshView();
+        return;
+      }
+
+      const scriptContent = readFileSync(scriptPath, "utf-8");
+      const task = `Run the following script located at ${scriptPath}:\n\n\`\`\`\n${scriptContent}\n\`\`\`\n\nExecute it and report the results. If it fails, diagnose the issue and fix it.`;
+
+      this.taskQueue.push({
+        type: "script",
+        teammate: this.selfName,
+        task,
+      });
+      this.feedLine(
+        concat(
+          tp.muted("  Running script "),
+          tp.accent(basename(scriptPath)),
+          tp.muted(" → "),
+          tp.accent(`@${this.adapterName}`),
+        ),
+      );
+      this.feedLine();
+      this.refreshView();
+      this.kickDrain();
+      return;
+    }
+
+    // /script <description> — create and run a new script
+    const task = [
+      `The user wants a reusable script. Their request:`,
+      ``,
+      args,
+      ``,
+      `Instructions:`,
+      `1. Write the script and save it to the scripts directory: ${scriptsDir}`,
+      `2. Create the directory if it doesn't exist.`,
+      `3. Choose a short, descriptive filename (kebab-case, with appropriate extension like .sh, .ts, .js, .py, .ps1).`,
+      `4. Make the script executable if applicable.`,
+      `5. Run the script and report the results.`,
+      `6. If the script needs to be parameterized, use command-line arguments.`,
+    ].join("\n");
+
+    this.taskQueue.push({
+      type: "script",
+      teammate: this.selfName,
+      task,
+    });
+    this.feedLine(
+      concat(tp.muted("  Script task → "), tp.accent(`@${this.adapterName}`)),
     );
     this.feedLine();
     this.refreshView();

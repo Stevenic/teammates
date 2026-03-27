@@ -111,6 +111,7 @@ function buildWeeklySummary(
 
   const lines: string[] = [];
   lines.push("---");
+  lines.push("version: 0.6.0");
   lines.push(`type: weekly`);
   lines.push(`week: ${weekKey}`);
   lines.push(`period: ${firstDate} to ${lastDate}`);
@@ -143,6 +144,7 @@ function buildMonthlySummary(
 
   const lines: string[] = [];
   lines.push("---");
+  lines.push("version: 0.6.0");
   lines.push(`type: monthly`);
   lines.push(`month: ${monthKey}`);
   lines.push(`period: ${firstWeek} to ${lastWeek}`);
@@ -709,6 +711,8 @@ For EACH file listed below:
 5. Start the file with this frontmatter:
 \`\`\`
 ---
+version: 0.6.0
+type: daily
 compressed: true
 ---
 \`\`\`
@@ -780,6 +784,8 @@ Keep the same markdown structure (# date header, ## Task headers) but make each 
 Write the compressed version to \`.teammates/${basename(teammateDir)}/memory/${yesterdayStr}.md\`. Start the file with this frontmatter:
 \`\`\`
 ---
+version: 0.6.0
+type: daily
 compressed: true
 ---
 \`\`\`

@@ -162,6 +162,28 @@ export function buildSummarizationPrompt(
     : `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Summarize the conversation entries below.\n\n## Entries to Summarize\n\n${entriesText}\n\n${instructions}`;
 }
 
+/**
+ * Mechanically compress conversation entries into a condensed bullet summary.
+ * Used for fast pre-dispatch compression when history exceeds the token budget.
+ * Each entry becomes a one-line bullet with truncated text.
+ */
+export function compressConversationEntries(
+  entries: ConversationEntry[],
+  existingSummary: string,
+): string {
+  const bullets = entries.map((e) => {
+    const firstLine = e.text.split("\n")[0].slice(0, 150);
+    const ellipsis = e.text.length > 150 || e.text.includes("\n") ? "…" : "";
+    return `- **${e.role}:** ${firstLine}${ellipsis}`;
+  });
+
+  const compressed = bullets.join("\n");
+  if (existingSummary) {
+    return `${existingSummary}\n\n### Compressed\n${compressed}`;
+  }
+  return compressed;
+}
+
 /** Check if a string looks like an image file path. */
 export function isImagePath(text: string): boolean {
   // Must look like a file path (contains slash or backslash, or starts with drive letter)

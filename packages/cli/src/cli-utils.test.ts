@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildConversationContext,
   buildSummarizationPrompt,
+  compressConversationEntries,
   type ConversationEntry,
   cleanResponseBody,
   findAtMention,
@@ -462,5 +463,61 @@ describe("buildSummarizationPrompt", () => {
     ];
     const prompt = buildSummarizationPrompt(multiLine, "");
     expect(prompt).toContain("**scribe:**\nLine 1\nLine 2");
+  });
+});
+
+// ── compressConversationEntries ──────────────────────────────────────
+
+describe("compressConversationEntries", () => {
+  it("compresses entries into bullet summaries", () => {
+    const entries: ConversationEntry[] = [
+      { role: "stevenic", text: "Build the feature" },
+      { role: "beacon", text: "Done, here's what I did" },
+    ];
+    const result = compressConversationEntries(entries, "");
+    expect(result).toContain("- **stevenic:** Build the feature");
+    expect(result).toContain("- **beacon:** Done, here's what I did");
+  });
+
+  it("truncates long text at 150 chars with ellipsis", () => {
+    const entries: ConversationEntry[] = [
+      { role: "scribe", text: "A".repeat(200) },
+    ];
+    const result = compressConversationEntries(entries, "");
+    expect(result).toContain("A".repeat(150));
+    expect(result).toContain("…");
+    expect(result).not.toContain("A".repeat(151));
+  });
+
+  it("adds ellipsis for multi-line text even if short", () => {
+    const entries: ConversationEntry[] = [
+      { role: "beacon", text: "Line 1\nLine 2" },
+    ];
+    const result = compressConversationEntries(entries, "");
+    expect(result).toContain("- **beacon:** Line 1…");
+  });
+
+  it("prepends existing summary with compressed section", () => {
+    const entries: ConversationEntry[] = [
+      { role: "stevenic", text: "Do the thing" },
+    ];
+    const result = compressConversationEntries(entries, "Earlier context here");
+    expect(result).toContain("Earlier context here");
+    expect(result).toContain("### Compressed");
+    expect(result).toContain("- **stevenic:** Do the thing");
+  });
+
+  it("returns plain bullets when no existing summary", () => {
+    const entries: ConversationEntry[] = [
+      { role: "user", text: "Hello" },
+    ];
+    const result = compressConversationEntries(entries, "");
+    expect(result).not.toContain("### Compressed");
+    expect(result).toBe("- **user:** Hello");
+  });
+
+  it("handles empty entries array", () => {
+    const result = compressConversationEntries([], "");
+    expect(result).toBe("");
   });
 });

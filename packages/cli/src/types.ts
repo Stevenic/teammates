@@ -134,11 +134,17 @@ export type QueueEntry =
       task: string;
       system?: boolean;
       migration?: boolean;
+      /** Frozen conversation snapshot taken at queue time (used by @everyone). */
+      contextSnapshot?: {
+        history: { role: string; text: string }[];
+        summary: string;
+      };
     }
   | { type: "compact"; teammate: string; task: string }
   | { type: "retro"; teammate: string; task: string }
   | { type: "btw"; teammate: string; task: string }
   | { type: "debug"; teammate: string; task: string }
+  | { type: "script"; teammate: string; task: string }
   | { type: "summarize"; teammate: string; task: string };
 
 /** State captured when an agent is interrupted mid-task. */

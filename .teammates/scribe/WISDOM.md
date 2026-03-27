@@ -50,3 +50,9 @@ Recall stays a pure search engine with no LLM dependency. Pass 1 (pre-task, no L
 
 ### Teammates grow, they never shrink
 Evolution is always additive to experience. When a role changes (generalist → specialist), nothing is removed — the teammate evolves. SOUL.md = current state (always in context). RESUME.md = career history (loaded on demand, indexed in vector DB for associative recall). Past experience surfaces automatically through semantic search, not deliberate reflection triggers.
+
+### Spec bulk operations with batch limits
+When designing specs that produce many artifacts (file creation, memory writes), include batch size guidance. Bulk creation of 42 files caused a 600s agent timeout. The fix is always "break into smaller batches" — specs should anticipate this and prescribe limits.
+
+### Design for interruption
+Agents can be killed mid-task (timeout, user interrupt). Conversation logs serve as implicit checkpoints — kill → parse log → resume with condensed context. Specs for long-running features should consider the interrupt/resume path, not just the happy path.

@@ -1,4 +1,5 @@
 ---
+version: 0.6.0
 name: Always run lint after build
 description: Run biome lint with auto-fix after every build, automatically repair any errors
 type: feedback

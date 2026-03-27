@@ -170,6 +170,12 @@ export class ChatView extends Control {
   private _feedX: number = 0;
   private _contentWidth: number = 0;
 
+  // ── Feed line height cache ───────────────────────────────────
+  /** Cached measured height per feed line index. Invalidated on width change. */
+  private _feedHeightCache: number[] = [];
+  /** The content width used for the last height cache pass. */
+  private _feedHeightCacheWidth: number = -1;
+
   // ── Scrollbar state ───────────────────────────────────────────
   /** Cached from last render for hit-testing. */
   private _scrollbarX: number = -1;
@@ -456,6 +462,7 @@ export class ChatView extends Control {
   /** Clear everything between the banner and the input box. */
   clear(): void {
     this._feedLines = [];
+    this._feedHeightCache = [];
     this._feedActions.clear();
     this._hoveredAction = -1;
     this._feedScrollOffset = 0;
@@ -471,6 +478,8 @@ export class ChatView extends Control {
   updateFeedLine(index: number, content: StyledLine): void {
     if (index < 0 || index >= this._feedLines.length) return;
     this._feedLines[index].lines = [content];
+    // Invalidate cached height — content changed, may wrap differently
+    delete this._feedHeightCache[index];
     this._feedActions.delete(index);
     if (this._hoveredAction === index) this._hoveredAction = -1;
     this.invalidate();
@@ -868,12 +877,14 @@ export class ChatView extends Control {
               const prev = this._feedActions.get(this._hoveredAction);
               if (prev) {
                 this._feedLines[this._hoveredAction].lines = [prev.normalStyle];
+                delete this._feedHeightCache[this._hoveredAction];
               }
             }
             if (entry && newHover >= 0) {
               const hitItem = this._resolveActionItem(entry, me.x);
               const hoverLine = this._buildHoverLine(entry, hitItem);
               this._feedLines[newHover].lines = [hoverLine];
+              delete this._feedHeightCache[newHover];
             }
             this._hoveredAction = newHover;
             this.invalidate();
@@ -1210,16 +1221,25 @@ export class ChatView extends Control {
       });
     }
 
-    // Feed lines
+    // Feed lines — use cached heights to avoid re-measuring every line each frame.
+    // Cache is invalidated when content width changes (e.g. terminal resize).
+    if (contentWidth !== this._feedHeightCacheWidth) {
+      this._feedHeightCache = [];
+      this._feedHeightCacheWidth = contentWidth;
+    }
     for (let fi = 0; fi < this._feedLines.length; fi++) {
       const line = this._feedLines[fi];
-      const lineSize = line.measure({
-        minWidth: 0,
-        maxWidth: contentWidth,
-        minHeight: 0,
-        maxHeight: Infinity,
-      });
-      const h = Math.max(1, lineSize.height);
+      let h = this._feedHeightCache[fi];
+      if (h === undefined) {
+        const lineSize = line.measure({
+          minWidth: 0,
+          maxWidth: contentWidth,
+          minHeight: 0,
+          maxHeight: Infinity,
+        });
+        h = Math.max(1, lineSize.height);
+        this._feedHeightCache[fi] = h;
+      }
       items.push({
         height: h,
         feedLineIdx: fi,

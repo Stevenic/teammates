@@ -1,6 +1,6 @@
 {
   "name": "@teammates/consolonia",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Terminal UI rendering engine inspired by Consolonia. Pixel-level compositing with ANSI output.",
   "type": "module",
   "main": "dist/index.js",

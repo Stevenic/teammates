@@ -7,22 +7,31 @@ Last compacted: 2026-03-27
 ---
 
 ### Codebase map — three packages
-CLI has 30 source files (~5,720 lines in cli.ts); consolonia has 42 files; recall has 7 files. The big files are `cli.ts` (~5,720 lines), `chat-view.ts` (~1,520 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~560), `compact.ts` (~790), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~170), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
+CLI has 24 source files (~6,000 lines in cli.ts); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~6,000 lines), `chat-view.ts` (~1,520 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~560), `compact.ts` (~800), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~195), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
 
 ### Three-tier memory system
 WISDOM.md (distilled, read-only except during compaction), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). The CLI reads WISDOM.md, the indexer indexes WISDOM.md + memory/*.md, and the prompt tells teammates to write typed memories.
 
+### Memory frontmatter convention
+All memory files include YAML frontmatter with `version: 0.6.0` as the first field. Daily logs add `type: daily`, typed memories add their type. Metadata fields pass through to the model intact — no stripping. Compression prompts and adapter instructions both enforce this convention.
+
 ### Context window budget model
-Fixed sections always included (identity, wisdom, today's log, roster, protocol, USER.md). Daily logs (days 2-7) get 12k token pool. Recall gets min 8k + unused daily budget, with 4k overflow grace. Conversation history gets 24k tokens of recent entries + an agent-maintained running summary of older history. Weekly summaries excluded (recall indexes them). USER.md placed just before the task.
+Target context window is 128k tokens. Fixed sections always included (identity, wisdom, today's log, roster, protocol, USER.md). Daily logs (days 2-7) get 12k token pool. Recall gets min 8k + unused daily budget, with 4k overflow grace. Conversation history budget is derived dynamically: `(TARGET_CONTEXT_TOKENS - PROMPT_OVERHEAD_TOKENS) * CHARS_PER_TOKEN`. Weekly summaries excluded (recall indexes them). USER.md placed just before the task.
 
 ### Prompt section ordering — instructions at the end
 Context/reference material (identity, wisdom, logs, recall, roster, services, handoff, date/time, user profile) stays at the top. Task sits in the middle. Instructions (output protocol, session state, memory updates, reminder) go at the end — leverages recency effect for agent attention.
 
 ### Attention dilution defenses
-Five fixes to prevent agents from spending all tool calls on housekeeping instead of the task: (1) Dedup recall against daily logs already in the prompt. (2) Daily log budget halved (24K→12K) — past logs are reference, not active context. (3) Echo user's request at bottom of instructions (<500 chars verbatim, else pointer). (4) Task-first priority statement at top of instructions. (5) Conversation history >8K chars written to `.teammates/.tmp/conversation.md` with a pointer in the prompt.
+Five fixes to prevent agents from spending all tool calls on housekeeping instead of the task: (1) Dedup recall against daily logs already in the prompt. (2) Daily log budget halved (24K→12K) — past logs are reference, not active context. (3) Echo user's request at bottom of instructions (<500 chars verbatim, else pointer). (4) Task-first priority statement at top of instructions. (5) Conversation context always inlined in the prompt (file offload removed — pre-dispatch compression keeps it within budget).
+
+### Two-stage conversation compression
+**Pre-dispatch (mechanical):** `preDispatchCompress()` runs before every task dispatch — if history exceeds budget, oldest entries are mechanically compressed into bullet summaries via `compressConversationEntries()`. **Post-task (quality):** `maybeQueueSummarization` still runs async for better summaries. The running summary is invisible to the user. Reset on `/clear`.
 
 ### Conversation history stores full bodies
-`storeResult()` stores the full cleaned `rawOutput` (protocol artifacts stripped), not just `result.summary`. `buildConversationContext()` formats multi-line entries with body on the next line. When history exceeds 24k tokens, oldest entries are spliced out and queued as a `"summarize"` task. The running summary is invisible to the user. Reset on `/clear`.
+`storeResult()` stores the full cleaned `rawOutput` (protocol artifacts stripped), not just `result.summary`. `buildConversationContext()` formats multi-line entries with body on the next line. When history exceeds token budget, pre-dispatch compression fires before the next task.
+
+### @everyone concurrent dispatch — snapshot isolation
+`queueTask()` freezes `conversationHistory` + `conversationSummary` into a `contextSnapshot` once before pushing all @everyone entries (each gets a shallow copy). `drainAgentQueue()` skips `preDispatchCompress()` when an entry has a snapshot and passes it directly to `buildConversationContext()`. Per-agent temp files (`conversation-<teammate>.md`) eliminated by removing file offload entirely — context is always inlined. This prevents race conditions where the first drain loop mutates shared state before concurrent drains read it.
 
 ### User avatar system (Campfire Phase 1)
 Users are represented as avatar teammates with `**Type:** human` in SOUL.md. The adapter is hidden — not registered when user has an alias. `selfName` (user alias) is the display identity everywhere; `adapterName` is for internal execution only. `@everyone` excludes both avatar and adapter. Display surfaces (roster, picker, status, errors) show `adapterName` while `selfName` is used for sender label, conversation history, internal routing, and memory folder.
@@ -64,7 +73,7 @@ Every task writes a structured debug log to `.teammates/.tmp/debug/<teammate>-<t
 `buildDailyCompressionPrompt()` checks if yesterday's log needs compression on new day boundary. Compressed logs marked with `compressed: true` frontmatter. Keeps task headers + one-line summaries + key decisions + file lists (3-5 lines per task). `buildMigrationCompressionPrompt()` handles bulk compression of historical logs during version migration.
 
 ### Version tracking and migration
-`checkVersionUpdate()` reads/writes `cliVersion` in `.teammates/settings.json`. On major/minor bump, shows update notification. Migration logic (v0.6.0): finds uncompressed dailies per teammate, queues system tasks with `migration: true`, re-indexes after all complete. `semverLessThan()` is a reusable utility for future migrations.
+`checkVersionUpdate()` is read-only; `commitVersionUpdate()` writes. Version persisted LAST — only after all migration tasks complete (or immediately if no migration needed). Migration logic (v0.6.0): finds uncompressed dailies per teammate, queues system tasks with `migration: true`, re-indexes after all complete via `pendingMigrationSyncs` counter. `semverLessThan()` is a reusable utility for future migrations.
 
 ### Non-blocking system task lane
 System-initiated tasks (compaction, summarization, wisdom distillation) run concurrently without blocking user tasks via task-level `system` flag on `TaskAssignment` and `TaskResult`. An agent can run 0+ system tasks and 0-1 user tasks simultaneously. System tasks use unique `sys-<teammate>-<timestamp>` IDs, tracked in `systemActive` map. `kickDrain()` extracts them from the queue before processing user tasks. System tasks are fully background — no progress bar, no `/status` display, errors only (with `(system)` label in the feed). The `system` flag on events allows concurrent system + user tasks for the same agent without interference.
@@ -79,10 +88,13 @@ When suppressing events for background/system tasks, filter at the task level (v
 AI teammates must not write to another teammate's folder. Two layers: (1) prompt rule in `adapter.ts` — `### Folder Boundaries (ENFORCED)` section injected for `type: "ai"` only, (2) post-task audit via `auditCrossFolderWrites()` in `cli.ts` — scans `changedFiles` for paths inside `.teammates/<other>/`, shows `[revert]`/`[allow]` actions. Allowed: own folder, `_` prefix (shared), `.` prefix (ephemeral), root-level `.teammates/` files.
 
 ### Interrupt-and-resume — deferred promise pattern
-`/interrupt <teammate> [message]` kills a running agent and resumes with context. `spawnAndProxy` uses a deferred promise — `done` is shared between `executeTask` (normal await) and `killAgent` (SIGTERM → 5s → SIGKILL, then await `done`). `activeProcesses` map tracks `{ child, done, debugFile }` per teammate. Resume prompt wraps the parsed conversation log in `<RESUME_CONTEXT>` and goes through normal `buildTeammatePrompt` wrapping. The `killAgent?()` method is optional on `AgentAdapter`.
+`/interrupt [teammate] [message]` kills a running agent and resumes with context. `spawnAndProxy` uses a deferred promise — `done` is shared between `executeTask` (normal await) and `killAgent` (SIGTERM → 5s → SIGKILL, then await `done`). `activeProcesses` map tracks `{ child, done, debugFile }` per teammate. Resume prompt wraps the parsed conversation log in `<RESUME_CONTEXT>` and goes through normal `buildTeammatePrompt` wrapping. The `killAgent?()` method is optional on `AgentAdapter`.
 
 ### Log parser extracts structure, not content
 `log-parser.ts` parses Claude debug logs, Codex JSONL, and raw agent output into a timeline of actions (Read, Write, Search, etc.). `formatLogTimeline()` groups 4+ consecutive same-action entries to collapse bulk operations. `buildConversationLog()` orchestrates parsing with token budget truncation. Extracts file paths and search queries, NOT full file contents — keeps resume prompts compact.
+
+### /script command — user-defined reusable scripts
+Scripts stored under the user's twin folder (`.teammates/<selfName>/scripts/`). Three modes: `/script list`, `/script run <name>`, `/script <description>` (create + run new). The coding agent always handles `/script` tasks — routes to `selfName`.
 
 ### Clean dist before rebuild
 After modifying any TypeScript source, run `rm -rf dist && npm run build` in the package. Stale artifacts in dist/ can mask compile errors. Running CLI must be restarted after rebuilds — Node.js caches modules at startup.
@@ -102,5 +114,8 @@ All ✔/✖/⚠ emojis get double-space after them for consistent rendering acro
 ### Persona template system
 15 persona templates in `packages/cli/personas/` with YAML frontmatter (persona, alias, tier, description) and SOUL.md body with `<Name>` placeholders. `loadPersonas()` reads and sorts by tier. `scaffoldFromPersona()` creates teammate folder. Tier 1 = Core (SWE, PM, QA, DevOps), Tier 2 = Specialized. Wired into both pre-TUI onboarding and `/init pick`.
 
+### Action buttons need unique IDs
+Feed action buttons (e.g., `[copy]`, `[revert]`, `[allow]`) must have unique IDs tied to their context. Static IDs cause all buttons to share a single handler — clicking any button executes against the most recent context. Pattern: `<action>-<teammate>-<timestamp>` with a `Map` storing per-ID context. Handler looks up by ID, falls back to latest.
+
 ### Extracted pure functions live in cli-utils.ts
-Testable pure functions extracted from cli.ts: `relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`, `cleanResponseBody`, `formatConversationEntry`, `buildConversationContext`, `findSummarizationSplit`, `buildSummarizationPrompt`. New extractions should follow this pattern — pure logic in cli-utils.ts, wired into cli.ts via imports.
+Testable pure functions extracted from cli.ts: `relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`, `cleanResponseBody`, `formatConversationEntry`, `buildConversationContext`, `findSummarizationSplit`, `buildSummarizationPrompt`, `preDispatchCompress`, `compressConversationEntries`. New extractions should follow this pattern — pure logic in cli-utils.ts, wired into cli.ts via imports.
