@@ -17,3 +17,5 @@ Last compacted: 2026-03-27
 **Reinforcement blocks go at the bottom edge** — Place section-reinforcement lines (one per `<SECTION>` tag) at the very end of `<INSTRUCTIONS>` for maximum positional attention. Each line is an actionable instruction naming the exact tag — creates bidirectional attention bridges from the bottom edge to every section in the prompt.
 
 **Don't prescribe execution ordering in instructions** — Rules like "write text before using tools" confuse teammates and conflict with how agents naturally operate. Instructions should constrain *what* to produce, not *when* to produce it relative to tool calls. stevenic flagged this as confusing — removed from adapter.ts on 2026-03-25.
+
+**Attention dilution is a 3-layer failure** — When teammates ignore task instructions buried in long context: (1) distance — task prompt buried after thousands of tokens of conversation history, (2) compression — bloated daily logs + recall duplicating log content wastes token budget, (3) decompression — continuity housekeeping hijacks all tool calls before the model reaches the actual task. Fix each layer independently: move task closer, trim logs, cap housekeeping.

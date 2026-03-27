@@ -7,16 +7,19 @@ Last compacted: 2026-03-27
 ---
 
 ### Codebase map — three packages
-CLI has 30 source files (~5,560 lines in cli.ts); consolonia has 42 files; recall has 7 files. The big files are `cli.ts` (~5,560 lines), `chat-view.ts` (~1,520 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~530), `compact.ts` (~650), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~170), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
+CLI has 30 source files (~5,720 lines in cli.ts); consolonia has 42 files; recall has 7 files. The big files are `cli.ts` (~5,720 lines), `chat-view.ts` (~1,520 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~560), `compact.ts` (~790), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~170), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
 
 ### Three-tier memory system
 WISDOM.md (distilled, read-only except during compaction), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). The CLI reads WISDOM.md, the indexer indexes WISDOM.md + memory/*.md, and the prompt tells teammates to write typed memories.
 
 ### Context window budget model
-Fixed sections always included (identity, wisdom, today's log, roster, protocol, USER.md). Daily logs (days 2-7) get 24k token pool. Recall gets min 8k + unused daily budget, with 4k overflow grace. Conversation history gets 24k tokens of recent entries + an agent-maintained running summary of older history. Weekly summaries excluded (recall indexes them). USER.md placed just before the task.
+Fixed sections always included (identity, wisdom, today's log, roster, protocol, USER.md). Daily logs (days 2-7) get 12k token pool. Recall gets min 8k + unused daily budget, with 4k overflow grace. Conversation history gets 24k tokens of recent entries + an agent-maintained running summary of older history. Weekly summaries excluded (recall indexes them). USER.md placed just before the task.
 
 ### Prompt section ordering — instructions at the end
 Context/reference material (identity, wisdom, logs, recall, roster, services, handoff, date/time, user profile) stays at the top. Task sits in the middle. Instructions (output protocol, session state, memory updates, reminder) go at the end — leverages recency effect for agent attention.
+
+### Attention dilution defenses
+Five fixes to prevent agents from spending all tool calls on housekeeping instead of the task: (1) Dedup recall against daily logs already in the prompt. (2) Daily log budget halved (24K→12K) — past logs are reference, not active context. (3) Echo user's request at bottom of instructions (<500 chars verbatim, else pointer). (4) Task-first priority statement at top of instructions. (5) Conversation history >8K chars written to `.teammates/.tmp/conversation.md` with a pointer in the prompt.
 
 ### Conversation history stores full bodies
 `storeResult()` stores the full cleaned `rawOutput` (protocol artifacts stripped), not just `result.summary`. `buildConversationContext()` formats multi-line entries with body on the next line. When history exceeds 24k tokens, oldest entries are spliced out and queued as a `"summarize"` task. The running summary is invisible to the user. Reset on `/clear`.
@@ -55,7 +58,13 @@ Left: product name + version + adapter name + project directory path (smart-trun
 Every task writes a structured debug log to `.teammates/.tmp/debug/<teammate>-<timestamp>.md` including the full prompt sent to the agent (via `fullPrompt` on `TaskResult`). Files >24h are cleaned on startup. `/debug [teammate] [focus]` reads the last log and queues analysis to the coding agent — optional focus text narrows the analysis scope. Adapters set `result.fullPrompt` after building the prompt; `lastTaskPrompts` stores it for `/debug`.
 
 ### Two-tier compaction — scheduled + budget-driven
-`compactDailies()` runs on startup for completed past weeks. `autoCompactForBudget()` runs pre-task in adapters when daily logs exceed `DAILY_LOG_BUDGET_TOKENS` (24k) — it compacts oldest weeks first, including the current week with `partial: true` frontmatter. Partial weeklies are merged by `compactDailies()` when more dailies arrive. Startup compaction uses silent mode — progress bar only unless actual work was done. `runCompact()` also triggers `autoCompactForBudget` before episodic compaction.
+`compactDailies()` runs on startup for completed past weeks. `autoCompactForBudget()` runs pre-task in adapters when daily logs exceed `DAILY_LOG_BUDGET_TOKENS` (12k) — it compacts oldest weeks first, including the current week with `partial: true` frontmatter. Partial weeklies are merged by `compactDailies()` when more dailies arrive. Startup compaction uses silent mode — progress bar only unless actual work was done. `runCompact()` also triggers `autoCompactForBudget` before episodic compaction.
+
+### Daily compression via system tasks
+`buildDailyCompressionPrompt()` checks if yesterday's log needs compression on new day boundary. Compressed logs marked with `compressed: true` frontmatter. Keeps task headers + one-line summaries + key decisions + file lists (3-5 lines per task). `buildMigrationCompressionPrompt()` handles bulk compression of historical logs during version migration.
+
+### Version tracking and migration
+`checkVersionUpdate()` reads/writes `cliVersion` in `.teammates/settings.json`. On major/minor bump, shows update notification. Migration logic (v0.6.0): finds uncompressed dailies per teammate, queues system tasks with `migration: true`, re-indexes after all complete. `semverLessThan()` is a reusable utility for future migrations.
 
 ### Non-blocking system task lane
 System-initiated tasks (compaction, summarization, wisdom distillation) run concurrently without blocking user tasks via task-level `system` flag on `TaskAssignment` and `TaskResult`. An agent can run 0+ system tasks and 0-1 user tasks simultaneously. System tasks use unique `sys-<teammate>-<timestamp>` IDs, tracked in `systemActive` map. `kickDrain()` extracts them from the queue before processing user tasks. System tasks are fully background — no progress bar, no `/status` display, errors only (with `(system)` label in the feed). The `system` flag on events allows concurrent system + user tasks for the same agent without interference.
