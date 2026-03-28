@@ -73,6 +73,11 @@ export class Orchestrator {
     return this.registry;
   }
 
+  /** Get the adapter for direct access (used by /interrupt) */
+  getAdapter(): AgentAdapter {
+    return this.adapter;
+  }
+
   /**
    * Assign a task to a specific teammate and execute it.
    * If the result contains a handoff, follows the chain automatically.
@@ -118,6 +123,8 @@ export class Orchestrator {
     const result = await this.adapter.executeTask(sessionId, teammate, prompt, {
       raw: assignment.raw,
     });
+    // Propagate system flag so event handlers can distinguish system vs user tasks
+    if (assignment.system) result.system = true;
     this.onEvent({ type: "task_completed", result });
 
     // Update status (preserve presence)

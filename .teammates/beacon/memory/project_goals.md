@@ -1,4 +1,5 @@
 ---
+version: 0.6.0
 name: Beacon Goals — March 2026
 description: Current goals for @teammates/recall, @teammates/cli, and @teammates/consolonia — stack-ranked across all tracks
 type: project

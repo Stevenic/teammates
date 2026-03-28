@@ -126,6 +126,19 @@ async function isTeammateFolder(dirPath: string): Promise<boolean> {
 }
 
 /**
+ * Detect whether a teammate folder is a human avatar (**Type:** human in SOUL.md).
+ * Human avatars are user-specific and should not be imported to other projects.
+ */
+async function isHumanAvatar(dirPath: string): Promise<boolean> {
+  try {
+    const soul = await readFile(join(dirPath, "SOUL.md"), "utf-8");
+    return /\*\*Type:\*\*\s*human/i.test(soul);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Import teammates from another project's .teammates/ dir.
  *
  * Only copies SOUL.md and WISDOM.md per teammate (identity + wisdom carry over).
@@ -161,6 +174,9 @@ export async function importTeammates(
     if (entry.isDirectory() && !isNonTeammateEntry(entry.name)) {
       // Check if it's a teammate folder
       if (await isTeammateFolder(srcPath)) {
+        // Skip human avatar folders — those are user-specific, not team members
+        if (await isHumanAvatar(srcPath)) continue;
+
         // Skip if teammate already exists in target
         try {
           await stat(destPath);
@@ -193,17 +209,9 @@ export async function importTeammates(
 
         teammates.push(entry.name);
       }
-    } else if (entry.isFile() && entry.name === "USER.md") {
-      // Only USER.md transfers — framework files (CROSS-TEAM.md, README.md,
-      // PROTOCOL.md, TEMPLATE.md) are project-specific and get created fresh
-      // from the template by copyTemplateFiles().
-      try {
-        await stat(destPath);
-      } catch {
-        await copyFile(srcPath, destPath);
-        files.push(entry.name);
-      }
     }
+    // USER.md is user-specific (gitignored) — never import it.
+    // The new user creates their own profile during setup.
   }
 
   // Ensure .gitignore exists

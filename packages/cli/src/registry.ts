@@ -125,8 +125,8 @@ async function loadDailyLogs(memoryDir: string): Promise<DailyLog[]> {
       const stem = basename(entry, ".md");
       // Only include daily logs (YYYY-MM-DD format), skip typed memory files
       if (!/^\d{4}-\d{2}-\d{2}$/.test(stem)) continue;
-      const content = await readFile(join(memoryDir, entry), "utf-8");
-      logs.push({ date: stem, content });
+      const raw = await readFile(join(memoryDir, entry), "utf-8");
+      logs.push({ date: stem, content: raw });
     }
 
     // Most recent first
@@ -149,8 +149,8 @@ async function loadWeeklyLogs(memoryDir: string): Promise<WeeklyLog[]> {
       const stem = basename(entry, ".md");
       // Match YYYY-Wnn format
       if (!/^\d{4}-W\d{2}$/.test(stem)) continue;
-      const content = await readFile(join(weeklyDir, entry), "utf-8");
-      logs.push({ week: stem, content });
+      const raw = await readFile(join(weeklyDir, entry), "utf-8");
+      logs.push({ week: stem, content: raw });
     }
 
     // Most recent first

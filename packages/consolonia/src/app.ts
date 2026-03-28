@@ -102,6 +102,17 @@ export class App {
     this._fullRender();
   }
 
+  /**
+   * Schedule a coalesced render pass. Multiple calls within the same tick
+   * collapse into a single render, avoiding redundant full-screen redraws
+   * when many rapid updates occur (e.g. progress spinner + concurrent task output).
+   */
+  scheduleRefresh(): void {
+    if (!this._running) return;
+    this.root.invalidate();
+    this._scheduleRender();
+  }
+
   // ── Setup ────────────────────────────────────────────────────────
 
   private _setup(): void {

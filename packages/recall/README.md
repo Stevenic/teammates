@@ -95,6 +95,20 @@ teammates-recall status --dir ./.teammates
 4. **Stores** the index at `.teammates/<teammate>/.index/` (gitignored)
 5. **Searches** using Vectra's semantic similarity matching
 
+### Two-Pass Query Architecture
+
+When used by the CLI, recall runs a two-pass search for maximum relevance:
+
+**Pass 1 — Pre-task (no LLM, automatic):**
+- `buildQueryVariations()` generates 1-3 queries from the task prompt and conversation context (keyword extraction, focused keyword query, conversation-derived topic query)
+- `matchMemoryCatalog()` scans memory file frontmatter (name + description fields) for text matches against the task — a cheap, no-LLM relevance signal
+- `multiSearch()` fuses results from all query variations + catalog matches, deduplicating by URI (highest score wins)
+
+**Pass 2 — Mid-task (agent-driven):**
+- Every teammate prompt includes a recall tool section documenting `teammates-recall search` CLI usage
+- Agents can search iteratively mid-task: query → read result → refine query
+- Supports cross-teammate search by omitting `--teammate`
+
 ## Auto-Sync
 
 Every `search` call automatically detects new or changed memory files and indexes them before returning results. This is on by default — no manual `sync` or `index` step is needed.
@@ -129,7 +143,10 @@ The `--json` flag returns structured results that agents can parse:
 ## Use As a Library
 
 ```typescript
-import { Indexer, search } from "@teammates/recall";
+import {
+  Indexer, search, multiSearch,
+  buildQueryVariations, matchMemoryCatalog
+} from "@teammates/recall";
 
 // Full index rebuild
 const indexer = new Indexer({ teammatesDir: "./.teammates" });
@@ -154,6 +171,17 @@ const results = await search("database migration", {
 const results2 = await search("database migration", {
   teammatesDir: "./.teammates",
   skipSync: true,
+});
+
+// Multi-query fusion (used by CLI pre-task recall)
+const queries = buildQueryVariations("fix auth token refresh", conversationHistory);
+const catalogMatches = matchMemoryCatalog("./.teammates", "atlas", "fix auth token refresh");
+const fused = await multiSearch({
+  queries,
+  catalogMatches,
+  teammatesDir: "./.teammates",
+  teammate: "atlas",
+  maxResults: 10,
 });
 ```
 

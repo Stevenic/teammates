@@ -10,9 +10,15 @@
  */
 
 import { exec as execCb, execSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 
 import {
@@ -45,19 +51,29 @@ import {
   resolveAdapter,
 } from "./cli-args.js";
 import {
+  buildConversationContext as buildConvCtx,
+  buildSummarizationPrompt,
+  cleanResponseBody,
+  compressConversationEntries,
   findAtMention,
+  findSummarizationSplit,
+  formatConversationEntry,
   isImagePath,
   relativeTime,
   wrapLine,
 } from "./cli-utils.js";
 import {
   autoCompactForBudget,
+  buildDailyCompressionPrompt,
+  buildMigrationCompressionPrompt,
   buildWisdomPrompt,
   compactEpisodic,
+  findUncompressedDailies,
   purgeStaleDailies,
 } from "./compact.js";
 import { PromptInput } from "./console/prompt-input.js";
 import { buildTitle } from "./console/startup.js";
+import { buildConversationLog } from "./log-parser.js";
 import {
   buildImportAdaptationPrompt,
   copyTemplateFiles,
@@ -97,9 +113,14 @@ class TeammatesREPL {
   private storeResult(result: TaskResult): void {
     this.lastResult = result;
     this.lastResults.set(result.teammate, result);
+
+    // Store the full response body in conversation history — not just the
+    // subject line.  The 24k-token budget + auto-summarization handle size.
+    const body = cleanResponseBody(result.rawOutput ?? "");
+
     this.conversationHistory.push({
       role: result.teammate,
-      text: result.summary,
+      text: body || result.summary,
     });
   }
 
@@ -184,8 +205,11 @@ class TeammatesREPL {
     if (this.chatView && cleaned) {
       const t = theme();
       const teammate = result.teammate;
-      const replyId = `reply-${teammate}-${Date.now()}`;
+      const ts = Date.now();
+      const replyId = `reply-${teammate}-${ts}`;
+      const copyId = `copy-${teammate}-${ts}`;
       this._replyContexts.set(replyId, { teammate, message: cleaned });
+      this._copyContexts.set(copyId, cleaned);
       this.chatView.appendActionList([
         {
           id: replyId,
@@ -199,7 +223,7 @@ class TeammatesREPL {
           }),
         },
         {
-          id: "copy",
+          id: copyId,
           normalStyle: this.makeSpan({
             text: " [copy]",
             style: { fg: t.textDim },
@@ -219,67 +243,49 @@ class TeammatesREPL {
     this.showPrompt();
   }
 
-  /** Token budget for recent conversation history (24k tokens ≈ 96k chars). */
-  private static readonly CONV_HISTORY_CHARS = 24_000 * 4;
+  /** Target context window in tokens. Conversation history budget is derived from this. */
+  private static readonly TARGET_CONTEXT_TOKENS = 128_000;
 
-  private buildConversationContext(): string {
-    if (this.conversationHistory.length === 0 && !this.conversationSummary)
-      return "";
+  /** Estimated tokens used by non-conversation prompt sections (identity, wisdom, logs, recall, instructions, task). */
+  private static readonly PROMPT_OVERHEAD_TOKENS = 32_000;
 
-    const budget = TeammatesREPL.CONV_HISTORY_CHARS;
-    const parts: string[] = ["## Conversation History\n"];
+  /** Chars-per-token approximation (matches adapter.ts). */
+  private static readonly CHARS_PER_TOKEN = 4;
 
-    // Include running summary of older conversation if present
-    if (this.conversationSummary) {
-      parts.push(
-        `### Previous Conversation Summary\n\n${this.conversationSummary}\n`,
-      );
-    }
+  /** Character budget for conversation history = (target − overhead) × chars/token. */
+  private static readonly CONV_HISTORY_CHARS =
+    (TeammatesREPL.TARGET_CONTEXT_TOKENS -
+      TeammatesREPL.PROMPT_OVERHEAD_TOKENS) *
+    TeammatesREPL.CHARS_PER_TOKEN;
 
-    // Work backwards from newest — include whole entries up to 24k tokens
-    const entries: string[] = [];
-    let used = 0;
-    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
-      const line = `**${this.conversationHistory[i].role}:** ${this.conversationHistory[i].text}\n`;
-      if (used + line.length > budget && entries.length > 0) break;
-      entries.unshift(line);
-      used += line.length;
-    }
-    if (entries.length > 0) parts.push(entries.join("\n"));
+  private buildConversationContext(
+    _teammate?: string,
+    snapshot?: { history: { role: string; text: string }[]; summary: string },
+  ): string {
+    const history = snapshot ? snapshot.history : this.conversationHistory;
+    const summary = snapshot ? snapshot.summary : this.conversationSummary;
 
-    return parts.join("\n");
+    return buildConvCtx(history, summary, TeammatesREPL.CONV_HISTORY_CHARS);
   }
 
   /**
-   * Check if conversation history exceeds the 24k token budget.
+   * Check if conversation history exceeds the token budget.
    * If so, take the older entries that won't fit, combine with existing summary,
-   * and queue a summarization task to the coding agent.
+   * and queue a summarization task to the coding agent for high-quality compression.
    */
   private maybeQueueSummarization(): void {
-    const budget = TeammatesREPL.CONV_HISTORY_CHARS;
-
-    // Calculate how many recent entries fit in the budget (newest first)
-    let recentChars = 0;
-    let splitIdx = this.conversationHistory.length;
-    for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
-      const line = `**${this.conversationHistory[i].role}:** ${this.conversationHistory[i].text}\n`;
-      if (recentChars + line.length > budget) break;
-      recentChars += line.length;
-      splitIdx = i;
-    }
+    const splitIdx = findSummarizationSplit(
+      this.conversationHistory,
+      TeammatesREPL.CONV_HISTORY_CHARS,
+    );
 
     if (splitIdx === 0) return; // everything fits — nothing to summarize
 
-    // Collect entries that are being pushed out
     const toSummarize = this.conversationHistory.slice(0, splitIdx);
-    const entriesText = toSummarize
-      .map((e) => `**${e.role}:** ${e.text}`)
-      .join("\n");
-
-    // Build the summarization prompt
-    const prompt = this.conversationSummary
-      ? `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Update the existing summary to incorporate the new conversation entries below.\n\n## Current Summary\n\n${this.conversationSummary}\n\n## New Entries to Incorporate\n\n${entriesText}\n\n## Instructions\n\nReturn ONLY the updated summary — no preamble, no explanation. The summary should:\n- Be a concise bulleted list of key topics discussed, decisions made, and work completed\n- Preserve important context that future messages might reference\n- Drop trivial or redundant details\n- Stay under 2000 characters\n- Do NOT include any output protocol (no TO:, no # Subject, no handoff blocks)`
-      : `You are maintaining a running summary of an ongoing conversation between a user and their AI teammates. Summarize the conversation entries below.\n\n## Entries to Summarize\n\n${entriesText}\n\n## Instructions\n\nReturn ONLY the summary — no preamble, no explanation. The summary should:\n- Be a concise bulleted list of key topics discussed, decisions made, and work completed\n- Preserve important context that future messages might reference\n- Drop trivial or redundant details\n- Stay under 2000 characters\n- Do NOT include any output protocol (no TO:, no # Subject, no handoff blocks)`;
+    const prompt = buildSummarizationPrompt(
+      toSummarize,
+      this.conversationSummary,
+    );
 
     // Remove the summarized entries — they'll be captured in the summary
     this.conversationHistory.splice(0, splitIdx);
@@ -292,13 +298,46 @@ class TeammatesREPL {
     });
     this.kickDrain();
   }
+
+  /**
+   * Pre-dispatch compression: if conversation history exceeds the token budget,
+   * mechanically compress older entries into bullet summaries BEFORE building the
+   * prompt. This ensures the prompt always fits within the target context window,
+   * even if the async agent-quality summarization hasn't completed yet.
+   */
+  private preDispatchCompress(): void {
+    const totalChars = this.conversationHistory.reduce(
+      (sum, e) => sum + formatConversationEntry(e.role, e.text).length,
+      0,
+    );
+
+    if (totalChars <= TeammatesREPL.CONV_HISTORY_CHARS) return;
+
+    const splitIdx = findSummarizationSplit(
+      this.conversationHistory,
+      TeammatesREPL.CONV_HISTORY_CHARS,
+    );
+
+    if (splitIdx === 0) return;
+
+    const toCompress = this.conversationHistory.slice(0, splitIdx);
+    this.conversationSummary = compressConversationEntries(
+      toCompress,
+      this.conversationSummary,
+    );
+    this.conversationHistory.splice(0, splitIdx);
+  }
   private adapterName: string;
   private teammatesDir!: string;
   private taskQueue: QueueEntry[] = [];
   /** Per-agent active tasks — one per agent running in parallel. */
   private agentActive: Map<string, QueueEntry> = new Map();
+  /** Active system tasks — multiple can run concurrently per agent. */
+  private systemActive: Map<string, QueueEntry> = new Map();
   /** Agents currently in a silent retry — suppress all events. */
   private silentAgents: Set<string> = new Set();
+  /** Counter for pending migration compression tasks — triggers re-index when it hits 0. */
+  private pendingMigrationSyncs = 0;
   /** Per-agent drain locks — prevents double-draining a single agent. */
   private agentDrainLocks: Map<string, Promise<void>> = new Map();
   /** Stored pasted text keyed by paste number, expanded on Enter. */
@@ -311,6 +350,8 @@ class TeammatesREPL {
   private ctrlcPending = false; // true after first Ctrl+C, waiting for second
   private ctrlcTimer: ReturnType<typeof setTimeout> | null = null;
   private lastCleanedOutput = ""; // last teammate output for clipboard copy
+  /** Maps copy action IDs to the cleaned output text for that response. */
+  private _copyContexts: Map<string, string> = new Map();
   private autoApproveHandoffs = false;
   /** Last debug log file path per teammate — for /debug analysis. */
   private lastDebugFiles: Map<string, string> = new Map();
@@ -336,6 +377,14 @@ class TeammatesREPL {
     why: string;
     actionIdx: number;
   }[] = [];
+  /** Pending cross-folder violations awaiting user decision. */
+  private pendingViolations: {
+    id: string;
+    teammate: string;
+    files: string[];
+    actionIdx: number;
+  }[] = [];
+
   /** Maps reply action IDs to their context (teammate + message). */
   private _replyContexts: Map<string, { teammate: string; message: string }> =
     new Map();
@@ -353,8 +402,10 @@ class TeammatesREPL {
   private userAlias: string | null = null;
 
   // ── Animated status tracker ─────────────────────────────────────
-  private activeTasks: Map<string, { teammate: string; task: string }> =
-    new Map();
+  private activeTasks: Map<
+    string,
+    { teammate: string; task: string; startTime: number }
+  > = new Map();
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private statusFrame = 0;
   private statusRotateIndex = 0;
@@ -403,11 +454,12 @@ class TeammatesREPL {
     this.statusRotateIndex = 0;
     this.renderStatusFrame();
 
-    // Animate spinner at ~80ms
+    // Animate spinner at ~200ms (fast enough for visual smoothness,
+    // slow enough to avoid saturating the render loop under load)
     this.statusTimer = setInterval(() => {
       this.statusFrame++;
       this.renderStatusFrame();
-    }, 80);
+    }, 200);
 
     // Rotate through teammates every 3 seconds
     this.statusRotateTimer = setInterval(() => {
@@ -436,54 +488,85 @@ class TeammatesREPL {
     }
   }
 
+  /**
+   * Truncate a path for display, collapsing middle segments if too long.
+   * E.g. C:\source\some\deep\project → C:\source\...\project
+   */
+  private static truncatePath(fullPath: string, maxLen = 30): string {
+    if (fullPath.length <= maxLen) return fullPath;
+    const parts = fullPath.split(sep);
+    if (parts.length <= 2) return fullPath;
+    const last = parts[parts.length - 1];
+    // Keep adding segments from the front until we'd exceed maxLen
+    let front = parts[0];
+    for (let i = 1; i < parts.length - 1; i++) {
+      const candidate = `${front + sep + parts[i] + sep}...${sep}${last}`;
+      if (candidate.length > maxLen) break;
+      front += sep + parts[i];
+    }
+    return `${front + sep}...${sep}${last}`;
+  }
+
+  /** Format elapsed seconds as (Ns), (Nm Ns), or (Nh Nm Ns). */
+  private static formatElapsed(totalSeconds: number): string {
+    const s = totalSeconds % 60;
+    const m = Math.floor(totalSeconds / 60) % 60;
+    const h = Math.floor(totalSeconds / 3600);
+    if (h > 0) return `(${h}h ${m}m ${s}s)`;
+    if (m > 0) return `(${m}m ${s}s)`;
+    return `(${s}s)`;
+  }
+
   /** Render one frame of the status animation. */
   private renderStatusFrame(): void {
     if (this.activeTasks.size === 0) return;
 
     const entries = Array.from(this.activeTasks.values());
-    const idx = this.statusRotateIndex % entries.length;
-    const { teammate, task } = entries[idx];
+    const total = entries.length;
+    const idx = this.statusRotateIndex % total;
+    const { teammate, task, startTime } = entries[idx];
     const displayName =
       teammate === this.selfName ? this.adapterName : teammate;
 
     const spinChar =
       TeammatesREPL.SPINNER[this.statusFrame % TeammatesREPL.SPINNER.length];
-    const taskPreview = task.length > 50 ? `${task.slice(0, 47)}...` : task;
-    const queueInfo =
-      this.activeTasks.size > 1 ? ` (${idx + 1}/${this.activeTasks.size})` : "";
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const elapsedStr = TeammatesREPL.formatElapsed(elapsed);
+
+    // Build the tag: (1/3 - 2m 5s) when multiple, (2m 5s) when single
+    const tag =
+      total > 1
+        ? `(${idx + 1}/${total} - ${elapsedStr.slice(1, -1)})`
+        : elapsedStr;
+
+    // Target 80 chars total: "<spinner> <name>... <task> <tag>"
+    const prefix = `${spinChar} ${displayName}... `;
+    const suffix = ` ${tag}`;
+    const maxTask = 80 - prefix.length - suffix.length;
+    const cleanTask = task.replace(/[\r\n]+/g, " ").trim();
+    const taskText =
+      maxTask <= 3
+        ? ""
+        : cleanTask.length > maxTask
+          ? `${cleanTask.slice(0, maxTask - 1)}…`
+          : cleanTask;
 
     if (this.chatView) {
-      // Strip newlines and truncate task text for single-line display
-      const cleanTask = task.replace(/[\r\n]+/g, " ").trim();
-      const maxLen = Math.max(
-        20,
-        (process.stdout.columns || 80) - displayName.length - 10,
-      );
-      const taskText =
-        cleanTask.length > maxLen
-          ? `${cleanTask.slice(0, maxLen - 1)}…`
-          : cleanTask;
-      const queueTag =
-        this.activeTasks.size > 1
-          ? ` (${idx + 1}/${this.activeTasks.size})`
-          : "";
-
       this.chatView.setProgress(
         concat(
-          tp.accent(`${spinChar} ${displayName}… `),
-          tp.muted(taskText + queueTag),
+          tp.accent(`${spinChar} ${displayName}... `),
+          tp.muted(`${taskText}${suffix}`),
         ),
       );
-      this.app.refresh();
+      this.app.scheduleRefresh();
     } else {
-      // Mostly bright blue, periodically flicker to dark blue
       const spinColor =
         this.statusFrame % 8 === 0 ? chalk.blue : chalk.blueBright;
       const line =
         `  ${spinColor(spinChar)} ` +
         chalk.bold(displayName) +
-        chalk.gray(`… ${taskPreview}`) +
-        (queueInfo ? chalk.gray(queueInfo) : "");
+        chalk.gray(`... ${taskText}`) +
+        chalk.gray(suffix);
       this.input.setStatus(line);
     }
   }
@@ -894,6 +977,145 @@ class TeammatesREPL {
     }
   }
 
+  /**
+   * Audit a task result for cross-folder writes.
+   * AI teammates must not write to another teammate's folder.
+   * Returns violating file paths (relative), or empty array if clean.
+   */
+  private auditCrossFolderWrites(
+    teammate: string,
+    changedFiles: string[],
+  ): string[] {
+    // Normalize .teammates/ prefix for comparison
+    const tmPrefix = ".teammates/";
+    const ownPrefix = `${tmPrefix}${teammate}/`;
+
+    return changedFiles.filter((f) => {
+      const normalized = f.replace(/\\/g, "/");
+      // Only care about files inside .teammates/
+      if (!normalized.startsWith(tmPrefix)) return false;
+      // Own folder is fine
+      if (normalized.startsWith(ownPrefix)) return false;
+      // Shared folders (_prefix) are fine
+      const subPath = normalized.slice(tmPrefix.length);
+      if (subPath.startsWith("_")) return false;
+      // Ephemeral folders (.prefix) are fine
+      if (subPath.startsWith(".")) return false;
+      // Root-level shared files (USER.md, settings.json, CROSS-TEAM.md, etc.)
+      if (!subPath.includes("/")) return false;
+      // Everything else is a violation
+      return true;
+    });
+  }
+
+  /**
+   * Show cross-folder violation warning with [revert] / [allow] actions.
+   */
+  private showViolationWarning(teammate: string, violations: string[]): void {
+    const t = theme();
+    this.feedLine(
+      tp.warning(`  ⚠  @${teammate} wrote to another teammate's folder:`),
+    );
+    for (const f of violations) {
+      this.feedLine(tp.muted(`     ${f}`));
+    }
+
+    if (this.chatView) {
+      const violationId = `violation-${Date.now()}`;
+      const actionIdx = this.chatView.feedLineCount;
+      this.chatView.appendActionList([
+        {
+          id: `revert-${violationId}`,
+          normalStyle: this.makeSpan({
+            text: "  [revert]",
+            style: { fg: t.error },
+          }),
+          hoverStyle: this.makeSpan({
+            text: "  [revert]",
+            style: { fg: t.accent },
+          }),
+        },
+        {
+          id: `allow-${violationId}`,
+          normalStyle: this.makeSpan({
+            text: " [allow]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.makeSpan({
+            text: " [allow]",
+            style: { fg: t.accent },
+          }),
+        },
+      ]);
+      this.pendingViolations.push({
+        id: violationId,
+        teammate,
+        files: violations,
+        actionIdx,
+      });
+    }
+  }
+
+  /**
+   * Handle revert/allow actions for cross-folder violations.
+   */
+  private handleViolationAction(actionId: string): void {
+    const revertMatch = actionId.match(/^revert-(violation-.+)$/);
+    if (revertMatch) {
+      const vId = revertMatch[1];
+      const idx = this.pendingViolations.findIndex((v) => v.id === vId);
+      if (idx >= 0 && this.chatView) {
+        const v = this.pendingViolations.splice(idx, 1)[0];
+        // Revert violating files via git checkout
+        for (const f of v.files) {
+          try {
+            execSync(`git checkout -- "${f}"`, {
+              cwd: resolve(this.teammatesDir, ".."),
+              stdio: "pipe",
+            });
+          } catch {
+            // File might be untracked — try git rm
+            try {
+              execSync(`git rm -f "${f}"`, {
+                cwd: resolve(this.teammatesDir, ".."),
+                stdio: "pipe",
+              });
+            } catch {
+              // Best effort — file may already be clean
+            }
+          }
+        }
+        this.chatView.updateFeedLine(
+          v.actionIdx,
+          this.makeSpan({
+            text: `  reverted ${v.files.length} file(s)`,
+            style: { fg: theme().success },
+          }),
+        );
+        this.refreshView();
+      }
+      return;
+    }
+
+    const allowMatch = actionId.match(/^allow-(violation-.+)$/);
+    if (allowMatch) {
+      const vId = allowMatch[1];
+      const idx = this.pendingViolations.findIndex((v) => v.id === vId);
+      if (idx >= 0 && this.chatView) {
+        const v = this.pendingViolations.splice(idx, 1)[0];
+        this.chatView.updateFeedLine(
+          v.actionIdx,
+          this.makeSpan({
+            text: "  allowed",
+            style: { fg: theme().textDim },
+          }),
+        );
+        this.refreshView();
+      }
+      return;
+    }
+  }
+
   /** Handle bulk handoff actions. */
   private handleBulkHandoff(action: string): void {
     if (!this.chatView) return;
@@ -1220,8 +1442,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       const names = allNames.filter(
         (n) => n !== this.selfName && n !== this.adapterName,
       );
+      // Atomic snapshot: freeze conversation state ONCE so all agents see
+      // the same context regardless of concurrent preDispatchCompress mutations.
+      const contextSnapshot = {
+        history: this.conversationHistory.map((e) => ({ ...e })),
+        summary: this.conversationSummary,
+      };
       for (const teammate of names) {
-        this.taskQueue.push({ type: "agent", teammate, task });
+        this.taskQueue.push({ type: "agent", teammate, task, contextSnapshot });
       }
       const bg = this._userBg;
       const t = theme();
@@ -1300,9 +1528,28 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.kickDrain();
   }
 
-  /** Start draining per-agent queues in parallel. Each agent gets its own drain loop. */
+  /** Returns true if the queue entry is a system-initiated (non-blocking) task. */
+  private isSystemTask(entry: QueueEntry): boolean {
+    return (
+      entry.type === "compact" ||
+      entry.type === "summarize" ||
+      (entry.type === "agent" && entry.system === true)
+    );
+  }
+
+  /** Start draining per-agent queues in parallel. Each agent gets its own drain loop.
+   *  System tasks are extracted and run concurrently without blocking user tasks. */
   private kickDrain(): void {
-    // Find agents that have queued tasks but no active drain
+    // Extract system tasks and fire them concurrently (non-blocking)
+    for (let i = this.taskQueue.length - 1; i >= 0; i--) {
+      const entry = this.taskQueue[i];
+      if (this.isSystemTask(entry)) {
+        this.taskQueue.splice(i, 1);
+        this.runSystemTask(entry);
+      }
+    }
+
+    // Find agents that have user tasks but no active drain
     const agentsWithWork = new Set<string>();
     for (const entry of this.taskQueue) {
       agentsWithWork.add(entry.teammate);
@@ -1313,6 +1560,69 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           this.agentDrainLocks.delete(agent);
         });
         this.agentDrainLocks.set(agent, lock);
+      }
+    }
+  }
+
+  /**
+   * Run a system-initiated task concurrently without blocking user tasks.
+   * Purely background — no progress bar, no /status. Only reports errors.
+   */
+  private async runSystemTask(entry: QueueEntry): Promise<void> {
+    const taskId = `sys-${entry.teammate}-${Date.now()}`;
+    this.systemActive.set(taskId, entry);
+
+    const startTime = Date.now();
+    try {
+      if (entry.type === "compact") {
+        await this.runCompact(entry.teammate, true);
+      } else if (entry.type === "summarize") {
+        const result = await this.orchestrator.assign({
+          teammate: entry.teammate,
+          task: entry.task,
+          system: true,
+        });
+        const raw = result.rawOutput ?? "";
+        this.conversationSummary = raw
+          .replace(/^TO:\s*\S+\s*\n/im, "")
+          .replace(/^#\s+.+\n*/m, "")
+          .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
+          .trim();
+      } else {
+        // System agent tasks (e.g. wisdom distillation)
+        const result = await this.orchestrator.assign({
+          teammate: entry.teammate,
+          task: entry.task,
+          system: true,
+        });
+        // Write debug entry for system tasks too
+        this.writeDebugEntry(entry.teammate, entry.task, result, startTime);
+      }
+    } catch (err: any) {
+      // System task errors always show in feed
+      const msg = err?.message ?? String(err);
+      const displayName =
+        entry.teammate === this.selfName ? this.adapterName : entry.teammate;
+      this.feedLine(tp.error(`  ✖  @${displayName} (system): ${msg}`));
+      this.refreshView();
+    } finally {
+      this.systemActive.delete(taskId);
+      // Migration tasks: decrement counter and re-index when all are done
+      if (entry.type === "agent" && entry.migration) {
+        this.pendingMigrationSyncs--;
+        if (this.pendingMigrationSyncs <= 0) {
+          try {
+            await syncRecallIndex(this.teammatesDir);
+            this.feedLine(
+              tp.success("  ✔  v0.6.0 migration complete — indexes rebuilt"),
+            );
+            this.refreshView();
+          } catch {
+            /* re-index failed — non-fatal, next startup will retry */
+          }
+          // Persist version LAST — only after all migration tasks finish
+          this.commitVersionUpdate();
+        }
       }
     }
   }
@@ -1924,8 +2234,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     const userMdPath = join(teammatesDir, "USER.md");
     try {
       const content = readFileSync(userMdPath, "utf-8");
-      // Template placeholders contain "<your name>" — treat as not set up
-      return !content.trim() || content.includes("<your name>");
+      // Template placeholders contain "<Your name>" — treat as not set up
+      return !content.trim() || content.toLowerCase().includes("<your name>");
     } catch {
       // File doesn't exist
       return true;
@@ -2420,6 +2730,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       compact: new Set([0]),
       debug: new Set([0]),
       retro: new Set([0]),
+      interrupt: new Set([0]),
+      int: new Set([0]),
     };
 
   /** Build param-completion items for the current line, if any. */
@@ -2428,6 +2740,49 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     argsBefore: string,
     partial: string,
   ): DropdownItem[] {
+    // Script subcommand + name completion for /script
+    if (cmdName === "script") {
+      const completedArgs = argsBefore.trim()
+        ? argsBefore.trim().split(/\s+/).length
+        : 0;
+      const lower = partial.toLowerCase();
+
+      if (completedArgs === 0) {
+        // First arg — suggest subcommands
+        const subs = [
+          { name: "list", desc: "List saved scripts" },
+          { name: "run", desc: "Run an existing script" },
+        ];
+        return subs
+          .filter((s) => s.name.startsWith(lower))
+          .map((s) => ({
+            label: s.name,
+            description: s.desc,
+            completion: `/script ${s.name} `,
+          }));
+      }
+
+      if (completedArgs === 1 && argsBefore.trim() === "run") {
+        // Second arg after "run" — suggest script filenames
+        const scriptsDir = join(this.teammatesDir, this.selfName, "scripts");
+        let files: string[] = [];
+        try {
+          files = readdirSync(scriptsDir).filter((f) => !f.startsWith("."));
+        } catch {
+          // directory doesn't exist yet
+        }
+        return files
+          .filter((f) => f.toLowerCase().startsWith(lower))
+          .map((f) => ({
+            label: f,
+            description: "saved script",
+            completion: `/script run ${f}`,
+          }));
+      }
+
+      return [];
+    }
+
     // Service name completion for /configure
     if (cmdName === "configure" || cmdName === "config") {
       const completedArgs = argsBefore.trim()
@@ -2968,6 +3323,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         tp.dim(` v${PKG_VERSION}`),
         tp.muted("  "),
         tp.text(this.adapterName),
+        tp.muted("  "),
+        tp.dim(TeammatesREPL.truncatePath(dirname(this.teammatesDir))),
       ),
       footerRight: tp.muted("? /help "),
       footerStyle: { fg: t.textDim },
@@ -2977,6 +3334,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       tp.dim(` v${PKG_VERSION}`),
       tp.muted("  "),
       tp.text(this.adapterName),
+      tp.muted("  "),
+      tp.dim(TeammatesREPL.truncatePath(dirname(this.teammatesDir))),
     );
     this.defaultFooterRight = tp.muted("? /help ");
 
@@ -3095,13 +3454,16 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.chatView.on("action", (id: string) => {
       if (id.startsWith("copy-cmd:")) {
         this.doCopy(id.slice("copy-cmd:".length));
-      } else if (id === "copy") {
-        this.doCopy(this.lastCleanedOutput || undefined);
+      } else if (id.startsWith("copy-")) {
+        const text = this._copyContexts.get(id);
+        this.doCopy(text || this.lastCleanedOutput || undefined);
       } else if (
         id.startsWith("retro-approve-") ||
         id.startsWith("retro-reject-")
       ) {
         this.handleRetroAction(id);
+      } else if (id.startsWith("revert-") || id.startsWith("allow-")) {
+        this.handleViolationAction(id);
       } else if (id.startsWith("approve-") || id.startsWith("reject-")) {
         this.handleHandoffAction(id);
       } else if (id.startsWith("reply-")) {
@@ -3699,7 +4061,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       {
         name: "debug",
         aliases: ["raw"],
-        usage: "/debug [teammate]",
+        usage: "/debug [teammate] [focus]",
         description: "Analyze the last agent task with the coding agent",
         run: (args) => this.cmdDebug(args),
       },
@@ -3709,6 +4071,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         usage: "/cancel [n]",
         description: "Cancel a queued task by number",
         run: (args) => this.cmdCancel(args),
+      },
+      {
+        name: "interrupt",
+        aliases: ["int"],
+        usage: "/interrupt [teammate] [message]",
+        description:
+          "Interrupt a running agent and resume with a steering message",
+        run: (args) => this.cmdInterrupt(args),
       },
       {
         name: "init",
@@ -3760,6 +4130,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         description:
           "Ask a quick side question without interrupting the main conversation",
         run: (args) => this.cmdBtw(args),
+      },
+      {
+        name: "script",
+        aliases: [],
+        usage: "/script [description]",
+        description: "Write and run reusable scripts via the coding agent",
+        run: (args) => this.cmdScript(args),
       },
       {
         name: "theme",
@@ -3827,17 +4204,25 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     switch (event.type) {
       case "task_assigned": {
+        // System tasks (compaction, summarization, wisdom distillation) are
+        // invisible — don't track them in the progress bar.
+        if (event.assignment.system) break;
+
         // Track this task and start the animated status bar
         const key = event.assignment.teammate;
         this.activeTasks.set(key, {
           teammate: event.assignment.teammate,
           task: event.assignment.task,
+          startTime: Date.now(),
         });
         this.startStatusAnimation();
         break;
       }
 
       case "task_completed": {
+        // System task completions — don't touch activeTasks (was never added)
+        if (event.result.system) break;
+
         // Remove from active tasks and stop spinner.
         // Result display is deferred to drainAgentQueue() so the defensive
         // retry can update rawOutput before anything is shown to the user.
@@ -3952,11 +4337,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   }
 
   private async cmdDebug(argsStr: string): Promise<void> {
-    const arg = argsStr.trim().replace(/^@/, "");
+    const parts = argsStr.trim().split(/\s+/);
+    const firstArg = (parts[0] ?? "").replace(/^@/, "");
+    // Everything after the teammate name is the debug focus
+    const debugFocus = parts.slice(1).join(" ").trim() || undefined;
 
     // Resolve which teammate to debug
     let targetName: string;
-    if (arg === "everyone") {
+    if (firstArg === "everyone") {
       // Pick all teammates with debug files, queue one analysis per teammate
       const names: string[] = [];
       for (const [name] of this.lastDebugFiles) {
@@ -3968,29 +4356,30 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         return;
       }
       for (const name of names) {
-        this.queueDebugAnalysis(name);
+        this.queueDebugAnalysis(name, debugFocus);
       }
       return;
-    } else if (arg) {
-      targetName = arg;
+    } else if (firstArg) {
+      targetName = firstArg;
     } else if (this.lastResult) {
       targetName = this.lastResult.teammate;
     } else {
       this.feedLine(
-        tp.muted("  No debug info available. Try: /debug [teammate]"),
+        tp.muted("  No debug info available. Try: /debug [teammate] [focus]"),
       );
       this.refreshView();
       return;
     }
 
-    this.queueDebugAnalysis(targetName);
+    this.queueDebugAnalysis(targetName, debugFocus);
   }
 
   /**
    * Queue a debug analysis task — sends the last request + debug log
    * to the base coding agent for analysis.
+   * @param debugFocus Optional focus area the user wants to investigate
    */
-  private queueDebugAnalysis(teammate: string): void {
+  private queueDebugAnalysis(teammate: string, debugFocus?: string): void {
     const debugFile = this.lastDebugFiles.get(teammate);
     const lastPrompt = this.lastTaskPrompts.get(teammate);
 
@@ -4010,8 +4399,12 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       return;
     }
 
+    const focusLine = debugFocus
+      ? `\n\n**Focus your analysis on:** ${debugFocus}`
+      : "";
+
     const analysisPrompt = [
-      `Analyze the following debug log from @${teammate}'s last task execution. Identify any issues, errors, or anomalies. If the response was empty, explain likely causes. Provide a concise diagnosis and suggest fixes if applicable.`,
+      `Analyze the following debug log from @${teammate}'s last task execution. Identify any issues, errors, or anomalies. If the response was empty, explain likely causes. Provide a concise diagnosis and suggest fixes if applicable.${focusLine}`,
       "",
       "## Last Request Sent to Agent",
       "",
@@ -4024,6 +4417,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     // Show the debug log path — ctrl+click to open
     this.feedLine(concat(tp.muted("  Debug log: "), tp.accent(debugFile)));
+    if (debugFocus) {
+      this.feedLine(tp.muted(`  Focus: ${debugFocus}`));
+    }
     this.feedLine(tp.muted("  Queuing analysis…"));
     this.refreshView();
 
@@ -4063,10 +4459,194 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.refreshView();
   }
 
-  /** Drain tasks for a single agent — runs in parallel with other agents. */
+  /**
+   * /interrupt [teammate] [message] — Kill a running agent and resume with context.
+   */
+  private async cmdInterrupt(argsStr: string): Promise<void> {
+    const parts = argsStr.trim().split(/\s+/);
+    const teammateName = parts[0]?.replace(/^@/, "").toLowerCase();
+    const steeringMessage =
+      parts.slice(1).join(" ").trim() ||
+      "Wrap up your current work and report what you've done so far.";
+
+    if (!teammateName) {
+      this.feedLine(tp.warning("  Usage: /interrupt [teammate] [message]"));
+      this.refreshView();
+      return;
+    }
+
+    // Resolve display name → internal name
+    const resolvedName =
+      teammateName === this.adapterName ? this.selfName : teammateName;
+
+    // Check if the teammate has an active task
+    const activeEntry = this.agentActive.get(resolvedName);
+    if (!activeEntry) {
+      this.feedLine(
+        tp.warning(`  @${teammateName} has no active task to interrupt.`),
+      );
+      this.refreshView();
+      return;
+    }
+
+    // Check if the adapter supports killing
+    const adapter = this.orchestrator.getAdapter();
+    if (!adapter?.killAgent) {
+      this.feedLine(
+        tp.warning("  This adapter does not support interruption."),
+      );
+      this.refreshView();
+      return;
+    }
+
+    // Show interruption status
+    const displayName =
+      resolvedName === this.selfName ? this.adapterName : resolvedName;
+    this.feedLine(
+      concat(
+        tp.warning("  ⚡  Interrupting "),
+        tp.accent(`@${displayName}`),
+        tp.warning("..."),
+      ),
+    );
+    this.refreshView();
+
+    try {
+      // Kill the agent process and capture its output
+      const spawnResult = await adapter.killAgent(resolvedName);
+      if (!spawnResult) {
+        this.feedLine(tp.warning(`  @${displayName} process already exited.`));
+        this.refreshView();
+        return;
+      }
+
+      // Get the original full prompt for this agent
+      const _originalFullPrompt = this.lastTaskPrompts.get(resolvedName) ?? "";
+      const originalTask = activeEntry.task;
+
+      // Parse the conversation log from available sources
+      const presetName = adapter.name ?? "unknown";
+      const { log, toolCallCount, filesChanged } = buildConversationLog(
+        spawnResult.debugFile,
+        spawnResult.stdout,
+        presetName,
+      );
+
+      // Build the resume prompt
+      const resumePrompt = this.buildResumePrompt(
+        originalTask,
+        log,
+        steeringMessage,
+        toolCallCount,
+        filesChanged,
+      );
+
+      // Report what happened
+      const elapsed = this.activeTasks.get(resolvedName)?.startTime
+        ? `${((Date.now() - this.activeTasks.get(resolvedName)!.startTime) / 1000).toFixed(0)}s`
+        : "unknown";
+      this.feedLine(
+        concat(
+          tp.success("  ⚡  Interrupted "),
+          tp.accent(`@${displayName}`),
+          tp.muted(
+            ` (${elapsed}, ${toolCallCount} tool calls, ${filesChanged.length} files changed)`,
+          ),
+        ),
+      );
+      this.feedLine(
+        concat(
+          tp.muted("  Resuming with: "),
+          tp.text(steeringMessage.slice(0, 70)),
+        ),
+      );
+      this.refreshView();
+
+      // Clean up the active task state — the drainAgentQueue loop will see
+      // the agent as inactive and the queue entry was already removed
+      this.activeTasks.delete(resolvedName);
+      this.agentActive.delete(resolvedName);
+      if (this.activeTasks.size === 0) this.stopStatusAnimation();
+
+      // Queue the resumed task
+      this.taskQueue.push({
+        type: "agent",
+        teammate: resolvedName,
+        task: resumePrompt,
+      });
+      this.kickDrain();
+    } catch (err: any) {
+      this.feedLine(
+        tp.error(
+          `  ✖  Failed to interrupt @${displayName}: ${err?.message ?? String(err)}`,
+        ),
+      );
+      this.refreshView();
+    }
+  }
+
+  /**
+   * Build a resume prompt from the original task, conversation log, and steering message.
+   */
+  private buildResumePrompt(
+    originalTask: string,
+    conversationLog: string,
+    steeringMessage: string,
+    toolCallCount: number,
+    filesChanged: string[],
+  ): string {
+    const parts: string[] = [];
+
+    parts.push("<RESUME_CONTEXT>");
+    parts.push(
+      "This is a resumed task. You were previously working on this task but were interrupted.",
+    );
+    parts.push(
+      "Below is the log of what you accomplished before the interruption.",
+    );
+    parts.push("");
+    parts.push(
+      "DO NOT repeat work that is already done. Check the filesystem for files you already wrote.",
+    );
+    parts.push("Continue from where you left off.");
+    parts.push("");
+
+    parts.push("## What You Did Before Interruption");
+    parts.push("");
+    parts.push(`Tool calls: ${toolCallCount}`);
+    if (filesChanged.length > 0) {
+      parts.push(
+        `Files changed: ${filesChanged.slice(0, 20).join(", ")}${filesChanged.length > 20 ? ` (+${filesChanged.length - 20} more)` : ""}`,
+      );
+    }
+    parts.push("");
+    parts.push(conversationLog);
+    parts.push("");
+
+    parts.push("## Interruption");
+    parts.push("");
+    parts.push(steeringMessage);
+    parts.push("");
+
+    parts.push("## Your Task Now");
+    parts.push("");
+    parts.push(
+      "Continue the original task from where you left off. The original task was:",
+    );
+    parts.push("");
+    parts.push(originalTask);
+    parts.push("</RESUME_CONTEXT>");
+
+    return parts.join("\n");
+  }
+
+  /** Drain user tasks for a single agent — runs in parallel with other agents.
+   *  System tasks are handled separately by runSystemTask(). */
   private async drainAgentQueue(agent: string): Promise<void> {
     while (true) {
-      const idx = this.taskQueue.findIndex((e) => e.teammate === agent);
+      const idx = this.taskQueue.findIndex(
+        (e) => e.teammate === agent && !this.isSystemTask(e),
+      );
       if (idx < 0) break;
 
       const entry = this.taskQueue.splice(idx, 1)[0];
@@ -4074,27 +4654,18 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
       const startTime = Date.now();
       try {
-        if (entry.type === "compact") {
-          await this.runCompact(entry.teammate);
-        } else if (entry.type === "summarize") {
-          // Internal housekeeping — summarize older conversation history
-          const result = await this.orchestrator.assign({
-            teammate: entry.teammate,
-            task: entry.task,
-          });
-          // Extract the summary from the agent's output (strip protocol artifacts)
-          const raw = result.rawOutput ?? "";
-          this.conversationSummary = raw
-            .replace(/^TO:\s*\S+\s*\n/im, "")
-            .replace(/^#\s+.+\n*/m, "")
-            .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
-            .trim();
-        } else {
+        {
           // btw and debug tasks skip conversation context (not part of main thread)
-          const extraContext =
-            entry.type === "btw" || entry.type === "debug"
-              ? ""
-              : this.buildConversationContext();
+          const isMainThread = entry.type !== "btw" && entry.type !== "debug";
+          // Snapshot-aware context building: if the entry has a frozen snapshot
+          // (@everyone), use it directly — no mutation of shared state.
+          // Otherwise, compress live state as before.
+          const snapshot =
+            entry.type === "agent" ? entry.contextSnapshot : undefined;
+          if (isMainThread && !snapshot) this.preDispatchCompress();
+          const extraContext = isMainThread
+            ? this.buildConversationContext(entry.teammate, snapshot)
+            : "";
           let result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
@@ -4148,6 +4719,18 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
           // Display the (possibly retried) result to the user
           this.displayTaskResult(result, entry.type);
+
+          // Audit cross-folder writes for AI teammates
+          const tmConfig = this.orchestrator.getRegistry().get(entry.teammate);
+          if (tmConfig?.type === "ai" && result.changedFiles.length > 0) {
+            const violations = this.auditCrossFolderWrites(
+              entry.teammate,
+              result.changedFiles,
+            );
+            if (violations.length > 0) {
+              this.showViolationWarning(entry.teammate, violations);
+            }
+          }
 
           // Write debug entry — skip for debug analysis tasks (avoid recursion)
           if (entry.type !== "debug") {
@@ -4215,6 +4798,15 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         "",
       ];
 
+      // Include the full prompt sent to the agent (with identity, memory, etc.)
+      const fullPrompt = result?.fullPrompt;
+      if (fullPrompt) {
+        lines.push("## Full Prompt");
+        lines.push("");
+        lines.push(fullPrompt);
+        lines.push("");
+      }
+
       if (error) {
         lines.push("## Result");
         lines.push("");
@@ -4273,7 +4865,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       lines.push("");
       writeFileSync(debugFile, lines.join("\n"), "utf-8");
       this.lastDebugFiles.set(teammate, debugFile);
-      this.lastTaskPrompts.set(teammate, task);
+      this.lastTaskPrompts.set(teammate, fullPrompt ?? task);
     } catch {
       // Don't let debug logging break task execution
     }
@@ -4499,12 +5091,12 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
   private async runCompact(name: string, silent = false): Promise<void> {
     const teammateDir = join(this.teammatesDir, name);
 
-    if (this.chatView) {
+    if (!silent && this.chatView) {
       this.chatView.setProgress(`Compacting ${name}...`);
       this.refreshView();
     }
     let spinner: Ora | null = null;
-    if (!this.chatView) {
+    if (!silent && !this.chatView) {
       spinner = ora({ text: `Compacting ${name}...`, color: "cyan" }).start();
     }
 
@@ -4553,16 +5145,16 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           this.feedLine(tp.success(`  ✔  ${name}: ${parts.join(", ")}`));
       }
 
-      if (this.chatView) this.chatView.setProgress(null);
+      if (!silent && this.chatView) this.chatView.setProgress(null);
 
       // Sync recall index for this teammate (bundled library call)
       try {
-        if (this.chatView) {
+        if (!silent && this.chatView) {
           this.chatView.setProgress(`Syncing ${name} index...`);
           this.refreshView();
         }
         let syncSpinner: Ora | null = null;
-        if (!this.chatView) {
+        if (!silent && !this.chatView) {
           syncSpinner = ora({
             text: `Syncing ${name} index...`,
             color: "cyan",
@@ -4571,9 +5163,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         await syncRecallIndex(this.teammatesDir, name);
         if (syncSpinner) syncSpinner.succeed(`${name}: index synced`);
         if (this.chatView) {
-          this.chatView.setProgress(null);
-          if (!silent)
-            this.feedLine(tp.success(`  ✔  ${name}: index synced`));
+          if (!silent) this.chatView.setProgress(null);
+          if (!silent) this.feedLine(tp.success(`  ✔  ${name}: index synced`));
         }
       } catch {
         /* sync failed — non-fatal */
@@ -4587,9 +5178,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
             type: "agent",
             teammate: name,
             task: wisdomPrompt,
+            system: true,
           });
-          if (this.chatView && !silent)
-            this.feedLine(tp.muted(`  ↻ ${name}: queued wisdom distillation`));
+          this.kickDrain();
         }
       } catch {
         /* wisdom prompt build failed — non-fatal */
@@ -4598,7 +5189,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       const msg = err instanceof Error ? err.message : String(err);
       if (spinner) spinner.fail(`${name}: ${msg}`);
       if (this.chatView) {
-        this.chatView.setProgress(null);
+        if (!silent) this.chatView.setProgress(null);
         // Errors always show in feed
         this.feedLine(tp.error(`  ✖  ${name}: ${msg}`));
       }
@@ -4714,7 +5305,21 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     }
   }
 
+  /** Compare two semver strings. Returns true if `a` is less than `b`. */
+  private static semverLessThan(a: string, b: string): boolean {
+    const pa = a.split(".").map(Number);
+    const pb = b.split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+      if ((pa[i] ?? 0) < (pb[i] ?? 0)) return true;
+      if ((pa[i] ?? 0) > (pb[i] ?? 0)) return false;
+    }
+    return false;
+  }
+
   private async startupMaintenance(): Promise<void> {
+    // Check and update installed CLI version
+    const versionUpdate = this.checkVersionUpdate();
+
     const tmpDir = join(this.teammatesDir, ".tmp");
 
     // Clean up debug log files older than 1 day
@@ -4740,25 +5345,82 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     // 1. Run compaction for all teammates (auto-compact + episodic + sync + wisdom)
     //    Progress bar shows status; feed only shows lines when actual work is done
     for (const name of teammates) {
-      if (this.chatView) {
-        this.chatView.setProgress(`Maintaining @${name}...`);
-        this.refreshView();
-      }
       await this.runCompact(name, true);
     }
-    if (this.chatView) {
-      this.chatView.setProgress(null);
-      this.refreshView();
+
+    // 2. Compress previous day's log for each teammate (queued as system tasks)
+    for (const name of teammates) {
+      try {
+        const compression = await buildDailyCompressionPrompt(
+          join(this.teammatesDir, name),
+        );
+        if (compression) {
+          this.taskQueue.push({
+            type: "agent",
+            teammate: name,
+            task: compression.prompt,
+            system: true,
+          });
+        }
+      } catch {
+        /* compression check failed — non-fatal */
+      }
     }
 
-    // 2. Purge daily logs older than 30 days (disk + Vectra)
+    // 2b. v0.6.0 migration — compress ALL uncompressed daily logs + re-index
+    const needsMigration =
+      versionUpdate &&
+      (versionUpdate.previous === "" ||
+        TeammatesREPL.semverLessThan(versionUpdate.previous, "0.6.0"));
+    if (needsMigration) {
+      this.feedLine(
+        tp.accent("  ℹ  Migrating to v0.6.0 — compressing daily logs..."),
+      );
+      this.refreshView();
+      let migrationCount = 0;
+      for (const name of teammates) {
+        try {
+          const uncompressed = await findUncompressedDailies(
+            join(this.teammatesDir, name),
+          );
+          if (uncompressed.length === 0) continue;
+          const prompt = await buildMigrationCompressionPrompt(
+            join(this.teammatesDir, name),
+            name,
+            uncompressed,
+          );
+          if (prompt) {
+            migrationCount++;
+            this.taskQueue.push({
+              type: "agent",
+              teammate: name,
+              task: prompt,
+              system: true,
+              migration: true,
+            });
+          }
+        } catch {
+          /* migration compression failed — non-fatal */
+        }
+      }
+      this.pendingMigrationSyncs = migrationCount;
+      // If no migration tasks were actually queued, commit version now
+      if (migrationCount === 0) {
+        this.commitVersionUpdate();
+      }
+    } else if (versionUpdate) {
+      // No migration needed — commit the version update immediately
+      this.commitVersionUpdate();
+    }
+
+    this.kickDrain();
+
+    // 3. Purge daily logs older than 30 days (disk + Vectra)
     const { Indexer } = await import("@teammates/recall");
     const indexer = new Indexer({ teammatesDir: this.teammatesDir });
     for (const name of teammates) {
       try {
-        const purged = await purgeStaleDailies(
-          join(this.teammatesDir, name),
-        );
+        const purged = await purgeStaleDailies(join(this.teammatesDir, name));
         for (const file of purged) {
           const uri = `${name}/memory/${file}`;
           await indexer.deleteDocument(name, uri).catch(() => {});
@@ -4768,11 +5430,83 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       }
     }
 
-    // 3. Sync recall indexes (bundled library call)
+    // 4. Sync recall indexes (bundled library call)
     try {
       await syncRecallIndex(this.teammatesDir);
     } catch {
       /* sync failed — non-fatal */
+    }
+  }
+
+  /**
+   * Check if the CLI version has changed since last run.
+   * Does NOT update settings.json — call `commitVersionUpdate()` after
+   * migration tasks are complete to persist the new version.
+   */
+  private checkVersionUpdate(): { previous: string; current: string } | null {
+    const settingsPath = join(this.teammatesDir, "settings.json");
+    let settings: {
+      version?: number;
+      cliVersion?: string;
+      services?: unknown[];
+    } = {};
+
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    } catch {
+      // No settings file or invalid JSON
+    }
+
+    const previous = settings.cliVersion ?? "";
+    const current = PKG_VERSION;
+
+    if (previous === current) return null;
+    return { previous, current };
+  }
+
+  /**
+   * Persist the current CLI version to settings.json.
+   * Called after all migration tasks complete (or immediately if no migration needed).
+   */
+  private commitVersionUpdate(): void {
+    const settingsPath = join(this.teammatesDir, "settings.json");
+    let settings: {
+      version?: number;
+      cliVersion?: string;
+      services?: unknown[];
+    } = {};
+
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    } catch {
+      // No settings file or invalid JSON — create one
+    }
+
+    const previous = settings.cliVersion ?? "";
+    const current = PKG_VERSION;
+
+    settings.cliVersion = current;
+    if (!settings.version) settings.version = 1;
+    try {
+      writeFileSync(
+        settingsPath,
+        `${JSON.stringify(settings, null, 2)}\n`,
+        "utf-8",
+      );
+    } catch {
+      /* write failed — non-fatal */
+    }
+
+    // Detect major/minor version change (not just patch)
+    const [prevMajor, prevMinor] = previous.split(".").map(Number);
+    const [curMajor, curMinor] = current.split(".").map(Number);
+    const isMajorMinor =
+      previous !== "" && (prevMajor !== curMajor || prevMinor !== curMinor);
+
+    if (isMajorMinor) {
+      this.feedLine(tp.accent(`  ✔  Updated from v${previous} → v${current}`));
+      this.feedLine();
+      this.refreshView();
     }
   }
 
@@ -4962,6 +5696,149 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     });
     this.feedLine(
       concat(tp.muted("  Side question → "), tp.accent(`@${this.adapterName}`)),
+    );
+    this.feedLine();
+    this.refreshView();
+    this.kickDrain();
+  }
+
+  private async cmdScript(argsStr: string): Promise<void> {
+    const args = argsStr.trim();
+    const scriptsDir = join(this.teammatesDir, this.selfName, "scripts");
+
+    // /script (no args) — show usage
+    if (!args) {
+      this.feedLine();
+      this.feedLine(tp.bold("  /script — write and run reusable scripts"));
+      this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
+      this.feedLine(
+        concat(
+          tp.accent("  /script list".padEnd(36)),
+          tp.text("List saved scripts"),
+        ),
+      );
+      this.feedLine(
+        concat(
+          tp.accent("  /script run <name>".padEnd(36)),
+          tp.text("Run an existing script"),
+        ),
+      );
+      this.feedLine(
+        concat(
+          tp.accent("  /script <description>".padEnd(36)),
+          tp.text("Create and run a new script"),
+        ),
+      );
+      this.feedLine();
+      this.feedLine(tp.muted(`  Scripts are saved to ${scriptsDir}`));
+      this.feedLine();
+      this.refreshView();
+      return;
+    }
+
+    // /script list — list saved scripts
+    if (args === "list") {
+      let files: string[] = [];
+      try {
+        files = readdirSync(scriptsDir).filter((f) => !f.startsWith("."));
+      } catch {
+        // directory doesn't exist yet
+      }
+
+      this.feedLine();
+      if (files.length === 0) {
+        this.feedLine(tp.muted("  No scripts saved yet."));
+        this.feedLine(tp.muted("  Use /script <description> to create one."));
+      } else {
+        this.feedLine(tp.bold("  Saved scripts"));
+        this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
+        for (const f of files) {
+          this.feedLine(concat(tp.accent(`  ${f}`)));
+        }
+      }
+      this.feedLine();
+      this.refreshView();
+      return;
+    }
+
+    // /script run <name> — run an existing script
+    if (args.startsWith("run ")) {
+      const name = args.slice(4).trim();
+      if (!name) {
+        this.feedLine(tp.muted("  Usage: /script run <name>"));
+        this.refreshView();
+        return;
+      }
+
+      // Find the script file (try exact match, then with common extensions)
+      const candidates = [
+        name,
+        `${name}.sh`,
+        `${name}.ts`,
+        `${name}.js`,
+        `${name}.ps1`,
+        `${name}.py`,
+      ];
+      let scriptPath: string | null = null;
+      for (const c of candidates) {
+        const p = join(scriptsDir, c);
+        if (existsSync(p)) {
+          scriptPath = p;
+          break;
+        }
+      }
+
+      if (!scriptPath) {
+        this.feedLine(tp.warning(`  Script not found: ${name}`));
+        this.feedLine(tp.muted("  Use /script list to see available scripts."));
+        this.refreshView();
+        return;
+      }
+
+      const scriptContent = readFileSync(scriptPath, "utf-8");
+      const task = `Run the following script located at ${scriptPath}:\n\n\`\`\`\n${scriptContent}\n\`\`\`\n\nExecute it and report the results. If it fails, diagnose the issue and fix it.`;
+
+      this.taskQueue.push({
+        type: "script",
+        teammate: this.selfName,
+        task,
+      });
+      this.feedLine(
+        concat(
+          tp.muted("  Running script "),
+          tp.accent(basename(scriptPath)),
+          tp.muted(" → "),
+          tp.accent(`@${this.adapterName}`),
+        ),
+      );
+      this.feedLine();
+      this.refreshView();
+      this.kickDrain();
+      return;
+    }
+
+    // /script <description> — create and run a new script
+    const task = [
+      `The user wants a reusable script. Their request:`,
+      ``,
+      args,
+      ``,
+      `Instructions:`,
+      `1. Write the script and save it to the scripts directory: ${scriptsDir}`,
+      `2. Create the directory if it doesn't exist.`,
+      `3. Choose a short, descriptive filename (kebab-case, with appropriate extension like .sh, .ts, .js, .py, .ps1).`,
+      `4. Make the script executable if applicable.`,
+      `5. Run the script and report the results.`,
+      `6. If the script needs to be parameterized, use command-line arguments.`,
+    ].join("\n");
+
+    this.taskQueue.push({
+      type: "script",
+      teammate: this.selfName,
+      task,
+    });
+    this.feedLine(
+      concat(tp.muted("  Script task → "), tp.accent(`@${this.adapterName}`)),
     );
     this.feedLine();
     this.refreshView();

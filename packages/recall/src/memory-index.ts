@@ -25,7 +25,9 @@ interface MemoryEntry {
  * Parse YAML-ish frontmatter from a markdown file's content.
  * Returns name and description fields, or null if no frontmatter found.
  */
-function parseFrontmatter(content: string): { name: string; description: string } | null {
+function parseFrontmatter(
+  content: string,
+): { name: string; description: string } | null {
   const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
   if (!match) return null;
 

@@ -13,7 +13,6 @@ export {
   queryRecallContext,
   syncRecallIndex,
 } from "./adapter.js";
-export { autoCompactForBudget } from "./compact.js";
 export {
   type AgentPreset,
   CliProxyAdapter,
@@ -26,6 +25,20 @@ export { AnimatedBanner } from "./banner.js";
 export type { CliArgs } from "./cli-args.js";
 export { findTeammatesDir, PKG_VERSION, parseCliArgs } from "./cli-args.js";
 export {
+  autoCompactForBudget,
+  buildDailyCompressionPrompt,
+  buildMigrationCompressionPrompt,
+  findUncompressedDailies,
+} from "./compact.js";
+export type { LogEntry } from "./log-parser.js";
+export {
+  buildConversationLog,
+  formatLogTimeline,
+  parseClaudeDebugLog,
+  parseCodexOutput,
+  parseRawOutput,
+} from "./log-parser.js";
+export {
   Orchestrator,
   type OrchestratorConfig,
   type TeammateStatus,
@@ -37,6 +50,7 @@ export { tp } from "./theme.js";
 export type {
   DailyLog,
   HandoffEnvelope,
+  InterruptState,
   OrchestratorEvent,
   OwnershipRules,
   PresenceState,

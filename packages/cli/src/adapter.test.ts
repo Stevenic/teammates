@@ -118,28 +118,25 @@ describe("buildTeammatePrompt", () => {
     expect(prompt).toContain("/tmp/beacon-session.md");
   });
 
-  it("drops daily logs that exceed the 24k daily budget", () => {
-    // Each log is ~50k chars = ~12.5k tokens. Only 1 fits in 24k daily budget.
+  it("drops daily logs that exceed the 12k daily budget", () => {
+    // Each log is ~50k chars = ~12.5k tokens. First one exceeds 12k budget, dropped.
     const bigContent = "D".repeat(50_000);
     const config = makeConfig({
       dailyLogs: [
         { date: "2026-03-18", content: "Today's log — never trimmed" },
-        { date: "2026-03-17", content: bigContent }, // day 2 — fits in 24k
-        { date: "2026-03-16", content: bigContent }, // day 3 — exceeds 24k, dropped
+        { date: "2026-03-17", content: bigContent }, // day 2 — exceeds 12k, dropped
       ],
     });
     const prompt = buildTeammatePrompt(config, "task");
     // Today's log is always fully present (never trimmed)
     expect(prompt).toContain("Today's log — never trimmed");
-    // Day 2 fits within 24k
-    expect(prompt).toContain("2026-03-17");
-    // Day 3 doesn't fit (12.5k + 12.5k > 24k)
-    expect(prompt).not.toContain("2026-03-16");
+    // Day 2 doesn't fit (12.5k > 12k)
+    expect(prompt).not.toContain("2026-03-17");
   });
 
-  it("recall gets at least 8k tokens even when daily logs use full 24k", () => {
-    // Daily logs fill their 24k budget. Recall still gets its guaranteed 8k minimum.
-    const dailyContent = "D".repeat(90_000); // ~22.5k tokens — fits in 24k
+  it("recall gets at least 8k tokens even when daily logs use full 12k", () => {
+    // Daily logs fill their 12k budget. Recall still gets its guaranteed 8k minimum.
+    const dailyContent = "D".repeat(40_000); // ~10k tokens — fits in 12k
     const config = makeConfig({
       dailyLogs: [
         { date: "2026-03-18", content: "today" },
@@ -163,7 +160,7 @@ describe("buildTeammatePrompt", () => {
   });
 
   it("recall gets unused daily log budget", () => {
-    // Small daily logs leave most of 24k unused — recall gets the surplus.
+    // Small daily logs leave most of 12k unused — recall gets the surplus.
     const config = makeConfig({
       dailyLogs: [
         { date: "2026-03-18", content: "today" },
@@ -171,7 +168,7 @@ describe("buildTeammatePrompt", () => {
       ],
     });
     // Large recall result — should fit because daily logs barely used any budget
-    const recallText = "R".repeat(80_000); // ~20k tokens — fits in (8k + ~24k unused)
+    const recallText = "R".repeat(80_000); // ~20k tokens — fits in (8k + ~12k unused)
     const prompt = buildTeammatePrompt(config, "task", {
       recallResults: [
         {

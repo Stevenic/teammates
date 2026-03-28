@@ -4,8 +4,8 @@ export { matchMemoryCatalog, scanMemoryCatalog } from "./memory-index.js";
 export { buildQueryVariations, extractKeywords } from "./query-expansion.js";
 export {
   type MultiSearchOptions,
+  multiSearch,
   type SearchOptions,
   type SearchResult,
-  multiSearch,
   search,
 } from "./search.js";

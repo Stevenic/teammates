@@ -46,6 +46,15 @@ export interface AgentAdapter {
   /** Get the session file path for a teammate (if session is active). */
   getSessionFile?(teammateName: string): string | undefined;
 
+  /**
+   * Kill a running agent and return its partial output.
+   * Used by the interrupt-and-resume system to capture in-progress work.
+   * Returns null if no agent is running for this teammate.
+   */
+  killAgent?(
+    teammate: string,
+  ): Promise<import("./adapters/cli-proxy.js").SpawnResult | null>;
+
   /** Clean up a session. */
   destroySession?(sessionId: string): Promise<void>;
 
@@ -156,7 +165,7 @@ const CHARS_PER_TOKEN = 4;
  * - Last recall entry can push total up to budget + RECALL_OVERFLOW (4k grace)
  * - Weekly summaries are excluded (already indexed by recall)
  */
-export const DAILY_LOG_BUDGET_TOKENS = 24_000;
+export const DAILY_LOG_BUDGET_TOKENS = 12_000;
 const RECALL_MIN_BUDGET_TOKENS = 8_000;
 const RECALL_OVERFLOW_TOKENS = 4_000;
 
@@ -305,7 +314,17 @@ export function buildTeammatePrompt(
     RECALL_MIN_BUDGET_TOKENS,
     RECALL_MIN_BUDGET_TOKENS + dailyBudget,
   );
-  const recallResults = options?.recallResults ?? [];
+
+  // Filter recall results that duplicate daily log content already in the prompt
+  const dailyLogDates = new Set(
+    teammate.dailyLogs.slice(0, 7).map((log) => log.date),
+  );
+  const recallResults = (options?.recallResults ?? []).filter((r) => {
+    const dailyMatch = r.uri.match(/memory\/(\d{4}-\d{2}-\d{2})\.md/);
+    if (dailyMatch && dailyLogDates.has(dailyMatch[1])) return false;
+    return true;
+  });
+
   if (recallResults.length > 0) {
     const lines = [
       "<RECALL_RESULTS>",
@@ -344,6 +363,8 @@ export function buildTeammatePrompt(
   const instrLines = [
     "<INSTRUCTIONS>",
     "",
+    "**Your FIRST priority is answering the user's request in `<TASK>`. Session updates, memory writes, and continuity housekeeping are SECONDARY — do them AFTER producing your text response, not before.**",
+    "",
     "### Output Protocol (CRITICAL)",
     "",
     "**Your #1 job is to produce a visible text response.** Session updates and memory writes are secondary — they support continuity but are not the deliverable. The user sees ONLY your text output. If you update files but return no text, the user sees an empty message and your work is invisible.",
@@ -362,7 +383,6 @@ export function buildTeammatePrompt(
     "- The `# Subject` line is REQUIRED — it becomes the message title.",
     "- Always write a substantive body. Never return just the subject.",
     "- Use markdown: headings, lists, code blocks, bold, etc.",
-    "- **Write your text response FIRST, then update session/memory files.** This ensures visible output even if the agent turn ends early.",
     "",
     "### Handoffs",
     "",
@@ -389,7 +409,7 @@ export function buildTeammatePrompt(
       "",
       `Your session file is at: \`${options.sessionFile}\``,
       "",
-      "**After writing your text response**, append a brief entry to this file with:",
+      "**After completing the task**, append a brief entry to this file with:",
       "- What you did",
       "- Key decisions made",
       "- Files changed",
@@ -399,20 +419,32 @@ export function buildTeammatePrompt(
     );
   }
 
+  // Cross-folder write boundary (AI teammates only)
+  if (teammate.type === "ai") {
+    instrLines.push(
+      "",
+      "### Folder Boundaries (ENFORCED)",
+      "",
+      `**You MUST NOT create, edit, or delete files inside another teammate's folder (\`.teammates/<other>/\`).** Your folder is \`.teammates/${teammate.name}/\` — you may only write inside it. Shared folders (\`.teammates/_*/\`) and ephemeral folders (\`.teammates/.*/\`) are also writable.`,
+      "",
+      "If your task requires changes to another teammate's files, you MUST hand off that work using the handoff block format above. Violation of this rule will cause your changes to be flagged and potentially reverted.",
+    );
+  }
+
   // Memory updates
   instrLines.push(
     "",
     "### Memory Updates",
     "",
-    "**After writing your text response**, update your memory files:",
+    "**After completing the task**, update your memory files:",
     "",
-    `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist.`,
+    `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist. Always include YAML frontmatter with \`version: 0.6.0\` and \`type: daily\`.`,
     "   - What you did",
     "   - Key decisions made",
     "   - Files changed",
     "   - Anything the next task should know",
     "",
-    `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`name\`, \`description\`, \`type\`). Update existing memory files if the topic already has one.`,
+    `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`version\`, \`name\`, \`description\`, \`type\`). Always include \`version: 0.6.0\` as the first field. Update existing memory files if the topic already has one.`,
     "",
     "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
     "",
@@ -465,8 +497,25 @@ export function buildTeammatePrompt(
   }
   instrLines.push(
     "- Your response must answer `<TASK>` — everything else is supporting context.",
+  );
+
+  // Echo the user's actual request at the bottom edge for maximum attention.
+  // The orchestrator prepends conversation history before a "---" separator,
+  // so the user's raw message is the last segment after splitting on "---".
+  const segments = taskPrompt.split(/\n\n---\n\n/);
+  const userRequest = segments[segments.length - 1].trim();
+  if (userRequest.length > 0 && userRequest.length < 500) {
+    instrLines.push("", `**THE USER'S REQUEST:** ${userRequest}`);
+  } else if (userRequest.length >= 500) {
+    instrLines.push(
+      "",
+      "**IMPORTANT: The user's actual request is at the end of `<TASK>`. Read and address it before doing anything else.**",
+    );
+  }
+
+  instrLines.push(
     "",
-    "**REMINDER: Write your text response (TO: user) FIRST, then update session/memory files. A turn with only file edits and no text output is a failed turn.**",
+    "**REMINDER: You MUST end your turn with visible text output. A turn with only file edits and no text is a failed turn.**",
   );
 
   parts.push(instrLines.join("\n"));

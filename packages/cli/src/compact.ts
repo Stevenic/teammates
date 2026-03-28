@@ -111,6 +111,7 @@ function buildWeeklySummary(
 
   const lines: string[] = [];
   lines.push("---");
+  lines.push("version: 0.6.0");
   lines.push(`type: weekly`);
   lines.push(`week: ${weekKey}`);
   lines.push(`period: ${firstDate} to ${lastDate}`);
@@ -143,6 +144,7 @@ function buildMonthlySummary(
 
   const lines: string[] = [];
   lines.push("---");
+  lines.push("version: 0.6.0");
   lines.push(`type: monthly`);
   lines.push(`month: ${monthKey}`);
   lines.push(`period: ${firstWeek} to ${lastWeek}`);
@@ -647,4 +649,150 @@ export async function purgeStaleDailies(
   }
 
   return purged;
+}
+
+/**
+ * Find all daily logs that are not yet compressed (no `compressed: true`
+ * frontmatter). Returns an array of { date, file } for each uncompressed log.
+ */
+export async function findUncompressedDailies(
+  teammateDir: string,
+): Promise<{ date: string; file: string }[]> {
+  const memoryDir = join(teammateDir, "memory");
+  const entries = await readdir(memoryDir).catch(() => [] as string[]);
+  const results: { date: string; file: string }[] = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith(".md")) continue;
+    const stem = basename(entry, ".md");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(stem)) continue;
+    const content = await readFile(join(memoryDir, entry), "utf-8");
+    if (content.startsWith("---") && /compressed:\s*true/.test(content)) {
+      continue; // Already compressed
+    }
+    results.push({ date: stem, file: entry });
+  }
+
+  return results.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * Build a prompt for an agent to compress multiple daily logs in bulk.
+ * Used during version migrations to compress all historical daily logs.
+ * Returns null if there are no uncompressed dailies.
+ */
+export async function buildMigrationCompressionPrompt(
+  _teammateDir: string,
+  teammateName: string,
+  dailies: { date: string; file: string }[],
+): Promise<string | null> {
+  if (dailies.length === 0) return null;
+
+  const filePaths = dailies
+    .map((d) => `.teammates/${teammateName}/memory/${d.file}`)
+    .join("\n- ");
+
+  return `You are compressing daily work logs to save context window space. There are ${dailies.length} uncompressed daily logs that need compression.
+
+## Rules
+
+For EACH file listed below:
+1. Read the file
+2. Rewrite it into a shorter version that preserves:
+   - Task names and one-line summaries of what was done
+   - Key decisions and their rationale
+   - Files changed (as a flat list per task, not grouped subsections)
+   - Important context for future tasks
+3. Remove:
+   - Detailed "What was done" step-by-step breakdowns
+   - Build/test status lines (unless something failed)
+   - Redundant section headers
+4. Keep the same markdown structure (# date header, ## Task headers) but make each task entry 3-5 lines max
+5. Start the file with this frontmatter:
+\`\`\`
+---
+version: 0.6.0
+type: daily
+compressed: true
+---
+\`\`\`
+
+## Files to Compress
+
+- ${filePaths}
+
+Process each file one at a time. Read it, compress it, write it back. Do NOT skip any files.`;
+}
+
+/**
+ * Check if the previous day's log needs compression and return a prompt
+ * to compress it. Returns null if no compression is needed.
+ *
+ * A daily log is eligible for compression when:
+ * - Today's log does not yet exist (new day boundary)
+ * - Yesterday's log exists and is not already compressed (no `compressed: true` frontmatter)
+ */
+export async function buildDailyCompressionPrompt(
+  teammateDir: string,
+): Promise<{ date: string; prompt: string } | null> {
+  const memoryDir = join(teammateDir, "memory");
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Find yesterday's date
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+  // Check if yesterday's log exists
+  const yesterdayFile = join(memoryDir, `${yesterdayStr}.md`);
+  let content: string;
+  try {
+    content = await readFile(yesterdayFile, "utf-8");
+  } catch {
+    return null; // No yesterday log
+  }
+
+  // Skip if already compressed
+  if (content.startsWith("---") && /compressed:\s*true/.test(content)) {
+    return null;
+  }
+
+  // Skip if today's log already exists (we already passed the day boundary)
+  const todayFile = join(memoryDir, `${today}.md`);
+  try {
+    await readFile(todayFile, "utf-8");
+    // Today's log exists — this isn't a fresh day boundary, skip
+    return null;
+  } catch {
+    // Today's log doesn't exist — this is a new day, compress yesterday
+  }
+
+  const prompt = `You are compressing a daily work log to save context window space. Rewrite the log below into a shorter version that preserves:
+- Task names and one-line summaries of what was done
+- Key decisions and their rationale
+- Files changed (as a flat list per task, not grouped subsections)
+- Important context for future tasks
+
+Remove:
+- Detailed "What was done" step-by-step breakdowns
+- Build/test status lines (unless something failed)
+- Redundant section headers
+
+Keep the same markdown structure (# date header, ## Task headers) but make each task entry 3-5 lines max.
+
+Write the compressed version to \`.teammates/${basename(teammateDir)}/memory/${yesterdayStr}.md\`. Start the file with this frontmatter:
+\`\`\`
+---
+version: 0.6.0
+type: daily
+compressed: true
+---
+\`\`\`
+
+## Original Log
+
+${content}`;
+
+  return { date: yesterdayStr, prompt };
 }

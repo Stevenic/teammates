@@ -1,4 +1,5 @@
 ---
+version: 0.6.1
 name: continuity-failure
 description: Lexicon failed to read memory files at session start, causing "no prior context" response — must always read memory first
 type: feedback

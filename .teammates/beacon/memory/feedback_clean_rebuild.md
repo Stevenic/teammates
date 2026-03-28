@@ -1,4 +1,5 @@
 ---
+version: 0.6.0
 name: Clean dist before rebuild
 description: Always clean the dist/ directory for a package and do a full rebuild after making changes — never rely on incremental builds
 type: feedback

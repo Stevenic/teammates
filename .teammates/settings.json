@@ -1,4 +1,9 @@
 {
   "version": 1,
-  "services": [{ "name": "recall" }]
+  "services": [
+    {
+      "name": "recall"
+    }
+  ],
+  "cliVersion": "0.6.3"
 }

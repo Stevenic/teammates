@@ -34,8 +34,7 @@ import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
 import { Control } from "../layout/control.js";
 import type { Constraint, Rect, Size } from "../layout/types.js";
-import { type StyledSpan, spanLength } from "../styled.js";
-import { stringDisplayWidth } from "../pixel/symbol.js";
+import type { StyledSpan } from "../styled.js";
 import { type StyledLine, StyledText } from "./styled-text.js";
 import { Text } from "./text.js";
 import {
@@ -169,6 +168,12 @@ export class ChatView extends Control {
   // ── Feed geometry (cached from last render for hit-testing) ──
   private _feedX: number = 0;
   private _contentWidth: number = 0;
+
+  // ── Feed line height cache ───────────────────────────────────
+  /** Cached measured height per feed line index. Invalidated on width change. */
+  private _feedHeightCache: number[] = [];
+  /** The content width used for the last height cache pass. */
+  private _feedHeightCacheWidth: number = -1;
 
   // ── Scrollbar state ───────────────────────────────────────────
   /** Cached from last render for hit-testing. */
@@ -456,6 +461,7 @@ export class ChatView extends Control {
   /** Clear everything between the banner and the input box. */
   clear(): void {
     this._feedLines = [];
+    this._feedHeightCache = [];
     this._feedActions.clear();
     this._hoveredAction = -1;
     this._feedScrollOffset = 0;
@@ -471,6 +477,8 @@ export class ChatView extends Control {
   updateFeedLine(index: number, content: StyledLine): void {
     if (index < 0 || index >= this._feedLines.length) return;
     this._feedLines[index].lines = [content];
+    // Invalidate cached height — content changed, may wrap differently
+    delete this._feedHeightCache[index];
     this._feedActions.delete(index);
     if (this._hoveredAction === index) this._hoveredAction = -1;
     this.invalidate();
@@ -777,8 +785,16 @@ export class ChatView extends Control {
           const urls = [...text.matchAll(URL_REGEX)];
           const paths = [...text.matchAll(FILE_PATH_REGEX)];
           const allTargets = [
-            ...urls.map((m) => ({ index: m.index!, text: m[0], type: "link" as const })),
-            ...paths.map((m) => ({ index: m.index!, text: m[0], type: "file" as const })),
+            ...urls.map((m) => ({
+              index: m.index!,
+              text: m[0],
+              type: "link" as const,
+            })),
+            ...paths.map((m) => ({
+              index: m.index!,
+              text: m[0],
+              type: "file" as const,
+            })),
           ].sort((a, b) => a.index - b.index);
           if (allTargets.length === 1) {
             this.emit(allTargets[0].type, allTargets[0].text);
@@ -789,7 +805,8 @@ export class ChatView extends Control {
             const col = me.x - this._feedX;
             const charOffset = row * this._contentWidth + col;
             const hit = allTargets.find(
-              (t) => charOffset >= t.index && charOffset < t.index + t.text.length,
+              (t) =>
+                charOffset >= t.index && charOffset < t.index + t.text.length,
             );
             const target = hit ?? allTargets[0];
             this.emit(target.type, target.text);
@@ -806,8 +823,7 @@ export class ChatView extends Control {
         !onScrollbar
       ) {
         const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
-        const isAction =
-          feedLineIdx >= 0 && this._feedActions.has(feedLineIdx);
+        const isAction = feedLineIdx >= 0 && this._feedActions.has(feedLineIdx);
         if (!isAction) {
           this._selAnchor = { x: me.x, y: me.y };
           this._selEnd = { x: me.x, y: me.y };
@@ -868,12 +884,14 @@ export class ChatView extends Control {
               const prev = this._feedActions.get(this._hoveredAction);
               if (prev) {
                 this._feedLines[this._hoveredAction].lines = [prev.normalStyle];
+                delete this._feedHeightCache[this._hoveredAction];
               }
             }
             if (entry && newHover >= 0) {
               const hitItem = this._resolveActionItem(entry, me.x);
               const hoverLine = this._buildHoverLine(entry, hitItem);
               this._feedLines[newHover].lines = [hoverLine];
+              delete this._feedHeightCache[newHover];
             }
             this._hoveredAction = newHover;
             this.invalidate();
@@ -905,21 +923,6 @@ export class ChatView extends Control {
         return line.map((seg) => seg.text).join("");
       })
       .join("\n");
-  }
-
-  /** Find the URL at the given character offset, if any. */
-  private _findUrlAtOffset(text: string, charOffset: number): string | null {
-    URL_REGEX.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = URL_REGEX.exec(text)) !== null) {
-      if (
-        charOffset >= match.index &&
-        charOffset < match.index + match[0].length
-      ) {
-        return match[0];
-      }
-    }
-    return null;
   }
 
   /** Resolve which action item the mouse x-position falls on. */
@@ -1210,16 +1213,25 @@ export class ChatView extends Control {
       });
     }
 
-    // Feed lines
+    // Feed lines — use cached heights to avoid re-measuring every line each frame.
+    // Cache is invalidated when content width changes (e.g. terminal resize).
+    if (contentWidth !== this._feedHeightCacheWidth) {
+      this._feedHeightCache = [];
+      this._feedHeightCacheWidth = contentWidth;
+    }
     for (let fi = 0; fi < this._feedLines.length; fi++) {
       const line = this._feedLines[fi];
-      const lineSize = line.measure({
-        minWidth: 0,
-        maxWidth: contentWidth,
-        minHeight: 0,
-        maxHeight: Infinity,
-      });
-      const h = Math.max(1, lineSize.height);
+      let h = this._feedHeightCache[fi];
+      if (h === undefined) {
+        const lineSize = line.measure({
+          minWidth: 0,
+          maxWidth: contentWidth,
+          minHeight: 0,
+          maxHeight: Infinity,
+        });
+        h = Math.max(1, lineSize.height);
+        this._feedHeightCache[fi] = h;
+      }
       items.push({
         height: h,
         feedLineIdx: fi,
@@ -1385,8 +1397,7 @@ export class ChatView extends Control {
     const lines: string[] = [];
     for (let row = startY; row <= endY; row++) {
       const colStart = row === startY ? startX : this._feedX;
-      const colEnd =
-        row === endY ? endX : this._feedX + this._contentWidth - 1;
+      const colEnd = row === endY ? endX : this._feedX + this._contentWidth - 1;
       let line = "";
       for (let col = colStart; col <= colEnd; col++) {
         const ch = this._ctx.readCharAbsolute(col, row);

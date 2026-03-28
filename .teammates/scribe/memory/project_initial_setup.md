@@ -1,4 +1,5 @@
 ---
+version: 0.6.1
 name: Initial project setup decisions
 description: Key decisions from the initial teammates framework setup — roster size, dependency direction, entry points
 type: project

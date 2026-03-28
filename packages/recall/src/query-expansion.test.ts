@@ -3,7 +3,9 @@ import { buildQueryVariations, extractKeywords } from "./query-expansion.js";
 
 describe("extractKeywords", () => {
   it("removes stopwords", () => {
-    const result = extractKeywords("the quick brown fox jumps over the lazy dog");
+    const result = extractKeywords(
+      "the quick brown fox jumps over the lazy dog",
+    );
     expect(result).toContain("quick");
     expect(result).toContain("brown");
     expect(result).toContain("fox");
@@ -55,7 +57,8 @@ describe("buildQueryVariations", () => {
   });
 
   it("generates a keyword-focused query when prompt is verbose", () => {
-    const verbose = "I want you to please update the recall search system so that it handles multiple queries at the same time and deduplicates the results properly";
+    const verbose =
+      "I want you to please update the recall search system so that it handles multiple queries at the same time and deduplicates the results properly";
     const result = buildQueryVariations(verbose);
     expect(result.length).toBeGreaterThanOrEqual(2);
     // The keyword query should be shorter than the original
@@ -70,7 +73,10 @@ describe("buildQueryVariations", () => {
 **stevenic:** lets talk about the CI pipeline and hooks
 
 **pipeline:** CI Pipeline Hooks — Analysis`;
-    const result = buildQueryVariations("what should we do next?", conversationContext);
+    const result = buildQueryVariations(
+      "what should we do next?",
+      conversationContext,
+    );
     // Should have at least the original + conversation query
     expect(result.length).toBeGreaterThanOrEqual(2);
   });
