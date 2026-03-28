@@ -24,6 +24,8 @@ export type { BannerInfo, ServiceInfo, ServiceStatus } from "./banner.js";
 export { AnimatedBanner } from "./banner.js";
 export type { CliArgs } from "./cli-args.js";
 export { findTeammatesDir, PKG_VERSION, parseCliArgs } from "./cli-args.js";
+export type { ThreadContextEntry } from "./cli-utils.js";
+export { buildThreadContext } from "./cli-utils.js";
 export {
   autoCompactForBudget,
   buildDailyCompressionPrompt,
@@ -59,6 +61,8 @@ export type {
   SlashCommand,
   TaskAssignment,
   TaskResult,
+  TaskThread,
   TeammateConfig,
   TeammateType,
+  ThreadEntry,
 } from "./types.js";

@@ -141,6 +141,8 @@ export class ChatView extends Control {
   private _feedActions: Map<number, FeedActionEntry> = new Map();
   /** Feed line index currently hovered (-1 if none). */
   private _hoveredAction: number = -1;
+  /** Feed line indices that are currently hidden (collapsed). */
+  private _hiddenFeedLines: Set<number> = new Set();
   /** Maps screen Y → feed line index (rebuilt each render). */
   private _screenToFeedLine: Map<number, number> = new Map();
   /** Maps screen Y → row offset within the feed line (for multi-row wrapped lines). */
@@ -184,6 +186,8 @@ export class ChatView extends Control {
   private _thumbSize: number = 0;
   private _maxScroll: number = 0;
   private _scrollbarVisible: boolean = false;
+  /** True when the user has scrolled away from the bottom. Suppresses auto-scroll. */
+  private _userScrolledAway: boolean = false;
   /** True while the user is dragging the scrollbar thumb. */
   private _dragging: boolean = false;
   /** The Y offset within the thumb where the drag started. */
@@ -463,8 +467,10 @@ export class ChatView extends Control {
     this._feedLines = [];
     this._feedHeightCache = [];
     this._feedActions.clear();
+    this._hiddenFeedLines.clear();
     this._hoveredAction = -1;
     this._feedScrollOffset = 0;
+    this._userScrolledAway = false;
     this.invalidate();
   }
 
@@ -484,15 +490,124 @@ export class ChatView extends Control {
     this.invalidate();
   }
 
+  // ── Insert API ──────────────────────────────────────────────────
+
+  /**
+   * Shift all index-keyed feed structures when lines are inserted.
+   * Indices >= atIndex are shifted by delta.
+   */
+  private _shiftFeedIndices(atIndex: number, delta: number): void {
+    // Shift _feedActions
+    const newActions = new Map<number, FeedActionEntry>();
+    for (const [idx, action] of this._feedActions) {
+      newActions.set(idx >= atIndex ? idx + delta : idx, action);
+    }
+    this._feedActions = newActions;
+
+    // Shift _hiddenFeedLines
+    const newHidden = new Set<number>();
+    for (const idx of this._hiddenFeedLines) {
+      newHidden.add(idx >= atIndex ? idx + delta : idx);
+    }
+    this._hiddenFeedLines = newHidden;
+
+    // Shift _feedHeightCache — splice in undefined entries
+    if (delta > 0) {
+      this._feedHeightCache.splice(atIndex, 0, ...new Array<number>(delta));
+    }
+
+    // Shift hovered action
+    if (this._hoveredAction >= atIndex) {
+      this._hoveredAction += delta;
+    }
+  }
+
+  /** Insert a plain text line at a specific feed index, shifting everything after. */
+  insertToFeed(atIndex: number, text: string, style?: TextStyle): void {
+    const clamped = Math.max(0, Math.min(atIndex, this._feedLines.length));
+    const line = new StyledText({
+      lines: [text],
+      defaultStyle: style ?? this._feedStyle,
+      wrap: true,
+    });
+    this._feedLines.splice(clamped, 0, line);
+    this._shiftFeedIndices(clamped + 1, 1);
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
+  /** Insert a styled line at a specific feed index. */
+  insertStyledToFeed(atIndex: number, styledLine: StyledSpan): void {
+    const clamped = Math.max(0, Math.min(atIndex, this._feedLines.length));
+    const line = new StyledText({
+      lines: [styledLine],
+      defaultStyle: this._feedStyle,
+      wrap: true,
+    });
+    this._feedLines.splice(clamped, 0, line);
+    this._shiftFeedIndices(clamped + 1, 1);
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
+  /** Insert an action list at a specific feed index. */
+  insertActionList(atIndex: number, actions: FeedActionItem[]): void {
+    if (actions.length === 0) return;
+    const clamped = Math.max(0, Math.min(atIndex, this._feedLines.length));
+    const combined = this._concatSpans(actions.map((a) => a.normalStyle));
+    const line = new StyledText({
+      lines: [combined],
+      defaultStyle: this._feedStyle,
+      wrap: false,
+    });
+    this._feedLines.splice(clamped, 0, line);
+    this._shiftFeedIndices(clamped + 1, 1);
+    this._feedActions.set(clamped, { items: actions, normalStyle: combined });
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
+  // ── Visibility API ────────────────────────────────────────────────
+
+  /** Hide or show a single feed line. Hidden lines take zero height. */
+  setFeedLineHidden(index: number, hidden: boolean): void {
+    if (hidden) {
+      this._hiddenFeedLines.add(index);
+    } else {
+      this._hiddenFeedLines.delete(index);
+    }
+    this.invalidate();
+  }
+
+  /** Hide or show a range of feed lines. */
+  setFeedLinesHidden(startIndex: number, count: number, hidden: boolean): void {
+    for (let i = startIndex; i < startIndex + count; i++) {
+      if (hidden) {
+        this._hiddenFeedLines.add(i);
+      } else {
+        this._hiddenFeedLines.delete(i);
+      }
+    }
+    this.invalidate();
+  }
+
+  /** Check if a feed line is hidden. */
+  isFeedLineHidden(index: number): boolean {
+    return this._hiddenFeedLines.has(index);
+  }
+
   /** Scroll the feed to the bottom. */
   scrollToBottom(): void {
-    this._autoScrollToBottom();
+    this._userScrolledAway = false;
+    this._feedScrollOffset = Number.MAX_SAFE_INTEGER;
     this.invalidate();
   }
 
   /** Scroll the feed by a delta (positive = down, negative = up). */
   scrollFeed(delta: number): void {
     this._feedScrollOffset = Math.max(0, this._feedScrollOffset + delta);
+    // Track whether user scrolled away from bottom
+    this._userScrolledAway = this._feedScrollOffset < this._maxScroll;
     // Clear selection when scrolling (unless actively drag-selecting)
     if (!this._selecting && this._hasSelection()) {
       this.clearSelection();
@@ -750,6 +865,7 @@ export class ChatView extends Control {
               0,
               Math.min(this._feedScrollOffset, this._maxScroll),
             );
+            this._userScrolledAway = this._feedScrollOffset < this._maxScroll;
             if (this._hasSelection()) this.clearSelection();
             this.invalidate();
           }
@@ -763,6 +879,7 @@ export class ChatView extends Control {
           const clampedPos = Math.max(0, Math.min(newThumbPos, maxThumbPos));
           const ratio = maxThumbPos > 0 ? clampedPos / maxThumbPos : 0;
           this._feedScrollOffset = Math.round(ratio * this._maxScroll);
+          this._userScrolledAway = this._feedScrollOffset < this._maxScroll;
           if (this._hasSelection()) this.clearSelection();
           this.invalidate();
           return true;
@@ -1220,6 +1337,9 @@ export class ChatView extends Control {
       this._feedHeightCacheWidth = contentWidth;
     }
     for (let fi = 0; fi < this._feedLines.length; fi++) {
+      // Skip hidden lines — they take zero height (used for thread collapse)
+      if (this._hiddenFeedLines.has(fi)) continue;
+
       const line = this._feedLines[fi];
       let h = this._feedHeightCache[fi];
       if (h === undefined) {
@@ -1483,6 +1603,7 @@ export class ChatView extends Control {
   }
 
   private _autoScrollToBottom(): void {
+    if (this._userScrolledAway) return;
     // Set scroll to a very large value; it will be clamped during render
     this._feedScrollOffset = Number.MAX_SAFE_INTEGER;
   }

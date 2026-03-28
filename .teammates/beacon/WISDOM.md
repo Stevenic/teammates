@@ -7,13 +7,13 @@ Last compacted: 2026-03-28
 ---
 
 ### Codebase map — three packages
-CLI has 25 source files (~6,000 lines in cli.ts); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~6,000 lines), `chat-view.ts` (~1,520 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~560), `compact.ts` (~800), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~195), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
+CLI has 44+ source files (~7,000+ lines in cli.ts after threading); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~7,000 lines), `chat-view.ts` (~1,750 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~570), `compact.ts` (~800), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~280), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
 
 ### Three-tier memory system
 WISDOM.md (distilled, read-only except during compaction), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). The CLI reads WISDOM.md, the indexer indexes WISDOM.md + memory/*.md, and the prompt tells teammates to write typed memories.
 
 ### Memory frontmatter convention
-All memory files include YAML frontmatter with `version: 0.6.0` as the first field. Daily logs add `type: daily`, typed memories add their type. Metadata fields pass through to the model intact — no stripping. Compression prompts and adapter instructions both enforce this convention.
+All memory files include YAML frontmatter with `version: <current>` as the first field (currently `0.6.3`). Daily logs add `type: daily`, typed memories add their type. Metadata fields pass through to the model intact — no stripping. Compression prompts and adapter instructions both enforce this convention.
 
 ### Context window budget model
 Target context window is 128k tokens. Fixed sections always included (identity, wisdom, today's log, roster, protocol, USER.md). Daily logs (days 2-7) get 12k token pool. Recall gets min 8k + unused daily budget, with 4k overflow grace. Conversation history budget is derived dynamically: `(TARGET_CONTEXT_TOKENS - PROMPT_OVERHEAD_TOKENS) * CHARS_PER_TOKEN`. Weekly summaries excluded (recall indexes them). USER.md placed just before the task.
@@ -33,6 +33,24 @@ Five fixes to prevent agents from spending all tool calls on housekeeping instea
 ### @everyone concurrent dispatch — snapshot isolation
 `queueTask()` freezes `conversationHistory` + `conversationSummary` into a `contextSnapshot` once before pushing all @everyone entries (each gets a shallow copy). `drainAgentQueue()` skips `preDispatchCompress()` when an entry has a snapshot and passes it directly to `buildConversationContext()`. Context is always inlined (no file offload). This prevents race conditions where the first drain loop mutates shared state before concurrent drains read it.
 
+### Threaded task view — data model
+Tasks and responses are grouped by thread ID. `TaskThread` and `ThreadEntry` interfaces in types.ts. `threadId` field on all `QueueEntry` variants. Every user task creates a new thread; `#id` prefix in input targets an existing thread. Thread IDs are short auto-incrementing integers (`#1`, `#2`, `#3`) — session-scoped, reset on `/clear`. Handoff approval propagates `threadId` across single, bulk, and auto-approve paths.
+
+### Threaded task view — feed rendering (reorder design)
+Thread dispatch line (`→ @beacon, @lexicon`) renders as a `feedUserLine` with dark background — visually part of the user message block. Working placeholders show `  @beacon: working on task...` (accent name + dim status). On completion, the original placeholder is **hidden** (not removed) and a new response header (`@name: subject`) is inserted at the reply insert point (before remaining working placeholders). Body content follows the header. Result: first to complete appears at top, still-working placeholders stay at bottom. `displayTaskResult()` split into `displayFlatResult()` + `displayThreadedResult()`. Collapse arrow (`▶`) only shown when collapsed. Thread content indented 2 spaces (header) / 4 spaces (body) — no box-drawing borders.
+
+### Threaded task view — routing and context
+Thread-local conversation context via `buildThreadContext()` fully replaces global context when `threadId` is set — keeps agents focused on the thread. Auto-focus: un-mentioned messages without `#id` prefix target `focusedThreadId` if set. `#id` wordwheel completion on `#` at line start. `/status` shows active threads with reply count, pending agents, and focused indicator.
+
+### Thread feed insertions — use threadFeedLine, not feedLine
+When inserting content within a thread range, always use `threadFeedLine()`/`threadFeedMarkdown()`/`threadFeedActionList()` — never `feedLine()`/`feedMarkdown()`. The latter appends to the feed end, but thread-aware inserts go at `range.endIdx` and update the range. Using `feedLine()` inside a thread causes content to appear after all thread content (past working placeholders) instead of at the intended position.
+
+### ChatView insert and visibility APIs
+`insertToFeed()`, `insertStyledToFeed()`, `insertActionList()` insert lines at arbitrary feed positions. `_shiftFeedIndices()` maintains action map, hidden set, and height cache coherence on insert. `setFeedLineHidden()` / `setFeedLinesHidden()` / `isFeedLineHidden()` control line visibility for collapse. `_renderFeed()` skips hidden lines. `shiftAllFeedIndices()` in cli.ts shifts CLI-side indices (thread ranges, placeholders, reply ranges, pending handoffs) when lines are inserted.
+
+### Smart auto-scroll
+`_userScrolledAway` flag in ChatView tracks whether user has scrolled up. `_autoScrollToBottom()` is a no-op when the flag is set — new content won't yank the viewport. Flag set in `scrollFeed()`, scrollbar click, and scrollbar drag when offset < maxScroll. Cleared in `scrollToBottom()`, `clear()`, and when user scrolls back to bottom. User message submit explicitly calls `scrollToBottom()` to reset scroll.
+
 ### User avatar system (Campfire Phase 1)
 Users are represented as avatar teammates with `**Type:** human` in SOUL.md. The adapter is hidden — not registered when user has an alias. `selfName` (user alias) is the display identity everywhere; `adapterName` is for internal execution only. `@everyone` excludes both avatar and adapter. Display surfaces (roster, picker, status, errors) show `adapterName` while `selfName` is used for sender label, conversation history, internal routing, and memory folder. Import skips human avatar folders (checks SOUL.md for `**Type:** human`).
 
@@ -43,7 +61,7 @@ User setup (GitHub or manual) runs before the TUI is created via `console.log` +
 No `/assign` slash command. Assignment goes through `queueTask()`. Multi-mention dispatches to all mentioned teammates. Paste @mentions are pre-resolved from raw input before placeholder expansion to prevent routing on pasted content.
 
 ### Default routing follows last responder
-Un-mentioned messages route to `lastResult.teammate` first, then `orchestrator.route()`, then `selfName`. Explicit `@mentions` always override.
+Un-mentioned messages route to `lastResult.teammate` first, then `orchestrator.route()`, then `selfName`. Explicit `@mentions` always override. When threads are active, focused thread's last responder is checked before global `lastResult`.
 
 ### Route threshold prevents weak matches
 `Orchestrator.route()` requires a minimum score of 2 (at least one primary keyword match). Single secondary keyword matches (score 1) fall through.
@@ -54,11 +72,17 @@ Un-mentioned messages route to `lastResult.teammate` first, then `orchestrator.r
 ### Empty response defense — three layers
 1. **Two-phase prompt** — Output protocol before session/memory instructions; agents write text first, then do housekeeping. 2. **Raw retry** — If `rawOutput` is empty and `success` is true, fire retry with `raw: true` (no prompt wrapping). Second retry with minimal "just say Done" prompt. 3. **Synthetic fallback** — `displayTaskResult` generates body from `changedFiles` + `summary` metadata when text is still empty.
 
+### Lazy response guardrails
+Three prompt additions in adapter.ts prevent agents from short-circuiting when they find prior entries in session files or daily logs: (1) "Task completed" / "already logged" / "no updates needed" is NOT a valid response body. (2) Prior session entries don't mean the user received output — always redo work and produce full text. (3) Only log work actually performed in THIS turn — never log assumed or prior-turn work.
+
 ### Handoff format requires fenced code blocks
 Agents must use ` ```handoff\n@name\ntask\n``` ` format. Natural-language handoff fallback (`findNaturalLanguageHandoffs()`) catches "hand off to @name" patterns as a safety net, but only fires when zero fenced blocks are found.
 
 ### Recall is bundled infrastructure
 `@teammates/recall` is a direct dependency of `@teammates/cli`. Pre-task recall queries use `skipSync: true` for speed. Sync runs after every task completion and on startup. No watch process needed.
+
+### Workspace deps use wildcard, not pinned versions
+`packages/cli/package.json` uses `"*"` for `@teammates/consolonia` and `@teammates/recall` dependencies. Pinned versions (e.g., `"0.6.0"`) cause npm workspace resolution failures when local packages are at a different version — npm marks them as **invalid** and may resolve to registry versions that lack newer APIs. `"*"` always resolves to the local workspace copy regardless of version bumps.
 
 ### Banner is segmented — left footer + right footer
 Left: product name + version + adapter name + project directory path (smart-truncated via `truncatePath()`). Right: `? /help` by default, temporarily replaced by ESC/Ctrl+C hints. Services show presence-colored dots (green/yellow/red). `updateServices()` refreshes the banner live after `/configure`.
@@ -124,4 +148,4 @@ All ✔/✖/⚠ emojis get double-space after them for consistent rendering acro
 Feed action buttons (e.g., `[copy]`, `[revert]`, `[allow]`) must have unique IDs tied to their context. Static IDs cause all buttons to share a single handler — clicking any button executes against the most recent context. Pattern: `<action>-<teammate>-<timestamp>` with a `Map` storing per-ID context. Handler looks up by ID, falls back to latest.
 
 ### Extracted pure functions live in cli-utils.ts
-Testable pure functions extracted from cli.ts: `relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`, `cleanResponseBody`, `formatConversationEntry`, `buildConversationContext`, `findSummarizationSplit`, `buildSummarizationPrompt`, `preDispatchCompress`, `compressConversationEntries`. New extractions should follow this pattern — pure logic in cli-utils.ts, wired into cli.ts via imports.
+Testable pure functions extracted from cli.ts: `relativeTime`, `wrapLine`, `findAtMention`, `isImagePath`, `cleanResponseBody`, `formatConversationEntry`, `buildConversationContext`, `findSummarizationSplit`, `buildSummarizationPrompt`, `preDispatchCompress`, `compressConversationEntries`, `buildThreadContext`. New extractions should follow this pattern — pure logic in cli-utils.ts, wired into cli.ts via imports.

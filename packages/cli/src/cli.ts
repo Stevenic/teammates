@@ -53,6 +53,7 @@ import {
 import {
   buildConversationContext as buildConvCtx,
   buildSummarizationPrompt,
+  buildThreadContext,
   cleanResponseBody,
   compressConversationEntries,
   findAtMention,
@@ -89,6 +90,8 @@ import type {
   QueueEntry,
   SlashCommand,
   TaskResult,
+  TaskThread,
+  ThreadEntry,
 } from "./types.js";
 
 // ─── Parsed CLI arguments ────────────────────────────────────────────
@@ -128,7 +131,11 @@ class TeammatesREPL {
    * Render a task result to the feed. Called from drainAgentQueue() AFTER
    * the defensive retry so the user sees the final (possibly retried) output.
    */
-  private displayTaskResult(result: TaskResult, entryType: string): void {
+  private displayTaskResult(
+    result: TaskResult,
+    entryType: string,
+    threadId?: number,
+  ): void {
     // Suppress display for internal summarization tasks
     if (entryType === "summarize") return;
 
@@ -143,28 +150,42 @@ class TeammatesREPL {
       .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
       .trim();
 
-    // Header: "teammate: subject"
+    this.lastCleanedOutput = cleaned;
+
+    // Check if we should render inside a thread
+    const range =
+      threadId != null ? this.threadFeedRanges.get(threadId) : undefined;
+    if (range && this.chatView) {
+      this.displayThreadedResult(result, cleaned, threadId!, range);
+    } else {
+      this.displayFlatResult(result, cleaned, entryType, threadId);
+    }
+
+    // Auto-detect new teammates added during this task
+    this.refreshTeammates();
+    this.showPrompt();
+  }
+
+  /** Render a task result as a flat (non-threaded) entry in the feed. */
+  private displayFlatResult(
+    result: TaskResult,
+    cleaned: string,
+    _entryType: string,
+    threadId?: number,
+  ): void {
     const subject = result.summary || "Task completed";
     const displayTeammate =
       result.teammate === this.selfName ? this.adapterName : result.teammate;
     this.feedLine(concat(tp.accent(`${displayTeammate}: `), tp.text(subject)));
-    this.lastCleanedOutput = cleaned;
 
     if (cleaned) {
       this.feedMarkdown(cleaned);
     } else if (result.changedFiles.length > 0 || result.summary) {
-      // Agent produced no body text but DID do work — generate a synthetic
-      // summary from available metadata so the user sees something useful.
       const syntheticLines: string[] = [];
-      if (result.summary) {
-        syntheticLines.push(result.summary);
-      }
+      if (result.summary) syntheticLines.push(result.summary);
       if (result.changedFiles.length > 0) {
-        syntheticLines.push("");
-        syntheticLines.push("**Files changed:**");
-        for (const f of result.changedFiles) {
-          syntheticLines.push(`- ${f}`);
-        }
+        syntheticLines.push("", "**Files changed:**");
+        for (const f of result.changedFiles) syntheticLines.push(`- ${f}`);
       }
       this.feedMarkdown(syntheticLines.join("\n"));
     } else {
@@ -176,7 +197,6 @@ class TeammatesREPL {
       this.feedLine(
         tp.muted(`  Use /debug ${result.teammate} to view full output`),
       );
-      // Show diagnostic hints for empty responses
       const diag = result.diagnostics;
       if (diag) {
         if (diag.exitCode !== 0 && diag.exitCode !== null) {
@@ -196,19 +216,21 @@ class TeammatesREPL {
     }
 
     // Render handoffs
-    const handoffs = result.handoffs;
-    if (handoffs.length > 0) {
-      this.renderHandoffs(result.teammate, handoffs);
+    if (result.handoffs.length > 0) {
+      this.renderHandoffs(result.teammate, result.handoffs, threadId);
     }
 
     // Clickable [reply] [copy] actions after the response
     if (this.chatView && cleaned) {
       const t = theme();
-      const teammate = result.teammate;
       const ts = Date.now();
-      const replyId = `reply-${teammate}-${ts}`;
-      const copyId = `copy-${teammate}-${ts}`;
-      this._replyContexts.set(replyId, { teammate, message: cleaned });
+      const replyId = `reply-${result.teammate}-${ts}`;
+      const copyId = `copy-${result.teammate}-${ts}`;
+      this._replyContexts.set(replyId, {
+        teammate: result.teammate,
+        message: cleaned,
+        threadId,
+      });
       this._copyContexts.set(copyId, cleaned);
       this.chatView.appendActionList([
         {
@@ -236,11 +258,128 @@ class TeammatesREPL {
       ]);
     }
     this.feedLine();
+  }
 
-    // Auto-detect new teammates added during this task
-    this.refreshTeammates();
+  /** Render a task result indented inside a thread, replacing the working placeholder in-place. */
+  private displayThreadedResult(
+    result: TaskResult,
+    cleaned: string,
+    threadId: number,
+    _range: { headerIdx: number; endIdx: number },
+  ): void {
+    const t = theme();
+    const subject = result.summary || "Task completed";
 
-    this.showPrompt();
+    // Hide the original working placeholder (don't update in-place)
+    // and insert the completed response at the reply insert point
+    // (before remaining working placeholders) so completed replies float up.
+    const placeholderKey = `${threadId}-${result.teammate}`;
+    const placeholderIdx = this.workingPlaceholders.get(placeholderKey);
+    if (placeholderIdx != null && this.chatView) {
+      this.chatView.setFeedLineHidden(placeholderIdx, true);
+      this.workingPlaceholders.delete(placeholderKey);
+    }
+
+    // Insert new header line at the reply insert point (before working placeholders)
+    const displayName =
+      result.teammate === this.selfName ? this.adapterName : result.teammate;
+    const headerLine = this.makeSpan(
+      { text: `  @${displayName}: `, style: { fg: t.accent } },
+      { text: subject, style: { fg: t.text } },
+    );
+    const headerIdx = this.threadFeedLine(threadId, headerLine);
+
+    // Set insert position to right after the new header
+    this._threadInsertAt = headerIdx + 1;
+
+    // Track reply start for individual collapse
+    const thread = this.getThread(threadId);
+    const replyIndex = thread
+      ? thread.entries.filter((e) => e.type !== "user").length
+      : 0;
+    const replyKey = `${threadId}-${replyIndex}`;
+
+    // Track body start for individual collapse
+    const bodyStartIdx =
+      this._threadInsertAt ?? this.getThreadReplyInsertPoint(threadId);
+
+    if (cleaned) {
+      this.threadFeedMarkdown(threadId, cleaned);
+    } else if (result.changedFiles.length > 0 || result.summary) {
+      const syntheticLines: string[] = [];
+      if (result.summary) syntheticLines.push(result.summary);
+      if (result.changedFiles.length > 0) {
+        syntheticLines.push("", "**Files changed:**");
+        for (const f of result.changedFiles) syntheticLines.push(`- ${f}`);
+      }
+      this.threadFeedMarkdown(threadId, syntheticLines.join("\n"));
+    } else {
+      this.threadFeedLine(
+        threadId,
+        tp.muted(
+          "    (no response text — the agent may have only performed tool actions)",
+        ),
+      );
+    }
+
+    // Track body end for individual collapse
+    const bodyEndIdx =
+      this._threadInsertAt ?? this.getThreadReplyInsertPoint(threadId);
+    this.replyBodyRanges.set(replyKey, {
+      startIdx: bodyStartIdx,
+      endIdx: bodyEndIdx,
+    });
+
+    // Render handoffs inside thread
+    if (result.handoffs.length > 0) {
+      this.renderHandoffs(result.teammate, result.handoffs, threadId);
+    }
+
+    // Indented [reply] [copy] actions
+    if (this.chatView && cleaned) {
+      const ts = Date.now();
+      const replyId = `reply-${result.teammate}-${ts}`;
+      const copyId = `copy-${result.teammate}-${ts}`;
+      this._replyContexts.set(replyId, {
+        teammate: result.teammate,
+        message: cleaned,
+        threadId,
+      });
+      this._copyContexts.set(copyId, cleaned);
+      this.threadFeedActionList(threadId, [
+        {
+          id: replyId,
+          normalStyle: this.makeSpan({
+            text: "    [reply]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.makeSpan({
+            text: "    [reply]",
+            style: { fg: t.accent },
+          }),
+        },
+        {
+          id: copyId,
+          normalStyle: this.makeSpan({
+            text: " [copy]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.makeSpan({
+            text: " [copy]",
+            style: { fg: t.accent },
+          }),
+        },
+      ]);
+    }
+
+    // Blank line after reply
+    this.threadFeedLine(threadId, "");
+
+    // Clear insert position override
+    this._threadInsertAt = null;
+
+    // Update thread header
+    this.updateThreadHeader(threadId);
   }
 
   /** Target context window in tokens. Conversation history budget is derived from this. */
@@ -364,6 +503,7 @@ class TeammatesREPL {
     envelope: HandoffEnvelope;
     approveIdx: number;
     rejectIdx: number;
+    threadId?: number;
   }[] = [];
   /** Pending retro proposals awaiting user approval. */
   private pendingRetroProposals: {
@@ -386,8 +526,10 @@ class TeammatesREPL {
   }[] = [];
 
   /** Maps reply action IDs to their context (teammate + message). */
-  private _replyContexts: Map<string, { teammate: string; message: string }> =
-    new Map();
+  private _replyContexts: Map<
+    string,
+    { teammate: string; message: string; threadId?: number }
+  > = new Map();
   /** Quoted reply text to expand on next submit. */
   private _pendingQuotedReply: string | null = null;
   /** Resolver for inline ask — when set, next submit resolves this instead of normal handling. */
@@ -400,6 +542,313 @@ class TeammatesREPL {
   private banner: AnimatedBanner | null = null;
   /** The local user's alias (avatar name). Set after USER.md is read or interview completes. */
   private userAlias: string | null = null;
+
+  // ── Thread tracking ───────────────────────────────────────────────
+  /** All task threads, keyed by numeric thread ID. */
+  private threads: Map<number, TaskThread> = new Map();
+  /** Auto-incrementing thread ID counter (session-scoped). */
+  private nextThreadId = 1;
+  /** Currently focused thread ID (for default routing and rendering). */
+  private focusedThreadId: number | null = null;
+
+  /** Create a new thread and return it. */
+  private createThread(originMessage: string): TaskThread {
+    const id = this.nextThreadId++;
+    const thread: TaskThread = {
+      id,
+      originMessage,
+      originTimestamp: Date.now(),
+      entries: [],
+      pendingAgents: new Set(),
+      collapsed: false,
+      collapsedEntries: new Set(),
+      focusedAt: Date.now(),
+    };
+    this.threads.set(id, thread);
+    this.focusedThreadId = id;
+    return thread;
+  }
+
+  /** Find a thread by its numeric ID. */
+  private getThread(id: number): TaskThread | undefined {
+    return this.threads.get(id);
+  }
+
+  /** Add an entry to a thread. */
+  private appendThreadEntry(threadId: number, entry: ThreadEntry): void {
+    const thread = this.threads.get(threadId);
+    if (!thread) return;
+    thread.entries.push(entry);
+  }
+
+  // ── Thread feed rendering ───────────────────────────────────────
+
+  /** Maps thread ID → feed line range (headerIdx..endIdx exclusive). */
+  private threadFeedRanges: Map<number, { headerIdx: number; endIdx: number }> =
+    new Map();
+
+  /** Maps "threadId-teammate" → feed line index of the "working..." placeholder. */
+  private workingPlaceholders: Map<string, number> = new Map();
+
+  /** Maps "threadId-replyIndex" → { startIdx, endIdx } for individual reply collapse. */
+  private replyBodyRanges: Map<string, { startIdx: number; endIdx: number }> =
+    new Map();
+
+  /** Maps thread ID → target teammate names (for header display). */
+  private threadTargetNames: Map<number, string[]> = new Map();
+
+  /**
+   * When set, overrides getThreadReplyInsertPoint to insert at this position.
+   * Auto-increments after each use so sequential inserts stack correctly.
+   */
+  private _threadInsertAt: number | null = null;
+
+  /**
+   * Shift all CLI-tracked feed line indices when lines are inserted.
+   * Indices >= atIndex are shifted by delta.
+   */
+  private shiftAllFeedIndices(atIndex: number, delta: number): void {
+    for (const range of this.threadFeedRanges.values()) {
+      if (range.headerIdx >= atIndex) range.headerIdx += delta;
+      // Use > for exclusive endIdx: don't extend a range that merely
+      // ends at the insert point (insert is outside that range).
+      if (range.endIdx > atIndex) range.endIdx += delta;
+    }
+    for (const [key, idx] of this.workingPlaceholders) {
+      if (idx >= atIndex) this.workingPlaceholders.set(key, idx + delta);
+    }
+    for (const range of this.replyBodyRanges.values()) {
+      if (range.startIdx >= atIndex) range.startIdx += delta;
+      if (range.endIdx > atIndex) range.endIdx += delta;
+    }
+    for (const h of this.pendingHandoffs) {
+      if (h.approveIdx >= atIndex) h.approveIdx += delta;
+      if (h.rejectIdx >= atIndex) h.rejectIdx += delta;
+    }
+  }
+
+  /**
+   * Insert a line into a thread's feed range at the reply insert point
+   * (before working placeholders). Returns the feed line index.
+   */
+  private threadFeedLine(threadId: number, text: string | StyledSpan): number {
+    const range = this.threadFeedRanges.get(threadId);
+    if (!range || !this.chatView) {
+      this.feedLine(text);
+      return -1;
+    }
+    // Find insert point: before first working placeholder, or at endIdx
+    const insertAt = this.getThreadReplyInsertPoint(threadId);
+    if (typeof text === "string") {
+      this.chatView.insertToFeed(insertAt, text);
+    } else {
+      this.chatView.insertStyledToFeed(insertAt, text);
+    }
+    const oldEnd = range.endIdx;
+    this.shiftAllFeedIndices(insertAt, 1);
+    // Only manually extend the range if shiftAllFeedIndices didn't already
+    // (i.e., insert was at or past the boundary, not inside the range).
+    if (range.endIdx === oldEnd) {
+      range.endIdx++;
+    }
+    return insertAt;
+  }
+
+  /**
+   * Insert markdown content into a thread's feed range with extra indentation.
+   */
+  private threadFeedMarkdown(threadId: number, source: string): void {
+    const t = theme();
+    const width = process.stdout.columns || 80;
+    const lines = renderMarkdown(source, {
+      width: width - 5, // -4 for indent, -1 for scrollbar
+      indent: "    ",
+      theme: {
+        text: { fg: t.textMuted },
+        bold: { fg: t.text, bold: true },
+        italic: { fg: t.textMuted, italic: true },
+        boldItalic: { fg: t.text, bold: true, italic: true },
+        code: { fg: t.accentDim },
+        h1: { fg: t.accent, bold: true },
+        h2: { fg: t.accent, bold: true },
+        h3: { fg: t.accent },
+        codeBlockChrome: { fg: t.textDim },
+        codeBlock: { fg: t.success },
+        blockquote: { fg: t.textMuted, italic: true },
+        listMarker: { fg: t.accent },
+        tableBorder: { fg: t.textDim },
+        tableHeader: { fg: t.text, bold: true },
+        hr: { fg: t.textDim },
+        link: { fg: t.accent, underline: true },
+        linkUrl: { fg: t.textMuted },
+        strikethrough: { fg: t.textMuted, strikethrough: true },
+        checkbox: { fg: t.accent },
+      },
+    });
+    for (const line of lines) {
+      const styledSpan = line.map((seg) => ({
+        text: seg.text,
+        style: seg.style,
+      })) as StyledSpan;
+      (styledSpan as any).__brand = "StyledSpan";
+      this.threadFeedLine(threadId, styledSpan);
+    }
+  }
+
+  /**
+   * Insert an action list into a thread's feed range.
+   * Returns the feed line index.
+   */
+  private threadFeedActionList(
+    threadId: number,
+    actions: { id: string; normalStyle: StyledSpan; hoverStyle: StyledSpan }[],
+  ): number {
+    const range = this.threadFeedRanges.get(threadId);
+    if (!range || !this.chatView) {
+      if (this.chatView) this.chatView.appendActionList(actions);
+      return this.chatView ? this.chatView.feedLineCount - 1 : -1;
+    }
+    const insertAt = this.getThreadReplyInsertPoint(threadId);
+    this.chatView.insertActionList(insertAt, actions);
+    const oldEnd = range.endIdx;
+    this.shiftAllFeedIndices(insertAt, 1);
+    if (range.endIdx === oldEnd) {
+      range.endIdx++;
+    }
+    return insertAt;
+  }
+
+  /** Find the insert point for a reply in a thread (before working placeholders). */
+  private getThreadReplyInsertPoint(threadId: number): number {
+    // When _threadInsertAt is set, use it and auto-advance for next call
+    if (this._threadInsertAt != null) {
+      return this._threadInsertAt++;
+    }
+    const range = this.threadFeedRanges.get(threadId);
+    if (!range) return this.chatView?.feedLineCount ?? 0;
+    // Find the first working placeholder in this thread
+    let firstPlaceholder = range.endIdx;
+    for (const [key, idx] of this.workingPlaceholders) {
+      if (key.startsWith(`${threadId}-`) && idx < firstPlaceholder) {
+        firstPlaceholder = idx;
+      }
+    }
+    return firstPlaceholder;
+  }
+
+  /** Render the thread dispatch line as part of the user message block. */
+  private renderThreadHeader(thread: TaskThread, targetNames: string[]): void {
+    if (!this.chatView) return;
+    const t = theme();
+    const bg = this._userBg;
+    const headerIdx = this.chatView.feedLineCount;
+
+    // Store target names for updateThreadHeader
+    this.threadTargetNames.set(thread.id, targetNames);
+
+    const displayNames = targetNames.map((n) =>
+      n === this.selfName ? this.adapterName : n,
+    );
+    const namesText = displayNames.map((n) => `@${n}`).join(", ");
+
+    // Render as a user-styled line (dark bg) so it looks like part of the user's message
+    this.feedUserLine(
+      concat(
+        pen.fg(t.textDim).bg(bg)(`#${thread.id}  → `),
+        pen.fg(t.accent).bg(bg)(namesText),
+      ),
+    );
+
+    this.threadFeedRanges.set(thread.id, {
+      headerIdx,
+      endIdx: headerIdx + 1,
+    });
+  }
+
+  /** Update the thread header to reflect current collapse state. */
+  private updateThreadHeader(threadId: number): void {
+    const range = this.threadFeedRanges.get(threadId);
+    const thread = this.getThread(threadId);
+    if (!range || !thread || !this.chatView) return;
+    const t = theme();
+    const bg = this._userBg;
+    const targetNames = this.threadTargetNames.get(threadId) ?? [];
+    const displayNames = targetNames.map((n) =>
+      n === this.selfName ? this.adapterName : n,
+    );
+    const namesText = displayNames.map((n) => `@${n}`).join(", ");
+    const arrow = thread.collapsed ? "▶ " : "";
+
+    // Update as user-styled line (dark bg)
+    const termW = (process.stdout.columns || 80) - 1;
+    const content = concat(
+      pen.fg(t.textDim).bg(bg)(`${arrow}#${threadId}  → `),
+      pen.fg(t.accent).bg(bg)(namesText),
+    );
+    let len = 0;
+    for (const seg of content) len += seg.text.length;
+    const pad = Math.max(0, termW - len);
+    const padded = concat(content, pen.fg(bg).bg(bg)(" ".repeat(pad)));
+    this.chatView.updateFeedLine(range.headerIdx, padded);
+  }
+
+  /** Render a working placeholder for an agent in a thread. */
+  private renderWorkingPlaceholder(threadId: number, teammate: string): void {
+    if (!this.chatView) return;
+    const range = this.threadFeedRanges.get(threadId);
+    if (!range) return;
+    const t = theme();
+    const displayName =
+      teammate === this.selfName ? this.adapterName : teammate;
+    const insertAt = range.endIdx;
+    this.chatView.insertStyledToFeed(
+      insertAt,
+      this.makeSpan(
+        { text: `  @${displayName}: `, style: { fg: t.accent } },
+        { text: "working on task...", style: { fg: t.textDim } },
+      ),
+    );
+    this.shiftAllFeedIndices(insertAt, 1);
+    range.endIdx++;
+    this.workingPlaceholders.set(`${threadId}-${teammate}`, insertAt);
+  }
+
+  /** Toggle collapse/expand for an entire thread. */
+  private toggleThreadCollapse(threadId: number): void {
+    const thread = this.getThread(threadId);
+    const range = this.threadFeedRanges.get(threadId);
+    if (!thread || !range || !this.chatView) return;
+
+    thread.collapsed = !thread.collapsed;
+
+    // Hide or show all content lines (everything between header and endIdx)
+    const contentStart = range.headerIdx + 1;
+    const contentCount = range.endIdx - contentStart;
+    if (contentCount > 0) {
+      this.chatView.setFeedLinesHidden(
+        contentStart,
+        contentCount,
+        thread.collapsed,
+      );
+    }
+
+    // Update header arrow
+    this.updateThreadHeader(threadId);
+    this.refreshView();
+  }
+
+  /** Toggle collapse/expand for an individual reply within a thread. */
+  private toggleReplyCollapse(replyKey: string): void {
+    const bodyRange = this.replyBodyRanges.get(replyKey);
+    if (!bodyRange || !this.chatView) return;
+
+    const isHidden = this.chatView.isFeedLineHidden(bodyRange.startIdx);
+    const count = bodyRange.endIdx - bodyRange.startIdx;
+    if (count > 0) {
+      this.chatView.setFeedLinesHidden(bodyRange.startIdx, count, !isHidden);
+    }
+    this.refreshView();
+  }
 
   // ── Animated status tracker ─────────────────────────────────────
   private activeTasks: Map<
@@ -797,7 +1246,11 @@ class TeammatesREPL {
     return lines.length > 0 ? lines : [""];
   }
 
-  private renderHandoffs(_from: string, handoffs: HandoffEnvelope[]): void {
+  private renderHandoffs(
+    _from: string,
+    handoffs: HandoffEnvelope[],
+    threadId?: number,
+  ): void {
     const t = theme();
     const names = this.orchestrator.listTeammates();
     const avail = (process.stdout.columns || 80) - 4; // -4 for "  │ " + " │"
@@ -848,7 +1301,16 @@ class TeammatesREPL {
       if (!isValid) {
         this.feedLine(tp.error(`  ✖  Unknown teammate: @${h.to}`));
       } else if (this.autoApproveHandoffs) {
-        this.taskQueue.push({ type: "agent", teammate: h.to, task: h.task });
+        this.taskQueue.push({
+          type: "agent",
+          teammate: h.to,
+          task: h.task,
+          threadId,
+        });
+        if (threadId != null) {
+          const thread = this.getThread(threadId);
+          if (thread) thread.pendingAgents.add(h.to);
+        }
         this.feedLine(tp.muted("  automatically approved"));
         this.kickDrain();
       } else if (this.chatView) {
@@ -882,6 +1344,7 @@ class TeammatesREPL {
           envelope: h,
           approveIdx: actionIdx,
           rejectIdx: actionIdx,
+          threadId,
         });
       }
     }
@@ -950,7 +1413,12 @@ class TeammatesREPL {
           type: "agent",
           teammate: h.envelope.to,
           task: h.envelope.task,
+          threadId: h.threadId,
         });
+        if (h.threadId != null) {
+          const thread = this.getThread(h.threadId);
+          if (thread) thread.pendingAgents.add(h.envelope.to);
+        }
         this.chatView.updateFeedLine(
           h.approveIdx,
           this.makeSpan({ text: "  approved", style: { fg: theme().success } }),
@@ -1132,7 +1600,12 @@ class TeammatesREPL {
           type: "agent",
           teammate: h.envelope.to,
           task: h.envelope.task,
+          threadId: h.threadId,
         });
+        if (h.threadId != null) {
+          const thread = this.getThread(h.threadId);
+          if (thread) thread.pendingAgents.add(h.envelope.to);
+        }
         const label =
           action === "Always approve"
             ? "  automatically approved"
@@ -1432,8 +1905,41 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     if (this.app) this.app.refresh();
   }
 
-  private queueTask(input: string, preMentions?: string[]): void {
+  private queueTask(
+    input: string,
+    preMentions?: string[],
+    threadId?: number,
+  ): void {
     const allNames = this.orchestrator.listTeammates();
+
+    // Create or reuse a thread for this task
+    let thread: TaskThread;
+    if (threadId != null) {
+      const existing = this.getThread(threadId);
+      if (!existing) {
+        this.feedLine(tp.error(`  Unknown thread #${threadId}`));
+        this.refreshView();
+        return;
+      }
+      thread = existing;
+      thread.focusedAt = Date.now();
+      this.focusedThreadId = threadId;
+      // Add user reply to the thread
+      this.appendThreadEntry(threadId, {
+        type: "user",
+        content: input,
+        timestamp: Date.now(),
+      });
+    } else {
+      thread = this.createThread(input);
+      // Add user's origin message as first entry
+      this.appendThreadEntry(thread.id, {
+        type: "user",
+        content: input,
+        timestamp: Date.now(),
+      });
+    }
+    const tid = thread.id;
 
     // Check for @everyone — queue to all teammates except the coding agent
     const everyoneMatch = input.match(/^@everyone\s+([\s\S]+)$/i);
@@ -1449,17 +1955,23 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         summary: this.conversationSummary,
       };
       for (const teammate of names) {
-        this.taskQueue.push({ type: "agent", teammate, task, contextSnapshot });
+        this.taskQueue.push({
+          type: "agent",
+          teammate,
+          task,
+          threadId: tid,
+          contextSnapshot,
+        });
+        thread.pendingAgents.add(teammate);
       }
-      const bg = this._userBg;
-      const t = theme();
-      this.feedUserLine(
-        concat(
-          pen.fg(t.textMuted).bg(bg)("  → "),
-          pen.fg(t.accent).bg(bg)(names.map((n) => `@${n}`).join(", ")),
-        ),
-      );
-      this.feedLine();
+      // Render dispatch line (part of user message) + blank line + working placeholders
+      if (threadId == null) {
+        this.renderThreadHeader(thread, names);
+        this.threadFeedLine(tid, ""); // blank line between user message block and placeholders
+        for (const teammate of names) {
+          this.renderWorkingPlaceholder(tid, teammate);
+        }
+      }
       this.refreshView();
       this.kickDrain();
       return;
@@ -1487,44 +1999,58 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     if (mentioned.length > 0) {
       // Queue a copy of the full message to every mentioned teammate
       for (const teammate of mentioned) {
-        this.taskQueue.push({ type: "agent", teammate, task: input });
+        this.taskQueue.push({
+          type: "agent",
+          teammate,
+          task: input,
+          threadId: tid,
+        });
+        thread.pendingAgents.add(teammate);
       }
-      const bg = this._userBg;
-      const t = theme();
-      this.feedUserLine(
-        concat(
-          pen.fg(t.textMuted).bg(bg)("  → "),
-          pen.fg(t.accent).bg(bg)(mentioned.map((n) => `@${n}`).join(", ")),
-        ),
-      );
-      this.feedLine();
+      // Render dispatch line (part of user message) + blank line + working placeholders
+      if (threadId == null) {
+        this.renderThreadHeader(thread, mentioned);
+        this.threadFeedLine(tid, ""); // blank line between user message block and placeholders
+        for (const teammate of mentioned) {
+          this.renderWorkingPlaceholder(tid, teammate);
+        }
+      }
       this.refreshView();
       this.kickDrain();
       return;
     }
 
-    // No mentions — default to the teammate you're chatting with, then try auto-route
+    // No mentions — if in a focused thread, default to that thread's last responder
     let match: string | null = null;
-    if (this.lastResult) {
+    if (threadId != null && thread.entries.length > 0) {
+      // Find the last agent entry in this thread for default routing
+      for (let i = thread.entries.length - 1; i >= 0; i--) {
+        if (thread.entries[i].type === "agent" && thread.entries[i].teammate) {
+          match = thread.entries[i].teammate!;
+          break;
+        }
+      }
+    }
+    if (!match && this.lastResult) {
       match = this.lastResult.teammate;
     }
     if (!match) {
       match = this.orchestrator.route(input) ?? this.selfName;
     }
-    {
-      const bg = this._userBg;
-      const t = theme();
-      const displayName = match === this.selfName ? this.adapterName : match;
-      this.feedUserLine(
-        concat(
-          pen.fg(t.textMuted).bg(bg)("  → "),
-          pen.fg(t.accent).bg(bg)(`@${displayName}`),
-        ),
-      );
+    // Render dispatch line (part of user message) + blank line + working placeholder
+    if (threadId == null) {
+      this.renderThreadHeader(thread, [match]);
+      this.threadFeedLine(tid, ""); // blank line between user message block and placeholders
+      this.renderWorkingPlaceholder(tid, match);
     }
-    this.feedLine();
     this.refreshView();
-    this.taskQueue.push({ type: "agent", teammate: match, task: input });
+    this.taskQueue.push({
+      type: "agent",
+      teammate: match,
+      task: input,
+      threadId: tid,
+    });
+    thread.pendingAgents.add(match);
     this.kickDrain();
   }
 
@@ -2945,6 +3471,34 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       }
     }
 
+    // ── #thread completion ────────────────────────────────────────
+    const hashMatch = line.match(/^#(\d*)$/);
+    if (hashMatch && this.threads.size > 0) {
+      const partial = hashMatch[1];
+      const items: DropdownItem[] = [];
+      for (const [id, thread] of this.threads) {
+        const idStr = String(id);
+        if (partial && !idStr.startsWith(partial)) continue;
+        const origin =
+          thread.originMessage.length > 50
+            ? `${thread.originMessage.slice(0, 47)}…`
+            : thread.originMessage;
+        items.push({
+          label: `#${id}`,
+          description: origin,
+          completion: `#${id} `,
+        });
+      }
+      if (items.length > 0) {
+        this.wordwheelItems = items;
+        if (this.wordwheelIndex >= items.length) {
+          this.wordwheelIndex = items.length - 1;
+        }
+        this.renderItems();
+        return;
+      }
+    }
+
     // ── /command completion ─────────────────────────────────────────
     if (!line.startsWith("/") || line.length < 2) {
       this.wordwheelItems = [];
@@ -3452,7 +4006,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       }, 2000);
     });
     this.chatView.on("action", (id: string) => {
-      if (id.startsWith("copy-cmd:")) {
+      if (id.startsWith("thread-toggle-")) {
+        const tid = parseInt(id.slice("thread-toggle-".length), 10);
+        this.toggleThreadCollapse(tid);
+      } else if (id.startsWith("reply-collapse-")) {
+        const key = id.slice("reply-collapse-".length);
+        this.toggleReplyCollapse(key);
+      } else if (id.startsWith("copy-cmd:")) {
         this.doCopy(id.slice("copy-cmd:".length));
       } else if (id.startsWith("copy-")) {
         const text = this._copyContexts.get(id);
@@ -3469,8 +4029,13 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       } else if (id.startsWith("reply-")) {
         const ctx = this._replyContexts.get(id);
         if (ctx && this.chatView) {
-          this.chatView.inputValue = `@${ctx.teammate} [quoted reply] `;
-          this._pendingQuotedReply = ctx.message;
+          if (ctx.threadId != null) {
+            // Thread-aware reply: set focus (auto-focus routes to this thread)
+            this.focusedThreadId = ctx.threadId;
+          } else {
+            this.chatView.inputValue = `@${ctx.teammate} [quoted reply] `;
+            this._pendingQuotedReply = ctx.message;
+          }
           this.refreshView();
         }
       }
@@ -3594,6 +4159,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.wordwheelItems = [];
     this.wordwheelIndex = -1;
 
+    // User submitted a message — always scroll to bottom so they see their own input
+    if (this.chatView) this.chatView.scrollToBottom();
+
     // Resolve @mentions from the raw input BEFORE paste expansion.
     // This prevents @mentions inside pasted/expanded text from being picked up.
     const allNames = this.orchestrator.listTeammates();
@@ -3691,10 +4259,30 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     }
 
     // Everything else gets queued.
+    // Parse #id prefix to target an existing thread
+    let targetThreadId: number | undefined;
+    let taskInput = input;
+    const threadMatch = input.match(/^#(\d+)\s+([\s\S]+)/);
+    if (threadMatch) {
+      const parsedId = parseInt(threadMatch[1], 10);
+      if (this.getThread(parsedId)) {
+        targetThreadId = parsedId;
+        taskInput = threadMatch[2];
+      }
+      // If thread doesn't exist, fall through — treat as normal input
+    }
+
+    // Auto-focus: if no explicit #id but a thread is focused, continue in it
+    if (targetThreadId == null && this.focusedThreadId != null) {
+      if (this.getThread(this.focusedThreadId)) {
+        targetThreadId = this.focusedThreadId;
+      }
+    }
+
     // Pass pre-resolved mentions so @mentions inside expanded paste text are ignored.
-    this.conversationHistory.push({ role: this.selfName, text: input });
+    this.conversationHistory.push({ role: this.selfName, text: taskInput });
     this.printUserMessage(input);
-    this.queueTask(input, preMentions);
+    this.queueTask(taskInput, preMentions, targetThreadId);
     this.refreshView();
   }
 
@@ -4333,6 +4921,37 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
       this.feedLine();
     }
+
+    // ── Active threads ────────────────────────────────────────────
+    if (this.threads.size > 0) {
+      this.feedLine(tp.bold("  Threads"));
+      this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
+      for (const [id, thread] of this.threads) {
+        const isFocused = this.focusedThreadId === id;
+        const origin =
+          thread.originMessage.length > 50
+            ? `${thread.originMessage.slice(0, 47)}…`
+            : thread.originMessage;
+        const replies = thread.entries.filter(
+          (e) => e.type !== "user" || thread.entries.indexOf(e) > 0,
+        ).length;
+        const pending = thread.pendingAgents.size;
+        const focusTag = isFocused ? tp.info(" ◀ focused") : "";
+        this.feedLine(
+          concat(tp.accent(`  #${id}`), tp.text(`  ${origin}`), focusTag),
+        );
+        const parts: string[] = [];
+        if (replies > 0)
+          parts.push(`${replies} repl${replies === 1 ? "y" : "ies"}`);
+        if (pending > 0) parts.push(`${pending} working`);
+        if (thread.collapsed) parts.push("collapsed");
+        if (parts.length > 0) {
+          this.feedLine(tp.muted(`    ${parts.join(" · ")}`));
+        }
+        this.feedLine();
+      }
+    }
+
     this.refreshView();
   }
 
@@ -4657,15 +5276,31 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         {
           // btw and debug tasks skip conversation context (not part of main thread)
           const isMainThread = entry.type !== "btw" && entry.type !== "debug";
-          // Snapshot-aware context building: if the entry has a frozen snapshot
-          // (@everyone), use it directly — no mutation of shared state.
-          // Otherwise, compress live state as before.
-          const snapshot =
-            entry.type === "agent" ? entry.contextSnapshot : undefined;
-          if (isMainThread && !snapshot) this.preDispatchCompress();
-          const extraContext = isMainThread
-            ? this.buildConversationContext(entry.teammate, snapshot)
-            : "";
+          // Thread-local context: if the task belongs to a thread, use
+          // that thread's entries instead of global conversation history.
+          // This keeps the agent focused on the thread's topic.
+          let extraContext = "";
+          if (isMainThread && entry.threadId != null) {
+            const thread = this.getThread(entry.threadId);
+            if (thread && thread.entries.length > 0) {
+              extraContext = buildThreadContext(
+                thread.entries,
+                this.selfName,
+                TeammatesREPL.CONV_HISTORY_CHARS,
+              );
+            }
+          } else if (isMainThread) {
+            // Snapshot-aware context building: if the entry has a frozen snapshot
+            // (@everyone), use it directly — no mutation of shared state.
+            // Otherwise, compress live state as before.
+            const snapshot =
+              entry.type === "agent" ? entry.contextSnapshot : undefined;
+            if (!snapshot) this.preDispatchCompress();
+            extraContext = this.buildConversationContext(
+              entry.teammate,
+              snapshot,
+            );
+          }
           let result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
@@ -4718,7 +5353,33 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
           }
 
           // Display the (possibly retried) result to the user
-          this.displayTaskResult(result, entry.type);
+          this.displayTaskResult(result, entry.type, entry.threadId);
+
+          // Append result to thread
+          if (entry.threadId != null) {
+            const cleaned = cleanResponseBody(result.rawOutput ?? "");
+            this.appendThreadEntry(entry.threadId, {
+              type: "agent",
+              teammate: entry.teammate,
+              content: cleaned || result.summary || "",
+              subject: result.summary,
+              timestamp: Date.now(),
+            });
+            const thread = this.getThread(entry.threadId);
+            if (thread) {
+              thread.pendingAgents.delete(entry.teammate);
+            }
+
+            // Propagate threadId to handoff entries
+            for (const h of result.handoffs) {
+              this.appendThreadEntry(entry.threadId, {
+                type: "handoff",
+                teammate: entry.teammate,
+                content: `Handoff to @${h.to}: ${h.task}`,
+                timestamp: Date.now(),
+              });
+            }
+          }
 
           // Audit cross-folder writes for AI teammates
           const tmConfig = this.orchestrator.getRegistry().get(entry.teammate);
@@ -4979,6 +5640,14 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.agentActive.clear();
     this.pastedTexts.clear();
     this.pendingRetroProposals = [];
+    this.threads.clear();
+    this.nextThreadId = 1;
+    this.focusedThreadId = null;
+    this.threadFeedRanges.clear();
+    this.workingPlaceholders.clear();
+    this.replyBodyRanges.clear();
+    this.threadTargetNames.clear();
+    this._threadInsertAt = null;
     await this.orchestrator.reset();
 
     if (this.chatView) {

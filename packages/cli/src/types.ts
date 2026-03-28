@@ -134,18 +134,20 @@ export type QueueEntry =
       task: string;
       system?: boolean;
       migration?: boolean;
+      /** Thread ID this task belongs to (if any). */
+      threadId?: number;
       /** Frozen conversation snapshot taken at queue time (used by @everyone). */
       contextSnapshot?: {
         history: { role: string; text: string }[];
         summary: string;
       };
     }
-  | { type: "compact"; teammate: string; task: string }
-  | { type: "retro"; teammate: string; task: string }
-  | { type: "btw"; teammate: string; task: string }
-  | { type: "debug"; teammate: string; task: string }
-  | { type: "script"; teammate: string; task: string }
-  | { type: "summarize"; teammate: string; task: string };
+  | { type: "compact"; teammate: string; task: string; threadId?: number }
+  | { type: "retro"; teammate: string; task: string; threadId?: number }
+  | { type: "btw"; teammate: string; task: string; threadId?: number }
+  | { type: "debug"; teammate: string; task: string; threadId?: number }
+  | { type: "script"; teammate: string; task: string; threadId?: number }
+  | { type: "summarize"; teammate: string; task: string; threadId?: number };
 
 /** State captured when an agent is interrupted mid-task. */
 export interface InterruptState {
@@ -163,6 +165,40 @@ export interface InterruptState {
   toolCallCount: number;
   /** Files written/modified before interruption */
   filesChanged: string[];
+}
+
+/** A threaded task view — groups related messages under a single task ID. */
+export interface TaskThread {
+  /** Short numeric ID displayed as #1, #2, etc. */
+  id: number;
+  /** The user's original input that created this thread. */
+  originMessage: string;
+  /** When the thread was created. */
+  originTimestamp: number;
+  /** Flat append-only list of replies. */
+  entries: ThreadEntry[];
+  /** Teammates currently working on tasks in this thread. */
+  pendingAgents: Set<string>;
+  /** Whether the whole thread is collapsed in the feed. */
+  collapsed: boolean;
+  /** Indices of individually collapsed replies. */
+  collapsedEntries: Set<number>;
+  /** Timestamp when this thread was last focused. */
+  focusedAt?: number;
+}
+
+/** A single entry within a TaskThread. */
+export interface ThreadEntry {
+  /** What produced this entry. */
+  type: "user" | "agent" | "handoff" | "system";
+  /** Which teammate produced this entry (undefined for user entries). */
+  teammate?: string;
+  /** The message content (raw markdown body). */
+  content: string;
+  /** Subject line for agent responses. */
+  subject?: string;
+  /** When this entry was created. */
+  timestamp: number;
 }
 
 /** A registered slash command. */

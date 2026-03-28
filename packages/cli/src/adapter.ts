@@ -382,6 +382,7 @@ export function buildTeammatePrompt(
     "- **You MUST end your turn with visible text output.** A turn that ends with only tool calls and no text is a failed turn.",
     "- The `# Subject` line is REQUIRED — it becomes the message title.",
     "- Always write a substantive body. Never return just the subject.",
+    '- "Task completed", "already logged", or "no updates needed" is NOT a valid body. Describe what you actually did or deliver the actual content.',
     "- Use markdown: headings, lists, code blocks, bold, etc.",
     "",
     "### Handoffs",
@@ -416,6 +417,8 @@ export function buildTeammatePrompt(
       "- Anything the next task should know",
       "",
       "This is how you maintain continuity across tasks. Always read it, always update it.",
+      "",
+      "**IMPORTANT:** If the session file already contains an entry for the current task (from a prior lost response), you MUST still do the work and produce a full text response. The session file is for YOUR continuity — the user only sees your text output. A prior session entry does NOT mean the user received your response.",
     );
   }
 
@@ -449,6 +452,8 @@ export function buildTeammatePrompt(
     "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
     "",
     "These files are your persistent memory. Without them, your next session starts from scratch.",
+    "",
+    "**IMPORTANT:** Only log work you actually performed in THIS turn. Never log assumed, planned, or prior-turn work. If you didn't do it, don't log it.",
   );
 
   // Section Reinforcement — back-references from high-attention bottom edge to each section tag
