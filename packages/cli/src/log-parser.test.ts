@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildConversationLog,
   formatLogTimeline,
-  parseClaudeDebugLog,
   parseCodexOutput,
   parseRawOutput,
 } from "./log-parser.js";
@@ -96,9 +95,7 @@ describe("formatLogTimeline", () => {
       { action: "Write", summary: "c.ts" },
     ];
     const result = formatLogTimeline(entries);
-    expect(result).toBe(
-      "1. Write a.ts\n2. Write b.ts\n3. Write c.ts",
-    );
+    expect(result).toBe("1. Write a.ts\n2. Write b.ts\n3. Write c.ts");
   });
 
   it("returns fallback for empty entries", () => {

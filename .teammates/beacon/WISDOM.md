@@ -2,12 +2,12 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-27
+Last compacted: 2026-03-28
 
 ---
 
 ### Codebase map — three packages
-CLI has 24 source files (~6,000 lines in cli.ts); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~6,000 lines), `chat-view.ts` (~1,520 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~560), `compact.ts` (~800), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~195), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
+CLI has 25 source files (~6,000 lines in cli.ts); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~6,000 lines), `chat-view.ts` (~1,520 lines), `markdown.ts` (~970 lines), and `cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~560), `compact.ts` (~800), `banner.ts` (~410), `log-parser.ts` (~290), `cli-utils.ts` (~195), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and cli-proxy.ts.
 
 ### Three-tier memory system
 WISDOM.md (distilled, read-only except during compaction), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). The CLI reads WISDOM.md, the indexer indexes WISDOM.md + memory/*.md, and the prompt tells teammates to write typed memories.
@@ -31,10 +31,10 @@ Five fixes to prevent agents from spending all tool calls on housekeeping instea
 `storeResult()` stores the full cleaned `rawOutput` (protocol artifacts stripped), not just `result.summary`. `buildConversationContext()` formats multi-line entries with body on the next line. When history exceeds token budget, pre-dispatch compression fires before the next task.
 
 ### @everyone concurrent dispatch — snapshot isolation
-`queueTask()` freezes `conversationHistory` + `conversationSummary` into a `contextSnapshot` once before pushing all @everyone entries (each gets a shallow copy). `drainAgentQueue()` skips `preDispatchCompress()` when an entry has a snapshot and passes it directly to `buildConversationContext()`. Per-agent temp files (`conversation-<teammate>.md`) eliminated by removing file offload entirely — context is always inlined. This prevents race conditions where the first drain loop mutates shared state before concurrent drains read it.
+`queueTask()` freezes `conversationHistory` + `conversationSummary` into a `contextSnapshot` once before pushing all @everyone entries (each gets a shallow copy). `drainAgentQueue()` skips `preDispatchCompress()` when an entry has a snapshot and passes it directly to `buildConversationContext()`. Context is always inlined (no file offload). This prevents race conditions where the first drain loop mutates shared state before concurrent drains read it.
 
 ### User avatar system (Campfire Phase 1)
-Users are represented as avatar teammates with `**Type:** human` in SOUL.md. The adapter is hidden — not registered when user has an alias. `selfName` (user alias) is the display identity everywhere; `adapterName` is for internal execution only. `@everyone` excludes both avatar and adapter. Display surfaces (roster, picker, status, errors) show `adapterName` while `selfName` is used for sender label, conversation history, internal routing, and memory folder.
+Users are represented as avatar teammates with `**Type:** human` in SOUL.md. The adapter is hidden — not registered when user has an alias. `selfName` (user alias) is the display identity everywhere; `adapterName` is for internal execution only. `@everyone` excludes both avatar and adapter. Display surfaces (roster, picker, status, errors) show `adapterName` while `selfName` is used for sender label, conversation history, internal routing, and memory folder. Import skips human avatar folders (checks SOUL.md for `**Type:** human`).
 
 ### Onboarding happens pre-TUI
 User setup (GitHub or manual) runs before the TUI is created via `console.log` + `askInput`/`askChoice`. No mouse tracking issues. Team onboarding only runs if `.teammates/` was missing. `askInline()` is used for in-TUI prompts (e.g., `/configure`) to avoid stdin conflicts with consolonia. Persona templates (`packages/cli/personas/`) provide scaffolding — `/init pick` for in-TUI selection.
@@ -93,6 +93,9 @@ AI teammates must not write to another teammate's folder. Two layers: (1) prompt
 ### Log parser extracts structure, not content
 `log-parser.ts` parses Claude debug logs, Codex JSONL, and raw agent output into a timeline of actions (Read, Write, Search, etc.). `formatLogTimeline()` groups 4+ consecutive same-action entries to collapse bulk operations. `buildConversationLog()` orchestrates parsing with token budget truncation. Extracts file paths and search queries, NOT full file contents — keeps resume prompts compact.
 
+### ChatView performance — cached heights + coalesced refresh
+Feed line height cache (`_feedHeightCache[]`) stores measured heights per line, invalidated on width change or content mutation. Prevents O(N) re-measurement on every render frame. `app.scheduleRefresh()` coalesces rapid progress updates into a single render via `setImmediate`. Spinner interval is 200ms (not 80ms) to avoid saturating the event loop under concurrent task load.
+
 ### /script command — user-defined reusable scripts
 Scripts stored under the user's twin folder (`.teammates/<selfName>/scripts/`). Three modes: `/script list`, `/script run <name>`, `/script <description>` (create + run new). The coding agent always handles `/script` tasks — routes to `selfName`.
 
@@ -102,11 +105,14 @@ After modifying any TypeScript source, run `rm -rf dist && npm run build` in the
 ### Lint after every build
 After every build, run `npx biome check --write --unsafe` on changed files. If fixes are applied, rebuild to verify they compile cleanly. This is mandatory — lint errors should never be left behind.
 
+### Bump all version references on version bump
+When bumping package versions, update ALL references — not just the three package.json files. Also update `cliVersion` in `.teammates/settings.json`. Grep for the old version string to catch any other references. Known sites: `packages/cli/package.json`, `packages/consolonia/package.json`, `packages/recall/package.json`, `.teammates/settings.json`.
+
 ### Folder naming convention in .teammates/
 No prefix = teammate folder (contains SOUL.md). `_` prefix = shared non-teammate folder, checked in. `.` prefix = local/ephemeral, gitignored. Registry skips `_` and `.` prefixed dirs when scanning for teammates.
 
 ### Wordwheel commands without args execute on Enter
-No-arg commands (/exit, /status, /help) execute immediately when selected from the wordwheel dropdown. Enter key handler accepts the highlighted item before readline processes it.
+No-arg commands (/exit, /status, /help) execute immediately when selected from the wordwheel dropdown. Enter key handler accepts the highlighted item before readline processes it. Commands with arg placeholders should use single tokens (e.g., `[description]` not multi-word usage strings) so the hint clears after the first typed arg.
 
 ### Emoji spacing convention
 All ✔/✖/⚠ emojis get double-space after them for consistent rendering across terminals. Applied globally in cli.ts.

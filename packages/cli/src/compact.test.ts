@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  DAILY_LOG_RETENTION_DAYS,
   autoCompactForBudget,
   buildWisdomPrompt,
   compactDailies,
   compactEpisodic,
   compactWeeklies,
+  DAILY_LOG_RETENTION_DAYS,
   purgeStaleDailies,
 } from "./compact.js";
 
@@ -615,7 +615,7 @@ describe("compactDailies — partial merge", () => {
     await writeFile(join(memDir, "2024-03-05.md"), "# Updated Tuesday");
     await writeFile(join(memDir, "2024-03-06.md"), "# Wednesday");
 
-    const result = await compactDailies(testDir);
+    const _result = await compactDailies(testDir);
 
     const content = await readFile(join(weeklyDir, "2024-W10.md"), "utf-8");
     // Should contain the original (from partial), not duplicated

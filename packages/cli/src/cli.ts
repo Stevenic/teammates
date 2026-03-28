@@ -454,11 +454,12 @@ class TeammatesREPL {
     this.statusRotateIndex = 0;
     this.renderStatusFrame();
 
-    // Animate spinner at ~80ms
+    // Animate spinner at ~200ms (fast enough for visual smoothness,
+    // slow enough to avoid saturating the render loop under load)
     this.statusTimer = setInterval(() => {
       this.statusFrame++;
       this.renderStatusFrame();
-    }, 80);
+    }, 200);
 
     // Rotate through teammates every 3 seconds
     this.statusRotateTimer = setInterval(() => {
@@ -557,7 +558,7 @@ class TeammatesREPL {
           tp.muted(`${taskText}${suffix}`),
         ),
       );
-      this.app.refresh();
+      this.app.scheduleRefresh();
     } else {
       const spinColor =
         this.statusFrame % 8 === 0 ? chalk.blue : chalk.blueBright;
@@ -4133,7 +4134,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       {
         name: "script",
         aliases: [],
-        usage: "/script [list | run <name> | what should the script do?]",
+        usage: "/script [description]",
         description: "Write and run reusable scripts via the coding agent",
         run: (args) => this.cmdScript(args),
       },

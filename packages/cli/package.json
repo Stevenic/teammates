@@ -1,6 +1,6 @@
 {
   "name": "@teammates/cli",
-  "version": "0.6.1",
+  "version": "0.6.3",
   "description": "Agent-agnostic CLI for teammates. Routes tasks, manages handoffs, and plugs into any coding agent backend.",
   "type": "module",
   "main": "dist/index.js",
@@ -34,8 +34,8 @@
   "license": "MIT",
   "dependencies": {
     "@github/copilot-sdk": "^0.1.32",
-    "@teammates/consolonia": "0.6.0",
-    "@teammates/recall": "0.6.0",
+    "@teammates/consolonia": "*",
+    "@teammates/recall": "*",
     "chalk": "^5.6.2",
     "ora": "^9.3.0"
   },

@@ -1,6 +1,6 @@
 # Lexicon — Wisdom
 
-Last compacted: 2026-03-27
+Last compacted: 2026-03-28
 
 ---
 

@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildConversationContext,
   buildSummarizationPrompt,
-  compressConversationEntries,
   type ConversationEntry,
   cleanResponseBody,
+  compressConversationEntries,
   findAtMention,
   findSummarizationSplit,
   formatConversationEntry,
@@ -508,9 +508,7 @@ describe("compressConversationEntries", () => {
   });
 
   it("returns plain bullets when no existing summary", () => {
-    const entries: ConversationEntry[] = [
-      { role: "user", text: "Hello" },
-    ];
+    const entries: ConversationEntry[] = [{ role: "user", text: "Hello" }];
     const result = compressConversationEntries(entries, "");
     expect(result).not.toContain("### Compressed");
     expect(result).toBe("- **user:** Hello");

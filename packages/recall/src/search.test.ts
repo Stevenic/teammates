@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Indexer } from "./indexer.js";
-import { classifyUri, multiSearch, search } from "./search.js";
 import type { SearchResult } from "./search.js";
+import { classifyUri, multiSearch, search } from "./search.js";
 
 // Deterministic stub embeddings based on text content
 function stubCreateEmbeddings(inputs: string | string[]) {
@@ -138,10 +138,7 @@ describe("search", () => {
       join(weeklyDir, "2026-W11.md"),
       "# Week 11\nWorked on indexer.",
     );
-    await writeFile(
-      join(weeklyDir, "2026-W09.md"),
-      "# Week 9\nOld stuff.",
-    );
+    await writeFile(join(weeklyDir, "2026-W09.md"), "# Week 9\nOld stuff.");
 
     const results = await search("anything", {
       teammatesDir: testDir,
@@ -162,10 +159,7 @@ describe("search", () => {
     const weeklyDir = join(beacon, "memory", "weekly");
     await mkdir(weeklyDir, { recursive: true });
     await writeFile(join(beacon, "SOUL.md"), "# Beacon");
-    await writeFile(
-      join(weeklyDir, "2026-W11.md"),
-      "# Week 11\nContent here.",
-    );
+    await writeFile(join(weeklyDir, "2026-W11.md"), "# Week 11\nContent here.");
 
     const results = await search("anything", {
       teammatesDir: testDir,

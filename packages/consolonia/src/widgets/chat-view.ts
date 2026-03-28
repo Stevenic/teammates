@@ -34,8 +34,7 @@ import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
 import { Control } from "../layout/control.js";
 import type { Constraint, Rect, Size } from "../layout/types.js";
-import { type StyledSpan, spanLength } from "../styled.js";
-import { stringDisplayWidth } from "../pixel/symbol.js";
+import type { StyledSpan } from "../styled.js";
 import { type StyledLine, StyledText } from "./styled-text.js";
 import { Text } from "./text.js";
 import {
@@ -786,8 +785,16 @@ export class ChatView extends Control {
           const urls = [...text.matchAll(URL_REGEX)];
           const paths = [...text.matchAll(FILE_PATH_REGEX)];
           const allTargets = [
-            ...urls.map((m) => ({ index: m.index!, text: m[0], type: "link" as const })),
-            ...paths.map((m) => ({ index: m.index!, text: m[0], type: "file" as const })),
+            ...urls.map((m) => ({
+              index: m.index!,
+              text: m[0],
+              type: "link" as const,
+            })),
+            ...paths.map((m) => ({
+              index: m.index!,
+              text: m[0],
+              type: "file" as const,
+            })),
           ].sort((a, b) => a.index - b.index);
           if (allTargets.length === 1) {
             this.emit(allTargets[0].type, allTargets[0].text);
@@ -798,7 +805,8 @@ export class ChatView extends Control {
             const col = me.x - this._feedX;
             const charOffset = row * this._contentWidth + col;
             const hit = allTargets.find(
-              (t) => charOffset >= t.index && charOffset < t.index + t.text.length,
+              (t) =>
+                charOffset >= t.index && charOffset < t.index + t.text.length,
             );
             const target = hit ?? allTargets[0];
             this.emit(target.type, target.text);
@@ -815,8 +823,7 @@ export class ChatView extends Control {
         !onScrollbar
       ) {
         const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
-        const isAction =
-          feedLineIdx >= 0 && this._feedActions.has(feedLineIdx);
+        const isAction = feedLineIdx >= 0 && this._feedActions.has(feedLineIdx);
         if (!isAction) {
           this._selAnchor = { x: me.x, y: me.y };
           this._selEnd = { x: me.x, y: me.y };
@@ -916,21 +923,6 @@ export class ChatView extends Control {
         return line.map((seg) => seg.text).join("");
       })
       .join("\n");
-  }
-
-  /** Find the URL at the given character offset, if any. */
-  private _findUrlAtOffset(text: string, charOffset: number): string | null {
-    URL_REGEX.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = URL_REGEX.exec(text)) !== null) {
-      if (
-        charOffset >= match.index &&
-        charOffset < match.index + match[0].length
-      ) {
-        return match[0];
-      }
-    }
-    return null;
   }
 
   /** Resolve which action item the mouse x-position falls on. */
@@ -1405,8 +1397,7 @@ export class ChatView extends Control {
     const lines: string[] = [];
     for (let row = startY; row <= endY; row++) {
       const colStart = row === startY ? startX : this._feedX;
-      const colEnd =
-        row === endY ? endX : this._feedX + this._contentWidth - 1;
+      const colEnd = row === endY ? endX : this._feedX + this._contentWidth - 1;
       let line = "";
       for (let col = colStart; col <= colEnd; col++) {
         const ch = this._ctx.readCharAbsolute(col, row);

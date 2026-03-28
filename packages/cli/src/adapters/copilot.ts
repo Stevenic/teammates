@@ -24,8 +24,8 @@ import type {
   RosterEntry,
 } from "../adapter.js";
 import {
-  DAILY_LOG_BUDGET_TOKENS,
   buildTeammatePrompt,
+  DAILY_LOG_BUDGET_TOKENS,
   queryRecallContext,
 } from "../adapter.js";
 import { autoCompactForBudget } from "../compact.js";
