@@ -88,11 +88,16 @@ export class ThreadContainer {
     if (this._insertAt != null) {
       return this._insertAt++;
     }
-    let firstPlaceholder = this.endIdx;
-    for (const idx of this.placeholders.values()) {
-      if (idx < firstPlaceholder) firstPlaceholder = idx;
+    let insertPoint = this.endIdx;
+    // Insert before thread-level actions ([reply] [copy thread]) if present
+    if (this.replyActionIdx != null && this.replyActionIdx < insertPoint) {
+      insertPoint = this.replyActionIdx;
     }
-    return firstPlaceholder;
+    // Insert before any working placeholders
+    for (const idx of this.placeholders.values()) {
+      if (idx < insertPoint) insertPoint = idx;
+    }
+    return insertPoint;
   }
 
   /** Override the insert point for sequential inserts (e.g., header + body). */

@@ -7,7 +7,7 @@ Last compacted: 2026-03-28
 ---
 
 ### Codebase map — three packages
-CLI has 45 source files (~6,620 lines in cli.ts); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~6,620 lines), `chat-view.ts` (~1,660 lines), `markdown.ts` (~970 lines), and `adapters/cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~570), `compact.ts` (~800), `banner.ts` (~410), `log-parser.ts` (~290), `thread-container.ts` (~276), `cli-utils.ts` (~240), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and adapters/cli-proxy.ts.
+CLI has 45 source files (~6,650 lines in cli.ts); consolonia has 51 files; recall has 13 files. The big files are `cli.ts` (~6,650 lines), `chat-view.ts` (~1,660 lines), `markdown.ts` (~970 lines), and `adapters/cli-proxy.ts` (~810 lines). Key extracted modules: `adapter.ts` (~570), `compact.ts` (~800), `banner.ts` (~410), `log-parser.ts` (~290), `thread-container.ts` (~276), `cli-utils.ts` (~240), `cli-args.ts` (~155), `personas.ts` (~140). When debugging, start with cli.ts and adapters/cli-proxy.ts.
 
 ### Three-tier memory system
 WISDOM.md (distilled, read-only except during compaction), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). The CLI reads WISDOM.md, the indexer indexes WISDOM.md + memory/*.md, and the prompt tells teammates to write typed memories.
@@ -43,7 +43,7 @@ Thread dispatch line (`#id  -> @names`) renders as a `feedUserLine` with dark ba
 Per-item `[reply]`/`[copy]` action lines replaced with two levels. **Inline subject-line actions:** each response header is an action list `@name: Subject  [show/hide] [copy]` — clicking subject text or `[show/hide]` toggles body visibility. **Thread-level verbs:** `[reply] [copy thread]` rendered once at bottom of thread container via `ThreadContainer.insertThreadActions()`. `[reply]` sets `focusedThreadId`; `[copy thread]` copies all entries. Action ID prefixes: `thread-reply-*`, `thread-copy-*`, `reply-collapse-*`, `item-copy-*`.
 
 ### Threaded task view — routing and context
-Thread-local conversation context via `buildThreadContext()` fully replaces global context when `threadId` is set — keeps agents focused on the thread. Auto-focus: un-mentioned messages without `#id` prefix target `focusedThreadId` if set. `#id` wordwheel completion on `#` at line start. `/status` shows active threads with reply count, pending agents, and focused indicator.
+Thread-local conversation context via `buildThreadContext()` fully replaces global context when `threadId` is set — keeps agents focused on the thread. Auto-focus: un-mentioned messages without `#id` prefix target `focusedThreadId` if set; `@mention` or `@everyone` breaks focus and creates a new thread. Auto-focus fallback picks thread with highest `focusedAt` timestamp when no thread is focused. `#id` wordwheel completion on `#` at line start. `/status` shows active threads with reply count, pending agents, and focused indicator. Footer hint shows `replying to #N` when focused.
 
 ### ThreadContainer — per-thread feed index management
 `ThreadContainer` class in `thread-container.ts` (~276 LOC) encapsulates all per-thread feed-line index management. Replaces the old scattered maps and methods that were in cli.ts. Key methods: `insertLine`, `insertActions`, `addPlaceholder`, `hidePlaceholder`, `trackReplyBody`, `toggleCollapse`, `toggleReplyCollapse`, `insertThreadActions`, `getInsertPoint`/`setInsertAt`/`clearInsertAt`. Takes a `ShiftCallback` for cross-container index shifting. `/clear` reset is just `containers.clear()`.
@@ -94,7 +94,7 @@ Agents must use ` ```handoff\n@name\ntask\n``` ` format. Natural-language handof
 `packages/cli/package.json` uses `"*"` for `@teammates/consolonia` and `@teammates/recall` dependencies. Pinned versions (e.g., `"0.6.0"`) cause npm workspace resolution failures when local packages are at a different version — npm marks them as **invalid** and may resolve to registry versions that lack newer APIs. `"*"` always resolves to the local workspace copy regardless of version bumps.
 
 ### Banner is segmented — left footer + right footer
-Left: product name + version + adapter name + project directory path (smart-truncated via `truncatePath()`). Right: `? /help` by default, temporarily replaced by ESC/Ctrl+C hints. Services show presence-colored dots (green/yellow/red). `updateServices()` refreshes the banner live after `/configure`.
+Left: product name + version + adapter name + project directory path (smart-truncated via `truncatePath()`). Right: `? /help` by default, temporarily replaced by ESC/Ctrl+C hints or `replying to #N` thread hint. Services show presence-colored dots (green/yellow/red). `updateServices()` refreshes the banner live after `/configure`.
 
 ### Debug logging lives in .tmp/debug/
 Every task writes a structured debug log to `.teammates/.tmp/debug/<teammate>-<timestamp>.md` including the full prompt sent to the agent (via `fullPrompt` on `TaskResult`). Files >24h are cleaned on startup. `/debug [teammate] [focus]` reads the last log and queues analysis to the coding agent — optional focus text narrows the analysis scope. Adapters set `result.fullPrompt` after building the prompt; `lastTaskPrompts` stores it for `/debug`.
@@ -110,6 +110,9 @@ Every task writes a structured debug log to `.teammates/.tmp/debug/<teammate>-<t
 
 ### Non-blocking system task lane
 System-initiated tasks (compaction, summarization, wisdom distillation) run concurrently without blocking user tasks via task-level `system` flag on `TaskAssignment` and `TaskResult`. An agent can run 0+ system tasks and 0-1 user tasks simultaneously. System tasks use unique `sys-<teammate>-<timestamp>` IDs, tracked in `systemActive` map. `kickDrain()` extracts them from the queue before processing user tasks. System tasks are fully background — no progress bar, no `/status` display, errors only (with `(system)` label in the feed). The `system` flag on events allows concurrent system + user tasks for the same agent without interference.
+
+### No system tasks in daily logs
+Never log system tasks (compaction, wisdom distillation, summarization, auto-compaction) in daily logs or weekly summaries. They clutter logs with noise and waste context window budget. Only log user-requested work, feature implementations, bug fixes, discussions, and handoffs.
 
 ### Progress bar — 80-char target with elapsed time
 Active user tasks display as `<spinner> <teammate>... <task text> (2m 5s)`. Format targets 80 chars total — task text is dynamically truncated to fit. `formatElapsed()` escalates: `(5s)` -> `(2m 5s)` -> `(1h 2m 5s)`. Multiple concurrent tasks show cycling tag: `(1/3 - 2m 5s)`. Both ChatView and fallback PromptInput paths share the same format.

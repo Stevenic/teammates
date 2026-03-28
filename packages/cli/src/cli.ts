@@ -1922,9 +1922,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (c && this.chatView) {
           c.insertLine(this.chatView, "", this.shiftAllContainers);
         }
-        for (const teammate of names) {
-          this.renderWorkingPlaceholder(tid, teammate);
-        }
+      }
+      for (const teammate of names) {
+        this.renderWorkingPlaceholder(tid, teammate);
       }
       this.refreshView();
       this.kickDrain();
@@ -1968,9 +1968,9 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (c && this.chatView) {
           c.insertLine(this.chatView, "", this.shiftAllContainers);
         }
-        for (const teammate of mentioned) {
-          this.renderWorkingPlaceholder(tid, teammate);
-        }
+      }
+      for (const teammate of mentioned) {
+        this.renderWorkingPlaceholder(tid, teammate);
       }
       this.refreshView();
       this.kickDrain();
@@ -2001,8 +2001,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       if (c && this.chatView) {
         c.insertLine(this.chatView, "", this.shiftAllContainers);
       }
-      this.renderWorkingPlaceholder(tid, match);
     }
+    this.renderWorkingPlaceholder(tid, match);
     this.refreshView();
     this.taskQueue.push({
       type: "agent",
