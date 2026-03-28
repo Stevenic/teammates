@@ -50,6 +50,12 @@ export { loadPersonas, scaffoldFromPersona } from "./personas.js";
 export { Registry } from "./registry.js";
 export { tp } from "./theme.js";
 export type {
+  ShiftCallback,
+  ThreadFeedView,
+  ThreadItemEntry,
+} from "./thread-container.js";
+export { ThreadContainer } from "./thread-container.js";
+export type {
   DailyLog,
   HandoffEnvelope,
   InterruptState,
