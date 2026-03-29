@@ -239,7 +239,7 @@ export class CliProxyAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean },
+    options?: { raw?: boolean; system?: boolean },
   ): Promise<TaskResult> {
     // If raw mode is set, skip all prompt wrapping — send prompt as-is
     // Used for defensive retries where the full prompt template is counterproductive
@@ -288,6 +288,7 @@ export class CliProxyAdapter implements AgentAdapter {
         sessionFile,
         recallResults: recall?.results,
         userProfile,
+        system: options?.system,
       });
     } else {
       const parts = [prompt];

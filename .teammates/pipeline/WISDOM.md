@@ -22,7 +22,7 @@ Teammate prompts can easily blow past model limits when conversation history (la
 Never trust that a CI change works based on reasoning alone. Run the script locally against real data. This caught multiple bugs in check-ownership.sh (false-positive conflicts, bash scoping) that would have been embarrassing in CI.
 
 **changelog.yml has a known path bug.**
-`${PACKAGE}/` should be `packages/${PACKAGE}/`. Identified in retro on 2026-03-17, fix still pending.
+`${PACKAGE}/` should be `packages/${PACKAGE}/`. Identified in retro on 2026-03-17, fix still pending. Appears on lines 57, 63, 84, 89.
 
 **GitHub App > PAT for auth UX.**
 When integrating with GitHub: `gh` CLI with browser OAuth is dramatically simpler than PAT generation. Hybrid approach (`gh auth token` feeding Octokit) gives programmatic control when needed.
@@ -35,3 +35,6 @@ When a new package is added to the monorepo (e.g., Hands/MCP server), it needs: 
 
 **paths-ignore for non-code files.**
 Handoff files, memory files, and other teammate metadata (`.teammates/_handoffs/`, `.teammates/*/memory/`) should be in `paths-ignore` to avoid triggering CI on non-code changes.
+
+**CI audit level: high is the bar.**
+Audit level was tightened from `critical` to `high` after Beacon resolved all transitive vulns (vectra→openai→axios). Don't regress to `critical` unless there's an unfixable transitive vuln blocking CI.

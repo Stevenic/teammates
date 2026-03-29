@@ -22,7 +22,7 @@ export class EchoAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean },
+    options?: { raw?: boolean; system?: boolean },
   ): Promise<TaskResult> {
     const fullPrompt = options?.raw
       ? prompt

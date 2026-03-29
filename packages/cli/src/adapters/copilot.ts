@@ -109,7 +109,7 @@ export class CopilotAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean },
+    options?: { raw?: boolean; system?: boolean },
   ): Promise<TaskResult> {
     await this.ensureClient(teammate.cwd);
 
@@ -159,6 +159,7 @@ export class CopilotAdapter implements AgentAdapter {
         sessionFile,
         recallResults: recall?.results,
         userProfile,
+        system: options?.system,
       });
     } else {
       // Raw agent mode — minimal wrapping

@@ -35,7 +35,7 @@ export interface AgentAdapter {
     sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean },
+    options?: { raw?: boolean; system?: boolean },
   ): Promise<TaskResult>;
 
   /**
@@ -202,6 +202,8 @@ export function buildTeammatePrompt(
     userProfile?: string;
     /** Token budget for the prompt wrapper (default 64k). Task is excluded. */
     tokenBudget?: number;
+    /** System task — skip daily log / memory update instructions. */
+    system?: boolean;
   },
 ): string {
   const parts: string[] = [];
@@ -435,27 +437,36 @@ export function buildTeammatePrompt(
     );
   }
 
-  // Memory updates
-  instrLines.push(
-    "",
-    "### Memory Updates",
-    "",
-    "**After completing the task**, update your memory files:",
-    "",
-    `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist. Always include YAML frontmatter with \`version: ${PKG_VERSION}\` and \`type: daily\`.`,
-    "   - What you did",
-    "   - Key decisions made",
-    "   - Files changed",
-    "   - Anything the next task should know",
-    "",
-    `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`version\`, \`name\`, \`description\`, \`type\`). Always include \`version: ${PKG_VERSION}\` as the first field. Update existing memory files if the topic already has one.`,
-    "",
-    "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
-    "",
-    "These files are your persistent memory. Without them, your next session starts from scratch.",
-    "",
-    "**IMPORTANT:** Only log work you actually performed in THIS turn. Never log assumed, planned, or prior-turn work. If you didn't do it, don't log it.",
-  );
+  // Memory updates (skip for system tasks — they must not pollute daily logs)
+  if (options?.system) {
+    instrLines.push(
+      "",
+      "### Memory Updates",
+      "",
+      "**This is a system maintenance task.** Do NOT update daily logs, typed memories, or WISDOM.md. Do NOT create or append to any memory files. Just do the work and produce your text response.",
+    );
+  } else {
+    instrLines.push(
+      "",
+      "### Memory Updates",
+      "",
+      "**After completing the task**, update your memory files:",
+      "",
+      `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist. Always include YAML frontmatter with \`version: ${PKG_VERSION}\` and \`type: daily\`.`,
+      "   - What you did",
+      "   - Key decisions made",
+      "   - Files changed",
+      "   - Anything the next task should know",
+      "",
+      `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`version\`, \`name\`, \`description\`, \`type\`). Always include \`version: ${PKG_VERSION}\` as the first field. Update existing memory files if the topic already has one.`,
+      "",
+      "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
+      "",
+      "These files are your persistent memory. Without them, your next session starts from scratch.",
+      "",
+      "**IMPORTANT:** Only log work you actually performed in THIS turn. Never log assumed, planned, or prior-turn work. If you didn't do it, don't log it.",
+    );
+  }
 
   // Section Reinforcement — back-references from high-attention bottom edge to each section tag
   instrLines.push("", "### Section Reinforcement", "");
