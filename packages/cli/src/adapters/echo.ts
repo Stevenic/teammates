@@ -27,6 +27,7 @@ export class EchoAdapter implements AgentAdapter {
       system?: boolean;
       skipMemoryUpdates?: boolean;
       onActivity?: (events: ActivityEvent[]) => void;
+      signal?: AbortSignal;
     },
   ): Promise<TaskResult> {
     const fullPrompt = options?.raw

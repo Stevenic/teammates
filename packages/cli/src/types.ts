@@ -126,6 +126,8 @@ export interface TaskAssignment {
   skipMemoryUpdates?: boolean;
   /** Callback fired during execution with real-time activity events from the agent. */
   onActivity?: (events: ActivityEvent[]) => void;
+  /** Abort signal — when aborted, the adapter should kill/disconnect the running agent. */
+  signal?: AbortSignal;
 }
 
 /** Orchestrator event for logging/hooks */

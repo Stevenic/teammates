@@ -10,16 +10,14 @@
  */
 
 import { exec as execCb } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, stat } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import {
   App,
   ChatView,
   type Color,
   concat,
-  esc,
   pen,
   renderMarkdown,
   type StyledSpan,
@@ -47,23 +45,18 @@ import {
   findSummarizationSplit,
   formatConversationEntry,
   isImagePath,
-  relativeTime,
   wrapLine,
 } from "./cli-utils.js";
+import { CommandManager } from "./commands.js";
 import { PromptInput } from "./console/prompt-input.js";
 import { HandoffManager } from "./handoff-manager.js";
-import {
-  buildImportAdaptationPrompt,
-  copyTemplateFiles,
-  importTeammates,
-} from "./onboard.js";
 import { OnboardFlow } from "./onboard-flow.js";
 import { Orchestrator } from "./orchestrator.js";
 import { RetroManager } from "./retro-manager.js";
-import { cmdConfigure, detectServices } from "./service-config.js";
+import { detectServices } from "./service-config.js";
 import { StartupManager } from "./startup-manager.js";
 import { StatusTracker } from "./status-tracker.js";
-import { colorToHex, theme, tp } from "./theme.js";
+import { theme, tp } from "./theme.js";
 import type { ThreadContainer } from "./thread-container.js";
 import { ThreadManager } from "./thread-manager.js";
 import type {
@@ -359,6 +352,8 @@ class TeammatesREPL {
   private nextQueueEntryId = 1;
   /** Per-agent active tasks - one per agent running in parallel. */
   private agentActive: Map<string, QueueEntry> = new Map();
+  /** Per-agent abort controllers — abort to cancel the running agent. */
+  private abortControllers: Map<string, AbortController> = new Map();
   /** Active system tasks — multiple can run concurrently per agent. */
   private systemActive: Map<string, QueueEntry> = new Map();
   /** Agents currently in a silent retry — suppress all events. */
@@ -388,6 +383,7 @@ class TeammatesREPL {
   private lastTaskPrompts: Map<string, string> = new Map();
   private activityManager!: ActivityManager;
   private startupMgr!: StartupManager;
+  private commandManager!: CommandManager;
 
   private handoffManager!: HandoffManager;
   private retroManager!: RetroManager;
@@ -520,21 +516,6 @@ class TeammatesREPL {
         (e) => e.teammate === teammate && !this.isSystemTask(e),
       )
     );
-  }
-
-  private getThreadTaskCounts(threadId: number): {
-    working: number;
-    queued: number;
-  } {
-    let working = 0;
-    let queued = 0;
-    for (const entry of this.agentActive.values()) {
-      if (entry.threadId === threadId && !this.isSystemTask(entry)) working++;
-    }
-    for (const entry of this.taskQueue) {
-      if (entry.threadId === threadId && !this.isSystemTask(entry)) queued++;
-    }
-    return { working, queued };
   }
 
   /**
@@ -903,6 +884,17 @@ class TeammatesREPL {
         history: this.conversationHistory.map((e) => ({ ...e })),
         summary: this.conversationSummary,
       };
+      // Render dispatch line first — this creates the ThreadContainer
+      if (threadId == null) {
+        this.renderThreadHeader(thread, names);
+        const c = this.containers.get(tid);
+        if (c && this.chatView) {
+          c.insertLine(this.chatView, "", this.shiftAllContainers);
+        }
+      } else if (replyDisplayText) {
+        this.renderThreadReply(tid, replyDisplayText, names);
+      }
+      // Now queue entries and render placeholders (container exists)
       for (const teammate of names) {
         const entry = {
           id: this.makeQueueEntryId(),
@@ -916,16 +908,6 @@ class TeammatesREPL {
         this.taskQueue.push(entry);
         thread.pendingTasks.add(entry.id);
         this.renderTaskPlaceholder(tid, entry.id, teammate, state);
-      }
-      // Render dispatch line (part of user message) + blank line + working placeholders
-      if (threadId == null) {
-        this.renderThreadHeader(thread, names);
-        const c = this.containers.get(tid);
-        if (c && this.chatView) {
-          c.insertLine(this.chatView, "", this.shiftAllContainers);
-        }
-      } else if (replyDisplayText) {
-        this.renderThreadReply(tid, replyDisplayText, names);
       }
       const ec = this.containers.get(tid);
       if (ec && this.chatView) ec.hideThreadActions(this.chatView);
@@ -954,7 +936,17 @@ class TeammatesREPL {
     }
 
     if (mentioned.length > 0) {
-      // Queue a copy of the full message to every mentioned teammate
+      // Render dispatch line first — this creates the ThreadContainer
+      if (threadId == null) {
+        this.renderThreadHeader(thread, mentioned);
+        const c = this.containers.get(tid);
+        if (c && this.chatView) {
+          c.insertLine(this.chatView, "", this.shiftAllContainers);
+        }
+      } else if (replyDisplayText) {
+        this.renderThreadReply(tid, replyDisplayText, mentioned);
+      }
+      // Now queue entries and render placeholders (container exists)
       for (const teammate of mentioned) {
         const entry = {
           id: this.makeQueueEntryId(),
@@ -967,16 +959,6 @@ class TeammatesREPL {
         this.taskQueue.push(entry);
         thread.pendingTasks.add(entry.id);
         this.renderTaskPlaceholder(tid, entry.id, teammate, state);
-      }
-      // Render dispatch line (part of user message) + blank line + working placeholders
-      if (threadId == null) {
-        this.renderThreadHeader(thread, mentioned);
-        const c = this.containers.get(tid);
-        if (c && this.chatView) {
-          c.insertLine(this.chatView, "", this.shiftAllContainers);
-        }
-      } else if (replyDisplayText) {
-        this.renderThreadReply(tid, replyDisplayText, mentioned);
       }
       const mc = this.containers.get(tid);
       if (mc && this.chatView) mc.hideThreadActions(this.chatView);
@@ -1312,8 +1294,133 @@ class TeammatesREPL {
     // Background maintenance — startupMgr is initialized below after closures are defined
     this.startupMaintenance().catch(() => {});
 
-    // Register commands
-    this.registerCommands();
+    // Register commands (extracted to CommandManager)
+    const repl = this;
+    this.commandManager = new CommandManager({
+      get adapterName() {
+        return repl.adapterName;
+      },
+      get selfName() {
+        return repl.selfName;
+      },
+      get userAlias() {
+        return repl.userAlias;
+      },
+      get orchestrator() {
+        return repl.orchestrator;
+      },
+      get adapter() {
+        return repl.adapter;
+      },
+      get taskQueue() {
+        return repl.taskQueue;
+      },
+      get agentActive() {
+        return repl.agentActive;
+      },
+      get abortControllers() {
+        return repl.abortControllers;
+      },
+      get commands() {
+        return repl.commands;
+      },
+      get conversationHistory() {
+        return repl.conversationHistory;
+      },
+      get conversationSummary() {
+        return repl.conversationSummary;
+      },
+      set conversationSummary(v) {
+        repl.conversationSummary = v;
+      },
+      get lastResult() {
+        return repl.lastResult;
+      },
+      set lastResult(v) {
+        repl.lastResult = v;
+      },
+      get lastResults() {
+        return repl.lastResults;
+      },
+      get lastDebugFiles() {
+        return repl.lastDebugFiles;
+      },
+      get lastTaskPrompts() {
+        return repl.lastTaskPrompts;
+      },
+      get lastCleanedOutput() {
+        return repl.lastCleanedOutput;
+      },
+      get serviceStatuses() {
+        return repl.serviceStatuses;
+      },
+      get threadManager() {
+        return repl.threadManager;
+      },
+      get handoffManager() {
+        return repl.handoffManager;
+      },
+      get retroManager() {
+        return repl.retroManager;
+      },
+      get statusTracker() {
+        return repl.statusTracker;
+      },
+      get onboardFlow() {
+        return repl.onboardFlow;
+      },
+      get banner() {
+        return repl.banner;
+      },
+      get chatView() {
+        return repl.chatView;
+      },
+      get app() {
+        return repl.app;
+      },
+      get input() {
+        return repl.input;
+      },
+      feedLine: (text?) => this.feedLine(text),
+      feedMarkdown: (source) => this.feedMarkdown(source),
+      feedUserLine: (spans) => this.feedUserLine(spans),
+      refreshView: () => this.refreshView(),
+      showPrompt: () => this.showPrompt(),
+      makeSpan: (...args) => this.makeSpan(...args),
+      makeQueueEntryId: () => this.makeQueueEntryId(),
+      kickDrain: () => this.kickDrain(),
+      isSystemTask: (entry) => this.isSystemTask(entry),
+      isAgentBusy: (teammate) => this.isAgentBusy(teammate),
+      getThread: (id) => this.getThread(id),
+      get threads() {
+        return repl.threads;
+      },
+      get focusedThreadId() {
+        return repl.focusedThreadId;
+      },
+      get containers() {
+        return repl.containers;
+      },
+      appendThreadEntry: (tid, entry) => this.appendThreadEntry(tid, entry),
+      renderTaskPlaceholder: (tid, pid, tm, s) =>
+        this.renderTaskPlaceholder(tid, pid, tm, s),
+      cleanupActivityLines: (tm) => this.cleanupActivityLines(tm),
+      runOnboardingAgent: (adapter, dir) =>
+        this.runOnboardingAgent(adapter, dir),
+      runPersonaOnboardingInline: (dir) => this.runPersonaOnboardingInline(dir),
+      refreshTeammates: () => this.refreshTeammates(),
+      askInline: (prompt) => this.askInline(prompt),
+      get serviceView() {
+        return repl.serviceView;
+      },
+      get teammatesDir() {
+        return repl.teammatesDir;
+      },
+      clearPastedTexts: () => {
+        repl.pastedTexts.clear();
+      },
+    });
+    this.commandManager.registerCommands();
 
     // Initialize extracted modules — they reference properties set above
     this.handoffManager = new HandoffManager({
@@ -1650,7 +1757,7 @@ class TeammatesREPL {
         this.refreshView();
       } else if (id.startsWith("thread-copy-")) {
         const tid = parseInt(id.slice("thread-copy-".length), 10);
-        this.doCopy(this.buildThreadClipboardText(tid));
+        this.commandManager.doCopy(this.buildThreadClipboardText(tid));
       } else if (id.startsWith("reply-collapse-")) {
         const key = id.slice("reply-collapse-".length);
         const tid = parseInt(key.split("-")[0], 10);
@@ -1660,12 +1767,18 @@ class TeammatesREPL {
         this.toggleActivity(queueId);
       } else if (id.startsWith("cancel-")) {
         const queueId = id.slice("cancel-".length);
-        this.cancelTask(queueId);
+        // Find the entry in queue or active to get threadId + teammate
+        const entry =
+          this.taskQueue.find((e) => e.id === queueId) ||
+          [...this.agentActive.values()].find((e) => e.id === queueId);
+        if (entry?.threadId != null && this.chatView) {
+          this.chatView.inputValue = `/cancel #${entry.threadId} ${entry.teammate}`;
+        }
       } else if (id.startsWith("copy-cmd:")) {
-        this.doCopy(id.slice("copy-cmd:".length));
+        this.commandManager.doCopy(id.slice("copy-cmd:".length));
       } else if (id.startsWith("copy-")) {
         const text = this._copyContexts.get(id);
-        this.doCopy(text || this.lastCleanedOutput || undefined);
+        this.commandManager.doCopy(text || this.lastCleanedOutput || undefined);
       } else if (
         id.startsWith("retro-approve-") ||
         id.startsWith("retro-reject-")
@@ -1692,7 +1805,7 @@ class TeammatesREPL {
     });
 
     this.chatView.on("copy", (text: string) => {
-      this.doCopy(text);
+      this.commandManager.doCopy(text);
     });
 
     this.chatView.on("link", (url: string) => {
@@ -1740,6 +1853,7 @@ class TeammatesREPL {
     (this.retroManager as any).view.chatView = this.chatView;
 
     // Initialize activity manager now that chatView exists
+    const containersFn = () => this.containers;
     this.activityManager = new ActivityManager({
       get chatView() {
         return chatViewRef();
@@ -1752,12 +1866,13 @@ class TeammatesREPL {
       },
       statusTracker: this.statusTracker,
       agentActive: this.agentActive,
-      containers: this.containers,
+      get containers() {
+        return containersFn();
+      },
       shiftAllContainers: (at, delta) => this.shiftAllContainers(at, delta),
       makeSpan: (...segs) => this.makeSpan(...segs),
       refreshView: () => this.refreshView(),
       feedLine: (text?) => this.feedLine(text),
-      getAdapter: () => this.orchestrator.getAdapter(),
     });
     const chatViewRef = () => this.chatView;
 
@@ -1776,7 +1891,7 @@ class TeammatesREPL {
         makeSpan: (...segs) => this.makeSpan(...segs),
         renderHandoffs: (from, handoffs, tid, containerCtx) =>
           this.renderHandoffs(from, handoffs, tid, containerCtx),
-        doCopy: (content?) => this.doCopy(content),
+        doCopy: (content?) => this.commandManager.doCopy(content),
         get selfName() {
           return selfNameFn();
         },
@@ -2038,7 +2153,7 @@ class TeammatesREPL {
     // Slash commands
     if (input.startsWith("/")) {
       try {
-        await this.dispatch(input);
+        await this.commandManager.dispatch(input);
       } catch (err: any) {
         this.feedLine(tp.error(`Error: ${err.message}`));
       }
@@ -2098,303 +2213,18 @@ class TeammatesREPL {
     this.refreshView();
   }
 
-  private printBanner(teammates: string[]): void {
-    const registry = this.orchestrator.getRegistry();
-    const termWidth = process.stdout.columns || 100;
-
-    this.feedLine();
-    this.feedLine(concat(tp.bold("  Teammates"), tp.muted(` v${PKG_VERSION}`)));
-    this.feedLine(
-      concat(
-        tp.text(`  @${this.adapterName}`),
-        tp.muted(
-          ` · ${teammates.length} teammate${teammates.length === 1 ? "" : "s"}`,
-        ),
-      ),
-    );
-    this.feedLine(`  ${process.cwd()}`);
-    // Service status rows
-    for (const svc of this.serviceStatuses) {
-      const ok = svc.status === "bundled" || svc.status === "configured";
-      const icon = ok ? "● " : svc.status === "not-configured" ? "◐ " : "○ ";
-      const color = ok ? tp.success : tp.warning;
-      const label =
-        svc.status === "bundled"
-          ? "bundled"
-          : svc.status === "configured"
-            ? "configured"
-            : svc.status === "not-configured"
-              ? `not configured — /configure ${svc.name.toLowerCase()}`
-              : `missing — /configure ${svc.name.toLowerCase()}`;
-      this.feedLine(
-        concat(
-          tp.text("  "),
-          color(icon),
-          color(svc.name),
-          tp.muted(` ${label}`),
-        ),
-      );
-    }
-
-    // Roster (with presence indicators)
-    this.feedLine();
-    const statuses = this.orchestrator.getAllStatuses();
-    // Show user avatar first (displayed as adapter name alias)
-    if (this.userAlias) {
-      const up = statuses.get(this.userAlias)?.presence ?? "online";
-      const udot =
-        up === "online"
-          ? tp.success("●")
-          : up === "reachable"
-            ? tp.warning("●")
-            : tp.error("●");
-      this.feedLine(
-        concat(
-          tp.text("  "),
-          udot,
-          tp.accent(` @${this.adapterName.padEnd(14)}`),
-          tp.muted("Coding agent that performs tasks on your behalf."),
-        ),
-      );
-    }
-    for (const name of teammates) {
-      const t = registry.get(name);
-      if (t) {
-        const p = statuses.get(name)?.presence ?? "online";
-        const dot =
-          p === "online"
-            ? tp.success("●")
-            : p === "reachable"
-              ? tp.warning("●")
-              : tp.error("●");
-        this.feedLine(
-          concat(
-            tp.text("  "),
-            dot,
-            tp.accent(` @${name.padEnd(14)}`),
-            tp.muted(t.role),
-          ),
-        );
-      }
-    }
-
-    this.feedLine();
-    this.feedLine(tp.muted("─".repeat(termWidth)));
-
-    // Quick reference — 3 columns (different set for first run vs normal)
-    let col1: string[][];
-    let col2: string[][];
-    let col3: string[][];
-
-    if (teammates.length === 0) {
-      // First run — no teammates yet
-      col1 = [
-        ["/init", "set up teammates"],
-        ["/help", "all commands"],
-      ];
-      col2 = [
-        ["/exit", "exit session"],
-        ["", ""],
-      ];
-      col3 = [
-        ["", ""],
-        ["", ""],
-      ];
-    } else {
-      col1 = [
-        ["@mention", "assign to teammate"],
-        ["text", "auto-route task"],
-        ["[image]", "drag & drop images"],
-      ];
-      col2 = [
-        ["/status", "teammates & queue"],
-        ["/compact", "compact memory"],
-        ["/retro", "run retrospective"],
-      ];
-      col3 = [
-        ["/copy", "copy session text"],
-        ["/help", "all commands"],
-        ["/exit", "exit session"],
-      ];
-    }
-
-    for (let i = 0; i < col1.length; i++) {
-      this.feedLine(
-        concat(
-          tp.accent(`  ${col1[i][0]}`.padEnd(12)),
-          tp.muted(col1[i][1].padEnd(22)),
-          tp.accent(col2[i][0].padEnd(12)),
-          tp.muted(col2[i][1].padEnd(22)),
-          tp.accent(col3[i][0].padEnd(12)),
-          tp.muted(col3[i][1]),
-        ),
-      );
-    }
-
-    this.feedLine();
-    this.refreshView();
-  }
-
   // ─── Service detection/config (delegated to service-config.ts) ────
 
   private get serviceView() {
     return {
       chatView: this.chatView,
       feedLine: (text?: string | StyledSpan) => this.feedLine(text),
-      feedCommand: (command: string) => this.feedCommand(command),
+      feedCommand: (command: string) =>
+        this.commandManager.feedCommand(command),
       refreshView: () => this.refreshView(),
       askInline: (prompt: string) => this.askInline(prompt),
       banner: this.banner,
     };
-  }
-
-  private registerCommands(): void {
-    const cmds: SlashCommand[] = [
-      {
-        name: "status",
-        aliases: ["s", "queue", "qu"],
-        usage: "/status",
-        description: "Show teammates, active tasks, and queue",
-        run: () => this.cmdStatus(),
-      },
-      {
-        name: "help",
-        aliases: ["h", "?"],
-        usage: "/help",
-        description: "Show available commands",
-        run: () => this.cmdHelp(),
-      },
-      {
-        name: "debug",
-        aliases: ["raw"],
-        usage: "/debug [teammate] [focus]",
-        description: "Analyze the last agent task with the coding agent",
-        run: (args) => this.cmdDebug(args),
-      },
-      {
-        name: "cancel",
-        aliases: [],
-        usage: "/cancel [task-id] [teammate]",
-        description: "Cancel a task or a specific teammate within a task",
-        run: (args) => this.cmdCancel(args),
-      },
-      {
-        name: "interrupt",
-        aliases: ["int"],
-        usage: "/interrupt [task-id] [teammate] [message]",
-        description:
-          "Interrupt a teammate and restart with additional instructions",
-        run: (args) => this.cmdInterrupt(args),
-      },
-      {
-        name: "init",
-        aliases: ["onboard", "setup"],
-        usage: "/init [pick | from-path]",
-        description:
-          "Set up teammates (pick from personas, or import from another project)",
-        run: (args) => this.cmdInit(args),
-      },
-      {
-        name: "clear",
-        aliases: ["cls", "reset"],
-        usage: "/clear",
-        description: "Clear history and reset the session",
-        run: () => this.cmdClear(),
-      },
-      {
-        name: "compact",
-        aliases: [],
-        usage: "/compact [teammate]",
-        description: "Compact daily logs into weekly/monthly summaries",
-        run: (args) => this.cmdCompact(args),
-      },
-      {
-        name: "retro",
-        aliases: [],
-        usage: "/retro [teammate]",
-        description: "Run a structured self-retrospective for a teammate",
-        run: (args) => this.cmdRetro(args),
-      },
-      {
-        name: "copy",
-        aliases: ["cp"],
-        usage: "/copy",
-        description: "Copy session text to clipboard",
-        run: () => this.cmdCopy(),
-      },
-      {
-        name: "user",
-        aliases: [],
-        usage: "/user [change]",
-        description: "View or update USER.md",
-        run: (args) => this.cmdUser(args),
-      },
-      {
-        name: "btw",
-        aliases: [],
-        usage: "/btw [question]",
-        description:
-          "Ask a quick side question without interrupting the main conversation",
-        run: (args) => this.cmdBtw(args),
-      },
-      {
-        name: "script",
-        aliases: [],
-        usage: "/script [description]",
-        description: "Write and run reusable scripts via the coding agent",
-        run: (args) => this.cmdScript(args),
-      },
-      {
-        name: "theme",
-        aliases: [],
-        usage: "/theme",
-        description: "Show current theme colors",
-        run: () => this.cmdTheme(),
-      },
-      {
-        name: "configure",
-        aliases: ["config"],
-        usage: "/configure [service]",
-        description: "Configure external services (github)",
-        run: (args) =>
-          cmdConfigure(args, this.serviceStatuses, this.serviceView),
-      },
-      {
-        name: "exit",
-        aliases: ["q", "quit"],
-        usage: "/exit",
-        description: "Exit the session",
-        run: async () => {
-          this.feedLine(tp.muted("Shutting down..."));
-
-          if (this.app) this.app.stop();
-          await this.orchestrator.shutdown();
-          process.exit(0);
-        },
-      },
-    ];
-
-    for (const cmd of cmds) {
-      this.commands.set(cmd.name, cmd);
-      for (const alias of cmd.aliases) {
-        this.commands.set(alias, cmd);
-      }
-    }
-  }
-
-  private async dispatch(input: string): Promise<void> {
-    // Dispatch only handles slash commands — text input is queued via queueTask()
-    const spaceIdx = input.indexOf(" ");
-    const cmdName = spaceIdx > 0 ? input.slice(1, spaceIdx) : input.slice(1);
-    const cmdArgs = spaceIdx > 0 ? input.slice(spaceIdx + 1).trim() : "";
-
-    const cmd = this.commands.get(cmdName);
-    if (cmd) {
-      await cmd.run(cmdArgs);
-    } else {
-      this.feedLine(tp.warning(`Unknown command: /${cmdName}`));
-      this.feedLine(tp.muted("Type /help for available commands"));
-    }
   }
 
   // ─── Event handler ───────────────────────────────────────────────
@@ -2444,486 +2274,6 @@ class TeammatesREPL {
     }
   }
 
-  private async cmdStatus(): Promise<void> {
-    const statuses = this.orchestrator.getAllStatuses();
-    const registry = this.orchestrator.getRegistry();
-
-    this.feedLine();
-    this.feedLine(tp.bold("  Status"));
-    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
-
-    // Show user avatar first if present (displayed as adapter name alias)
-    if (this.userAlias) {
-      const userStatus = statuses.get(this.userAlias);
-      if (userStatus) {
-        this.feedLine(
-          concat(
-            tp.success("●"),
-            tp.accent(` @${this.adapterName}`),
-            tp.muted(" (you)"),
-          ),
-        );
-        this.feedLine(
-          tp.muted("    Coding agent that performs tasks on your behalf."),
-        );
-        this.feedLine();
-      }
-    }
-
-    for (const [name, status] of statuses) {
-      // Skip the user avatar (shown above) and adapter fallback (not addressable)
-      if (name === this.adapterName || name === this.userAlias) continue;
-
-      const t = registry.get(name);
-      const active = this.agentActive.get(name);
-      const queued = this.taskQueue.filter((e) => e.teammate === name);
-
-      // Presence indicator: ● green=online, ● red=offline, ● yellow=reachable
-      const presenceIcon =
-        status.presence === "online"
-          ? tp.success("●")
-          : status.presence === "reachable"
-            ? tp.warning("●")
-            : tp.error("●");
-
-      // Teammate name + state
-      const stateLabel = active ? "working" : status.state;
-      const stateColor =
-        stateLabel === "working"
-          ? tp.info(` (${stateLabel})`)
-          : tp.muted(` (${stateLabel})`);
-      this.feedLine(concat(presenceIcon, tp.accent(` @${name}`), stateColor));
-
-      // Role
-      if (t) {
-        this.feedLine(tp.muted(`    ${t.role}`));
-      }
-
-      // Active task
-      if (active) {
-        const taskText =
-          active.task.length > 60
-            ? `${active.task.slice(0, 57)}…`
-            : active.task;
-        this.feedLine(concat(tp.info("    ▸ "), tp.text(taskText)));
-      }
-
-      // Queued tasks
-      for (let i = 0; i < queued.length; i++) {
-        const taskText =
-          queued[i].task.length > 60
-            ? `${queued[i].task.slice(0, 57)}…`
-            : queued[i].task;
-        this.feedLine(concat(tp.muted(`    ${i + 1}. `), tp.muted(taskText)));
-      }
-
-      // Last result
-      if (!active && status.lastSummary) {
-        const time = status.lastTimestamp
-          ? ` ${relativeTime(status.lastTimestamp)}`
-          : "";
-        this.feedLine(
-          tp.muted(`    last: ${status.lastSummary.slice(0, 50)}${time}`),
-        );
-      }
-
-      this.feedLine();
-    }
-
-    // ── Active threads ────────────────────────────────────────────
-    if (this.threads.size > 0) {
-      this.feedLine(tp.bold("  Threads"));
-      this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
-      for (const [id, thread] of this.threads) {
-        const isFocused = this.focusedThreadId === id;
-        const origin =
-          thread.originMessage.length > 50
-            ? `${thread.originMessage.slice(0, 47)}…`
-            : thread.originMessage;
-        const replies = thread.entries.filter(
-          (e) => e.type !== "user" || thread.entries.indexOf(e) > 0,
-        ).length;
-        const { working, queued } = this.getThreadTaskCounts(id);
-        const focusTag = isFocused ? tp.info(" ◀ focused") : "";
-        this.feedLine(
-          concat(tp.accent(`  #${id}`), tp.text(`  ${origin}`), focusTag),
-        );
-        const parts: string[] = [];
-        if (replies > 0)
-          parts.push(`${replies} repl${replies === 1 ? "y" : "ies"}`);
-        if (working > 0) parts.push(`${working} working`);
-        if (queued > 0) parts.push(`${queued} queued`);
-        if (thread.collapsed) parts.push("collapsed");
-        if (parts.length > 0) {
-          this.feedLine(tp.muted(`    ${parts.join(" · ")}`));
-        }
-        this.feedLine();
-      }
-    }
-
-    this.refreshView();
-  }
-
-  private async cmdDebug(argsStr: string): Promise<void> {
-    const parts = argsStr.trim().split(/\s+/);
-    const firstArg = (parts[0] ?? "").replace(/^@/, "");
-    // Everything after the teammate name is the debug focus
-    const debugFocus = parts.slice(1).join(" ").trim() || undefined;
-
-    // Resolve which teammate to debug
-    let targetName: string;
-    if (firstArg === "everyone") {
-      // Pick all teammates with debug files, queue one analysis per teammate
-      const names: string[] = [];
-      for (const [name] of this.lastDebugFiles) {
-        if (name !== this.selfName) names.push(name);
-      }
-      if (names.length === 0) {
-        this.feedLine(tp.muted("  No debug info available from any teammate."));
-        this.refreshView();
-        return;
-      }
-      for (const name of names) {
-        this.queueDebugAnalysis(name, debugFocus);
-      }
-      return;
-    } else if (firstArg) {
-      targetName = firstArg;
-    } else if (this.lastResult) {
-      targetName = this.lastResult.teammate;
-    } else {
-      this.feedLine(
-        tp.muted("  No debug info available. Try: /debug [teammate] [focus]"),
-      );
-      this.refreshView();
-      return;
-    }
-
-    this.queueDebugAnalysis(targetName, debugFocus);
-  }
-
-  /**
-   * Queue a debug analysis task — sends the last request + debug log
-   * to the base coding agent for analysis.
-   * @param debugFocus Optional focus area the user wants to investigate
-   */
-  private queueDebugAnalysis(teammate: string, debugFocus?: string): void {
-    const files = this.lastDebugFiles.get(teammate);
-    const lastPrompt = this.lastTaskPrompts.get(teammate);
-
-    if (!files?.promptFile && !files?.logFile) {
-      this.feedLine(tp.muted(`  No debug log available for @${teammate}.`));
-      this.refreshView();
-      return;
-    }
-
-    // Read both debug files
-    let promptContent = "";
-    if (files.promptFile) {
-      try {
-        promptContent = readFileSync(files.promptFile, "utf-8");
-      } catch {
-        /* may not exist */
-      }
-    }
-
-    let logContent = "";
-    if (files.logFile) {
-      try {
-        logContent = readFileSync(files.logFile, "utf-8");
-      } catch {
-        /* may not exist */
-      }
-    }
-
-    const focusLine = debugFocus
-      ? `\n\n**Focus your analysis on:** ${debugFocus}`
-      : "";
-
-    const analysisPrompt = [
-      `Analyze the following debug information from @${teammate}'s last task execution. Identify any issues, errors, or anomalies. If the response was empty, explain likely causes. Provide a concise diagnosis and suggest fixes if applicable.${focusLine}`,
-      "",
-      "## Prompt Sent to Agent",
-      "",
-      promptContent || lastPrompt || "(not available)",
-      "",
-      "## Activity / Debug Log",
-      "",
-      logContent || "(no activity log)",
-    ].join("\n");
-
-    // Show file paths — ctrl+click to open
-    if (files.promptFile) {
-      this.feedLine(
-        concat(tp.muted("  Prompt: "), tp.accent(files.promptFile)),
-      );
-    }
-    if (files.logFile) {
-      this.feedLine(concat(tp.muted("  Activity: "), tp.accent(files.logFile)));
-    }
-    if (debugFocus) {
-      this.feedLine(tp.muted(`  Focus: ${debugFocus}`));
-    }
-    this.feedLine(tp.muted("  Queuing analysis…"));
-    this.refreshView();
-
-    this.taskQueue.push({
-      id: this.makeQueueEntryId(),
-      type: "debug",
-      teammate: this.selfName,
-      task: analysisPrompt,
-    });
-    this.kickDrain();
-  }
-
-  private async cmdCancel(argsStr: string): Promise<void> {
-    const parts = argsStr.trim().split(/\s+/).filter(Boolean);
-    const taskId = parseInt(parts[0], 10);
-    const teammateName = parts[1]?.replace(/^@/, "").toLowerCase();
-
-    if (Number.isNaN(taskId)) {
-      this.feedLine(tp.warning("  Usage: /cancel [task-id] [teammate]"));
-      this.refreshView();
-      return;
-    }
-
-    const thread = this.getThread(taskId);
-    if (!thread) {
-      this.feedLine(tp.warning(`  Unknown task #${taskId}`));
-      this.refreshView();
-      return;
-    }
-
-    if (teammateName) {
-      // Cancel a single teammate within the task
-      const resolvedName =
-        teammateName === this.adapterName ? this.selfName : teammateName;
-      await this.cancelTeammateInThread(resolvedName, taskId, thread);
-    } else {
-      // Cancel all teammates in the task
-      const teammates = this.getThreadTeammates(taskId);
-      for (const name of teammates) {
-        await this.cancelTeammateInThread(name, taskId, thread);
-      }
-    }
-
-    // Show thread actions if nothing pending
-    const container = this.containers.get(taskId);
-    if (container?.placeholderCount === 0 && this.chatView) {
-      container.showThreadActions(this.chatView);
-    }
-    this.refreshView();
-  }
-
-  /**
-   * Get all teammate names with queued or active tasks in a thread.
-   */
-  private getThreadTeammates(threadId: number): string[] {
-    const names = new Set<string>();
-    for (const entry of this.taskQueue) {
-      if (entry.threadId === threadId && !this.isSystemTask(entry)) {
-        names.add(entry.teammate);
-      }
-    }
-    for (const entry of this.agentActive.values()) {
-      if (entry.threadId === threadId && !this.isSystemTask(entry)) {
-        names.add(entry.teammate);
-      }
-    }
-    return [...names];
-  }
-
-  /**
-   * Cancel a single teammate's task within a thread — handles both queued and running tasks.
-   * Shows a "canceled" subject line in the thread.
-   */
-  private async cancelTeammateInThread(
-    teammate: string,
-    threadId: number,
-    thread: TaskThread,
-  ): Promise<void> {
-    const container = this.containers.get(threadId);
-
-    // Cancel queued tasks for this teammate in this thread
-    const queuedIdx = this.taskQueue.findIndex(
-      (e) =>
-        e.teammate === teammate &&
-        e.threadId === threadId &&
-        !this.isSystemTask(e),
-    );
-    if (queuedIdx >= 0) {
-      const removed = this.taskQueue.splice(queuedIdx, 1)[0];
-      thread.pendingTasks.delete(removed.id);
-      if (container && this.chatView) {
-        this.threadManager.displayCanceledInThread(
-          teammate,
-          threadId,
-          container,
-          removed.id,
-        );
-      }
-      // Add canceled entry to thread
-      this.appendThreadEntry(threadId, {
-        type: "system",
-        teammate,
-        content: "canceled",
-        subject: "canceled",
-        timestamp: Date.now(),
-      });
-      return;
-    }
-
-    // Cancel running task for this teammate in this thread
-    const activeEntry = this.agentActive.get(teammate);
-    if (activeEntry?.threadId === threadId) {
-      const adapter = this.orchestrator.getAdapter();
-      if (adapter?.killAgent) {
-        await adapter.killAgent(teammate);
-      }
-      this.cleanupActivityLines(teammate);
-      this.statusTracker.stopTask(teammate);
-      this.agentActive.delete(teammate);
-      thread.pendingTasks.delete(activeEntry.id);
-      if (container && this.chatView) {
-        this.threadManager.displayCanceledInThread(
-          teammate,
-          threadId,
-          container,
-          activeEntry.id,
-        );
-      }
-      // Add canceled entry to thread
-      this.appendThreadEntry(threadId, {
-        type: "system",
-        teammate,
-        content: "canceled",
-        subject: "canceled",
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  /**
-   * /interrupt [task-id] [teammate] [message] — Kill a running agent and restart
-   * with the original task text plus an UPDATE section appended.
-   */
-  private async cmdInterrupt(argsStr: string): Promise<void> {
-    const parts = argsStr.trim().split(/\s+/);
-    const taskId = parseInt(parts[0], 10);
-    const teammateName = parts[1]?.replace(/^@/, "").toLowerCase();
-    const interruptionText = parts.slice(2).join(" ").trim();
-
-    if (Number.isNaN(taskId) || !teammateName) {
-      this.feedLine(
-        tp.warning("  Usage: /interrupt [task-id] [teammate] [message]"),
-      );
-      this.refreshView();
-      return;
-    }
-
-    const thread = this.getThread(taskId);
-    if (!thread) {
-      this.feedLine(tp.warning(`  Unknown task #${taskId}`));
-      this.refreshView();
-      return;
-    }
-
-    // Resolve display name → internal name
-    const resolvedName =
-      teammateName === this.adapterName ? this.selfName : teammateName;
-    const displayName =
-      resolvedName === this.selfName ? this.adapterName : resolvedName;
-
-    // Find the active or queued task for this teammate in this thread
-    const activeEntry = this.agentActive.get(resolvedName);
-    const isActive = activeEntry?.threadId === taskId;
-    const queuedIdx = this.taskQueue.findIndex(
-      (e) =>
-        e.teammate === resolvedName &&
-        e.threadId === taskId &&
-        !this.isSystemTask(e),
-    );
-
-    if (!isActive && queuedIdx < 0) {
-      this.feedLine(
-        tp.warning(`  @${displayName} has no task in #${taskId} to interrupt.`),
-      );
-      this.refreshView();
-      return;
-    }
-
-    // Get the original task text (accumulates UPDATE sections for cascading)
-    const originalTask = isActive
-      ? activeEntry!.task
-      : this.taskQueue[queuedIdx].task;
-
-    // Build the updated task text — append UPDATE section (cascading)
-    const updatedTask = interruptionText
-      ? `${originalTask}\n\nUPDATE:\n${interruptionText}`
-      : originalTask;
-
-    const container = this.containers.get(taskId);
-
-    try {
-      if (isActive) {
-        // Kill the running agent
-        const adapter = this.orchestrator.getAdapter();
-        if (adapter?.killAgent) {
-          await adapter.killAgent(resolvedName);
-        }
-        this.cleanupActivityLines(resolvedName);
-        this.statusTracker.stopTask(resolvedName);
-        this.agentActive.delete(resolvedName);
-        thread.pendingTasks.delete(activeEntry!.id);
-        // Hide old placeholder
-        if (container && this.chatView) {
-          container.hidePlaceholder(this.chatView, activeEntry!.id);
-        }
-      } else {
-        // Remove from queue
-        const removed = this.taskQueue.splice(queuedIdx, 1)[0];
-        thread.pendingTasks.delete(removed.id);
-        if (container && this.chatView) {
-          container.hidePlaceholder(this.chatView, removed.id);
-        }
-      }
-
-      // Re-queue with updated task text
-      const newEntry = {
-        id: this.makeQueueEntryId(),
-        type: "agent" as const,
-        teammate: resolvedName,
-        task: updatedTask,
-        threadId: taskId,
-      };
-      this.taskQueue.push(newEntry);
-      thread.pendingTasks.add(newEntry.id);
-
-      // Show new working placeholder
-      const state = this.isAgentBusy(resolvedName) ? "queued" : "working";
-      this.renderTaskPlaceholder(taskId, newEntry.id, resolvedName, state);
-
-      // Add interruption entry to thread
-      this.appendThreadEntry(taskId, {
-        type: "user",
-        content: interruptionText
-          ? `Interrupted @${displayName}: ${interruptionText}`
-          : `Interrupted @${displayName}`,
-        timestamp: Date.now(),
-      });
-
-      this.refreshView();
-      this.kickDrain();
-    } catch (err: any) {
-      this.feedLine(
-        tp.error(
-          `  ✖  Failed to interrupt @${displayName}: ${err?.message ?? String(err)}`,
-        ),
-      );
-      this.refreshView();
-    }
-  }
-
   // ── Activity tracking (delegated to ActivityManager) ──────────────
 
   private handleActivityEvents(
@@ -2953,38 +2303,6 @@ class TeammatesREPL {
   }
 
   /** Cancel a running task or remove a queued task from the queue. */
-  private async cancelTask(queueId: string): Promise<void> {
-    // Try cancelling an active running task first
-    const cancelled = await this.activityManager.cancelRunningTask(queueId);
-    if (cancelled) return;
-
-    const queuedIdx = this.taskQueue.findIndex((e) => e.id === queueId);
-    if (queuedIdx < 0) {
-      this.feedLine(tp.warning("  No queued task found."));
-      return;
-    }
-
-    const removed = this.taskQueue.splice(queuedIdx, 1)[0];
-    if (removed.threadId != null) {
-      const thread = this.getThread(removed.threadId);
-      thread?.pendingTasks.delete(removed.id);
-      const container = this.containers.get(removed.threadId);
-      if (container && this.chatView) {
-        container.hidePlaceholder(this.chatView, removed.id);
-        if (container.placeholderCount === 0) {
-          container.showThreadActions(this.chatView);
-        }
-      }
-    }
-
-    const displayName =
-      removed.teammate === this.selfName ? this.adapterName : removed.teammate;
-    this.statusTracker.showNotification(
-      tp.warning(`? ${displayName}: queued task cancelled`),
-    );
-    this.refreshView();
-  }
-
   /** Drain user tasks for a single agent - runs in parallel with other agents.
    *  System tasks are handled separately by runSystemTask(). */
   private async drainAgentQueue(agent: string): Promise<void> {
@@ -3040,13 +2358,29 @@ class TeammatesREPL {
           const tid = entry.threadId;
           this.activityManager.initForTask(teammate, tid ?? undefined);
 
+          // Create an AbortController for this task — cancel paths call abort()
+          // to signal the adapter to kill/disconnect the running agent.
+          const ac = new AbortController();
+          this.abortControllers.set(agent, ac);
+
           let result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
             extraContext: extraContext || undefined,
             skipMemoryUpdates: entry.type === "btw",
             onActivity: (events) => this.handleActivityEvents(teammate, events),
+            signal: ac.signal,
           });
+
+          this.abortControllers.delete(agent);
+
+          // If the task was canceled while running (abort resolved the
+          // promise but cancelTeammateInThread already removed us from
+          // agentActive), skip result display and move on.
+          if (!this.agentActive.has(agent)) {
+            this.cleanupActivityLines(entry.teammate);
+            continue;
+          }
 
           // Defensive retry: if the agent produced no text output but exited
           // successfully, it likely ended its turn with only file edits.
@@ -3194,128 +2528,6 @@ class TeammatesREPL {
     }
   }
 
-  private async cmdInit(argsStr: string): Promise<void> {
-    const cwd = process.cwd();
-    const teammatesDir = join(cwd, ".teammates");
-    await mkdir(teammatesDir, { recursive: true });
-
-    const fromPath = argsStr.trim();
-    if (fromPath === "pick") {
-      // Persona picker mode: /init pick
-      await this.runPersonaOnboardingInline(teammatesDir);
-    } else if (fromPath) {
-      // Import mode: /init <path-to-another-project>
-      const resolved = resolve(fromPath);
-      let sourceDir: string;
-      try {
-        const s = await stat(join(resolved, ".teammates"));
-        if (s.isDirectory()) {
-          sourceDir = join(resolved, ".teammates");
-        } else {
-          sourceDir = resolved;
-        }
-      } catch {
-        sourceDir = resolved;
-      }
-
-      try {
-        const { teammates, skipped, files } = await importTeammates(
-          sourceDir,
-          teammatesDir,
-        );
-
-        // Combine newly imported + already existing for adaptation
-        const allTeammates = [...teammates, ...skipped];
-
-        if (allTeammates.length === 0) {
-          this.feedLine(tp.warning(`  No teammates found at ${sourceDir}`));
-          this.refreshView();
-          return;
-        }
-
-        if (teammates.length > 0) {
-          this.feedLine(
-            tp.success(
-              `  Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: ${teammates.join(", ")} (${files.length} files)`,
-            ),
-          );
-        }
-        if (skipped.length > 0) {
-          this.feedLine(
-            tp.muted(
-              `  ${skipped.length} already present: ${skipped.join(", ")} (will re-adapt)`,
-            ),
-          );
-        }
-
-        // Copy framework files so the agent has TEMPLATE.md etc. available
-        await copyTemplateFiles(teammatesDir);
-
-        // Queue a single adaptation task that handles all teammates
-        this.feedLine(
-          tp.muted(
-            "  Queuing agent to scan this project and adapt the team...",
-          ),
-        );
-        const prompt = await buildImportAdaptationPrompt(
-          teammatesDir,
-          allTeammates,
-          sourceDir,
-        );
-        this.taskQueue.push({
-          id: this.makeQueueEntryId(),
-          type: "agent",
-          teammate: this.selfName,
-          task: prompt,
-        });
-        this.kickDrain();
-      } catch (err: any) {
-        this.feedLine(tp.error(`  Import failed: ${err.message}`));
-      }
-    } else {
-      // Normal onboarding
-      await this.runOnboardingAgent(this.adapter, cwd);
-    }
-
-    // Reload the registry to pick up newly created teammates
-    const added = await this.orchestrator.refresh();
-    if (added.length > 0) {
-      const registry = this.orchestrator.getRegistry();
-      if ("roster" in this.adapter) {
-        (this.adapter as any).roster = this.orchestrator
-          .listTeammates()
-          .map((name) => {
-            const t = registry.get(name)!;
-            return { name: t.name, role: t.role, ownership: t.ownership };
-          });
-      }
-    }
-    this.feedLine(tp.muted("  Run /status to see the roster."));
-    this.refreshView();
-  }
-
-  private async cmdClear(): Promise<void> {
-    this.conversationHistory.length = 0;
-    this.conversationSummary = "";
-    this.lastResult = null;
-    this.lastResults.clear();
-    this.taskQueue.length = 0;
-    this.agentActive.clear();
-    this.pastedTexts.clear();
-    this.handoffManager.clear();
-    this.retroManager.clear();
-    this.threadManager.clear();
-    await this.orchestrator.reset();
-
-    if (this.chatView) {
-      this.chatView.clear();
-      this.refreshView();
-    } else {
-      process.stdout.write(esc.clearScreen + esc.moveTo(0, 0));
-      this.printBanner(this.orchestrator.listTeammates());
-    }
-  }
-
   /**
    * Reload the registry from disk. If new teammates appeared,
    * announce them, update the adapter roster, and refresh statuses.
@@ -3360,137 +2572,6 @@ class TeammatesREPL {
   // Recall is now bundled as a library dependency — no watch process needed.
   // Sync happens via syncRecallIndex() after every task and on startup.
 
-  private async cmdCompact(argsStr: string): Promise<void> {
-    const arg = argsStr.trim().replace(/^@/, "");
-    const allTeammates = this.orchestrator
-      .listTeammates()
-      .filter((n) => n !== this.selfName && n !== this.adapterName);
-    const names = !arg || arg === "everyone" ? allTeammates : [arg];
-
-    // Validate all names first
-    const valid: string[] = [];
-    for (const name of names) {
-      const teammateDir = join(this.teammatesDir, name);
-      try {
-        const s = await stat(teammateDir);
-        if (!s.isDirectory()) {
-          this.feedLine(tp.warning(`  ${name}: not a directory, skipping`));
-          continue;
-        }
-        valid.push(name);
-      } catch {
-        this.feedLine(tp.warning(`  ${name}: no directory found, skipping`));
-      }
-    }
-
-    if (valid.length === 0) return;
-
-    // Queue a compact task for each teammate
-    for (const name of valid) {
-      this.taskQueue.push({
-        id: this.makeQueueEntryId(),
-        type: "compact",
-        teammate: name,
-        task: "compact + index update",
-      });
-    }
-
-    this.feedLine();
-    this.feedLine(
-      concat(
-        tp.muted("  Queued compaction for "),
-        tp.accent(valid.map((n) => `@${n}`).join(", ")),
-        tp.muted(` (${valid.length} task${valid.length === 1 ? "" : "s"})`),
-      ),
-    );
-    this.feedLine();
-    this.refreshView();
-
-    // Start draining
-    this.kickDrain();
-  }
-
-  private async cmdRetro(argsStr: string): Promise<void> {
-    const arg = argsStr.trim().replace(/^@/, "");
-
-    // Resolve target list
-    const allTeammates = this.orchestrator
-      .listTeammates()
-      .filter((n) => n !== this.selfName && n !== this.adapterName);
-    let targets: string[];
-
-    if (arg === "everyone") {
-      targets = allTeammates;
-    } else if (arg) {
-      // Validate teammate exists
-      const names = this.orchestrator.listTeammates();
-      if (!names.includes(arg)) {
-        this.feedLine(tp.warning(`  Unknown teammate: @${arg}`));
-        this.refreshView();
-        return;
-      }
-      targets = [arg];
-    } else if (this.lastResult) {
-      targets = [this.lastResult.teammate];
-    } else {
-      this.feedLine(
-        tp.warning("  No teammate specified and no recent task to infer from."),
-      );
-      this.feedLine(tp.muted("  Usage: /retro <teammate>"));
-      this.refreshView();
-      return;
-    }
-
-    const retroPrompt = `Run a structured self-retrospective. Review your SOUL.md, WISDOM.md, your last 2-3 weekly summaries (or last 7 daily logs if no weeklies exist), and any typed memories in your memory/ folder.
-
-Produce a response with these four sections:
-
-## 1. What's Working
-Things you do well, based on evidence from recent work. Patterns worth reinforcing or codifying into wisdom. Cite specific examples from daily logs or memories.
-
-## 2. What's Not Working
-Friction, recurring issues, or patterns that aren't serving the project. Be specific — cite examples from daily logs or memories if possible.
-
-## 3. Proposed SOUL.md Changes
-The core output. Each proposal is a **specific edit** to your SOUL.md. Use this exact format for each proposal:
-
-**Proposal N: <short title>**
-- **Section:** <which SOUL.md section to change, e.g. Boundaries, Core Principles, Ownership>
-- **Before:** <the current text to replace, or "(new entry)" if adding>
-- **After:** <the exact replacement text>
-- **Why:** <evidence from recent work justifying the change>
-
-Only propose changes to your own SOUL.md. If a change affects shared files, note that it needs a handoff.
-
-## 4. Questions for the Team
-Issues that can't be resolved unilaterally — they need input from other teammates or the user.
-
-**Rules:**
-- This is a self-review of YOUR work. Do not evaluate other teammates.
-- Evidence over opinion — cite specific examples.
-- No busywork — if everything is working well, say "all good, no changes." That's a valid outcome.
-- Number each proposal (Proposal 1, Proposal 2, etc.) so the user can approve or reject individually.`;
-
-    const label =
-      targets.length > 1
-        ? targets.map((n) => `@${n}`).join(", ")
-        : `@${targets[0]}`;
-    this.feedLine();
-    this.feedLine(concat(tp.muted("  Queued retro for "), tp.accent(label)));
-    this.feedLine();
-    this.refreshView();
-
-    for (const name of targets) {
-      this.taskQueue.push({
-        id: this.makeQueueEntryId(),
-        type: "retro",
-        teammate: name,
-        task: retroPrompt,
-      });
-    }
-    this.kickDrain();
-  }
-
   // ── Startup maintenance (delegated to StartupManager) ────────────
 
   private async startupMaintenance(): Promise<void> {
@@ -3504,476 +2585,6 @@ Issues that can't be resolved unilaterally — they need input from other teamma
   }
   private async runCompact(name: string, silent = false): Promise<void> {
     return this.startupMgr.runCompact(name, silent);
-  }
-
-  private async cmdCopy(): Promise<void> {
-    this.doCopy(); // copies entire session
-  }
-
-  /** Build the full chat session as a markdown document. */
-  private buildSessionMarkdown(): string {
-    if (this.conversationHistory.length === 0) return "";
-    const lines: string[] = [];
-    lines.push(`# Chat Session\n`);
-    for (const entry of this.conversationHistory) {
-      if (entry.role === "user") {
-        lines.push(`**User:** ${entry.text}\n`);
-      } else {
-        // Strip protocol artifacts from the raw output
-        const cleaned = entry.text
-          .replace(/^TO:\s*\S+\s*\n/im, "")
-          .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/g, "")
-          .trim();
-        lines.push(`**${entry.role}:**\n\n${cleaned}\n`);
-      }
-      lines.push("---\n");
-    }
-    return lines.join("\n");
-  }
-
-  private doCopy(content?: string): void {
-    // Build content: if none specified, export the entire chat session as markdown
-    const text = content ?? this.buildSessionMarkdown();
-    if (!text) {
-      this.feedLine(tp.muted("  Nothing to copy."));
-      this.refreshView();
-      return;
-    }
-    try {
-      const isWin = process.platform === "win32";
-      const cmd = isWin
-        ? "clip"
-        : process.platform === "darwin"
-          ? "pbcopy"
-          : "xclip -selection clipboard";
-      const child = execCb(cmd, () => {});
-      child.stdin?.write(text);
-      child.stdin?.end();
-      if (this.chatView) {
-        this.statusTracker.showNotification(
-          concat(tp.success("✔  "), tp.muted("Copied to clipboard")),
-        );
-      }
-    } catch {
-      if (this.chatView) {
-        this.statusTracker.showNotification(
-          concat(tp.error("✖  "), tp.muted("Failed to copy")),
-        );
-      }
-    }
-  }
-
-  /**
-   * Feed a command line with a clickable [copy] button.
-   * Renders as: `    command text  [copy]`
-   */
-  private feedCommand(command: string): void {
-    if (!this.chatView) {
-      this.feedLine(tp.accent(`    ${command}`));
-      return;
-    }
-    const normal = concat(tp.accent(`    ${command}  `), tp.muted("[copy]"));
-    const hover = concat(tp.accent(`    ${command}  `), tp.accent("[copy]"));
-    this.chatView.appendAction(`copy-cmd:${command}`, normal, hover);
-  }
-
-  private async cmdHelp(): Promise<void> {
-    this.feedLine();
-    this.feedLine(tp.bold("  Commands"));
-    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
-
-    // De-duplicate (aliases map to same command)
-    const seen = new Set<string>();
-    for (const [, cmd] of this.commands) {
-      if (seen.has(cmd.name)) continue;
-      seen.add(cmd.name);
-
-      const aliases =
-        cmd.aliases.length > 0
-          ? ` (${cmd.aliases.map((a) => `/${a}`).join(", ")})`
-          : "";
-      this.feedLine(
-        concat(
-          tp.accent(`  ${cmd.usage}`.padEnd(36)),
-          pen(cmd.description),
-          tp.muted(aliases),
-        ),
-      );
-    }
-    this.feedLine();
-    this.feedLine(
-      concat(
-        tp.muted("  Tip: "),
-        tp.text("Type text without / to auto-route to the best teammate"),
-      ),
-    );
-    this.feedLine(
-      concat(
-        tp.muted("  Tip: "),
-        tp.text("Press Tab to autocomplete commands and teammate names"),
-      ),
-    );
-    this.feedLine();
-    this.refreshView();
-  }
-
-  private async cmdUser(argsStr: string): Promise<void> {
-    const userMdPath = join(this.teammatesDir, "USER.md");
-    const change = argsStr.trim();
-
-    if (!change) {
-      // No args — print current USER.md
-      let content: string;
-      try {
-        content = readFileSync(userMdPath, "utf-8");
-      } catch {
-        this.feedLine(tp.muted("  USER.md not found."));
-        this.feedLine(
-          tp.muted("  Run /init or create .teammates/USER.md manually."),
-        );
-        this.refreshView();
-        return;
-      }
-
-      if (!content.trim()) {
-        this.feedLine(tp.muted("  USER.md is empty."));
-        this.refreshView();
-        return;
-      }
-
-      this.feedLine();
-      this.feedLine(tp.muted("  ── USER.md ──"));
-      this.feedLine();
-      this.feedMarkdown(content);
-      this.feedLine();
-      this.feedLine(tp.muted("  ── end ──"));
-      this.feedLine();
-      this.refreshView();
-      return;
-    }
-
-    // Has args — queue a task to apply the change
-    const task = `Update the file ${userMdPath} with the following change:\n\n${change}\n\nKeep the existing content intact unless the change explicitly replaces something. This is the user's profile — be concise and accurate.`;
-    this.taskQueue.push({
-      id: this.makeQueueEntryId(),
-      type: "agent",
-      teammate: this.selfName,
-      task,
-    });
-    this.feedLine(
-      concat(
-        tp.muted("  Queued USER.md update → "),
-        tp.accent(`@${this.adapterName}`),
-      ),
-    );
-    this.feedLine();
-    this.refreshView();
-    this.kickDrain();
-  }
-
-  private async cmdBtw(argsStr: string): Promise<void> {
-    const question = argsStr.trim();
-    if (!question) {
-      this.feedLine(tp.muted("  Usage: /btw <question>"));
-      this.refreshView();
-      return;
-    }
-
-    this.taskQueue.push({
-      id: this.makeQueueEntryId(),
-      type: "btw",
-      teammate: this.selfName,
-      task: question,
-    });
-    this.feedLine(
-      concat(tp.muted("  Side question → "), tp.accent(`@${this.adapterName}`)),
-    );
-    this.feedLine();
-    this.refreshView();
-    this.kickDrain();
-  }
-
-  private async cmdScript(argsStr: string): Promise<void> {
-    const args = argsStr.trim();
-    const scriptsDir = join(this.teammatesDir, this.selfName, "scripts");
-
-    // /script (no args) — show usage
-    if (!args) {
-      this.feedLine();
-      this.feedLine(tp.bold("  /script — write and run reusable scripts"));
-      this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
-      this.feedLine(
-        concat(
-          tp.accent("  /script list".padEnd(36)),
-          tp.text("List saved scripts"),
-        ),
-      );
-      this.feedLine(
-        concat(
-          tp.accent("  /script run <name>".padEnd(36)),
-          tp.text("Run an existing script"),
-        ),
-      );
-      this.feedLine(
-        concat(
-          tp.accent("  /script <description>".padEnd(36)),
-          tp.text("Create and run a new script"),
-        ),
-      );
-      this.feedLine();
-      this.feedLine(tp.muted(`  Scripts are saved to ${scriptsDir}`));
-      this.feedLine();
-      this.refreshView();
-      return;
-    }
-
-    // /script list — list saved scripts
-    if (args === "list") {
-      let files: string[] = [];
-      try {
-        files = readdirSync(scriptsDir).filter((f) => !f.startsWith("."));
-      } catch {
-        // directory doesn't exist yet
-      }
-
-      this.feedLine();
-      if (files.length === 0) {
-        this.feedLine(tp.muted("  No scripts saved yet."));
-        this.feedLine(tp.muted("  Use /script <description> to create one."));
-      } else {
-        this.feedLine(tp.bold("  Saved scripts"));
-        this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
-        for (const f of files) {
-          this.feedLine(concat(tp.accent(`  ${f}`)));
-        }
-      }
-      this.feedLine();
-      this.refreshView();
-      return;
-    }
-
-    // /script run <name> — run an existing script
-    if (args.startsWith("run ")) {
-      const name = args.slice(4).trim();
-      if (!name) {
-        this.feedLine(tp.muted("  Usage: /script run <name>"));
-        this.refreshView();
-        return;
-      }
-
-      // Find the script file (try exact match, then with common extensions)
-      const candidates = [
-        name,
-        `${name}.sh`,
-        `${name}.ts`,
-        `${name}.js`,
-        `${name}.ps1`,
-        `${name}.py`,
-      ];
-      let scriptPath: string | null = null;
-      for (const c of candidates) {
-        const p = join(scriptsDir, c);
-        if (existsSync(p)) {
-          scriptPath = p;
-          break;
-        }
-      }
-
-      if (!scriptPath) {
-        this.feedLine(tp.warning(`  Script not found: ${name}`));
-        this.feedLine(tp.muted("  Use /script list to see available scripts."));
-        this.refreshView();
-        return;
-      }
-
-      const scriptContent = readFileSync(scriptPath, "utf-8");
-      const task = `Run the following script located at ${scriptPath}:\n\n\`\`\`\n${scriptContent}\n\`\`\`\n\nExecute it and report the results. If it fails, diagnose the issue and fix it.`;
-
-      this.taskQueue.push({
-        id: this.makeQueueEntryId(),
-        type: "script",
-        teammate: this.selfName,
-        task,
-      });
-      this.feedLine(
-        concat(
-          tp.muted("  Running script "),
-          tp.accent(basename(scriptPath)),
-          tp.muted(" → "),
-          tp.accent(`@${this.adapterName}`),
-        ),
-      );
-      this.feedLine();
-      this.refreshView();
-      this.kickDrain();
-      return;
-    }
-
-    // /script <description> — create and run a new script
-    const task = [
-      `The user wants a reusable script. Their request:`,
-      ``,
-      args,
-      ``,
-      `Instructions:`,
-      `1. Write the script and save it to the scripts directory: ${scriptsDir}`,
-      `2. Create the directory if it doesn't exist.`,
-      `3. Choose a short, descriptive filename (kebab-case, with appropriate extension like .sh, .ts, .js, .py, .ps1).`,
-      `4. Make the script executable if applicable.`,
-      `5. Run the script and report the results.`,
-      `6. If the script needs to be parameterized, use command-line arguments.`,
-    ].join("\n");
-
-    this.taskQueue.push({
-      id: this.makeQueueEntryId(),
-      type: "script",
-      teammate: this.selfName,
-      task,
-    });
-    this.feedLine(
-      concat(tp.muted("  Script task → "), tp.accent(`@${this.adapterName}`)),
-    );
-    this.feedLine();
-    this.refreshView();
-    this.kickDrain();
-  }
-
-  private async cmdTheme(): Promise<void> {
-    const t = theme();
-    this.feedLine();
-    this.feedLine(tp.bold("  Theme"));
-    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
-    this.feedLine();
-
-    // Helper: show a swatch + variable name + hex + example text
-    const row = (name: string, c: Color, example: string) => {
-      const hex = colorToHex(c);
-      this.feedLine(
-        concat(
-          pen.fg(c)("  ██"),
-          tp.text(`  ${name}`.padEnd(24)),
-          tp.muted(hex.padEnd(12)),
-          pen.fg(c)(example),
-        ),
-      );
-    };
-
-    this.feedLine(
-      tp.muted("       Variable                Hex         Example"),
-    );
-    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
-
-    // Brand / accent
-    row("accent", t.accent, "@beacon  /status  ● teammate");
-    row("accentBright", t.accentBright, "▸ highlighted item");
-    row("accentDim", t.accentDim, "┌─── border ───┐");
-
-    this.feedLine();
-
-    // Foreground
-    row("text", t.text, "Primary text content");
-    row("textMuted", t.textMuted, "Description or secondary info");
-    row("textDim", t.textDim, "─── separator ───");
-
-    this.feedLine();
-
-    // Status
-    row("success", t.success, "✔  Task completed");
-    row("warning", t.warning, "⚠  Pending handoff");
-    row("error", t.error, "✖  Something went wrong");
-    row("info", t.info, "⠋ Working on task...");
-
-    this.feedLine();
-
-    // Interactive
-    row("prompt", t.prompt, "> ");
-    row("input", t.input, "user typed text");
-    row("separator", t.separator, "────────────────");
-    row("progress", t.progress, "analyzing codebase...");
-    row("dropdown", t.dropdown, "/status  session overview");
-    row("dropdownHighlight", t.dropdownHighlight, "▸ /help   all commands");
-
-    this.feedLine();
-
-    // Cursor
-    this.feedLine(
-      concat(
-        pen.fg(t.cursorFg).bg(t.cursorBg)("  ██"),
-        tp.text("  cursorFg/cursorBg".padEnd(24)),
-        tp.muted(
-          `${colorToHex(t.cursorFg)}/${colorToHex(t.cursorBg)}`.padEnd(12),
-        ),
-        pen.fg(t.cursorFg).bg(t.cursorBg)(" block cursor "),
-      ),
-    );
-
-    this.feedLine();
-    this.feedLine(tp.muted("  Base accent: #3A96DD"));
-    this.feedLine();
-
-    // ── Markdown preview ──────────────────────────────────────
-    this.feedLine(tp.bold("  Markdown Preview"));
-    this.feedLine(tp.muted(`  ${"─".repeat(50)}`));
-    this.feedLine();
-
-    const mdSample = [
-      "# Heading 1",
-      "",
-      "## Heading 2",
-      "",
-      "### Heading 3",
-      "",
-      "Regular text with **bold**, *italic*, and `inline code`.",
-      "A [link](https://example.com) and ~~strikethrough~~.",
-      "",
-      "- Bullet item one",
-      "- Bullet item with **bold**",
-      "  - Nested item",
-      "",
-      "1. Ordered first",
-      "2. Ordered second",
-      "",
-      "> Blockquote text",
-      "> across multiple lines",
-      "",
-      "```js",
-      'const greeting = "hello";',
-      "async function main() {",
-      '  await fetch("/api");',
-      "  return 42;",
-      "}",
-      "```",
-      "",
-      "```python",
-      "def greet(name: str) -> None:",
-      '    print(f"Hello, {name}")',
-      "```",
-      "",
-      "```bash",
-      'echo "$HOME" | grep --color user',
-      "if [ -f .env ]; then source .env; fi",
-      "```",
-      "",
-      "```json",
-      "{",
-      '  "name": "teammates",',
-      '  "version": "0.1.0",',
-      '  "active": true',
-      "}",
-      "```",
-      "",
-      "| Language   | Status  |",
-      "|------------|---------|",
-      "| JavaScript | ✔  Ready |",
-      "| Python     | ✔  Ready |",
-      "| C#         | ✔  Ready |",
-      "",
-      "---",
-    ].join("\n");
-
-    this.feedMarkdown(mdSample);
-    this.feedLine();
-    this.refreshView();
   }
 }
 

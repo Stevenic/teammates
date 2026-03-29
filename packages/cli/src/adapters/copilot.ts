@@ -105,6 +105,7 @@ export class CopilotAdapter implements AgentAdapter {
       system?: boolean;
       skipMemoryUpdates?: boolean;
       onActivity?: (events: ActivityEvent[]) => void;
+      signal?: AbortSignal;
     },
   ): Promise<TaskResult> {
     await this.ensureClient(teammate.cwd);
@@ -252,6 +253,18 @@ export class CopilotAdapter implements AgentAdapter {
       (session as any).emit = wrappedEmit;
     }
 
+    // Listen for abort signal — disconnect the session on cancellation.
+    const onAbort = () => {
+      session.disconnect().catch(() => {});
+    };
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
     try {
       const timeout = this.options.timeout ?? 600_000;
       const reply = await session.sendAndWait({ prompt }, timeout);
@@ -274,6 +287,7 @@ export class CopilotAdapter implements AgentAdapter {
       result.logFile = logFile;
       return result;
     } finally {
+      if (options?.signal) options.signal.removeEventListener("abort", onAbort);
       // Disconnect the session (preserves data for potential resume)
       await session.disconnect().catch(() => {});
     }

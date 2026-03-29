@@ -38,6 +38,8 @@ export {
 export { EchoAdapter } from "./adapters/echo.js";
 export type { BannerInfo, ServiceInfo, ServiceStatus } from "./banner.js";
 export { AnimatedBanner } from "./banner.js";
+export type { CommandsDeps } from "./commands.js";
+export { CommandManager } from "./commands.js";
 export type { CliArgs } from "./cli-args.js";
 export { findTeammatesDir, PKG_VERSION, parseCliArgs } from "./cli-args.js";
 export type { ThreadContextEntry } from "./cli-utils.js";

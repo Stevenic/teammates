@@ -131,11 +131,6 @@ export class CliProxyAdapter implements AgentAdapter {
   private _tmpInitialized = false;
   /** Temp prompt files that need cleanup — guards against crashes before finally. */
   private pendingTempFiles: Set<string> = new Set();
-  /** Active child processes per teammate — used by killAgent() for interruption. */
-  private activeProcesses: Map<
-    string,
-    { child: ChildProcess; done: Promise<SpawnResult>; debugFile?: string }
-  > = new Map();
 
   constructor(options: CliProxyOptions) {
     this.options = options;
@@ -183,6 +178,7 @@ export class CliProxyAdapter implements AgentAdapter {
       system?: boolean;
       skipMemoryUpdates?: boolean;
       onActivity?: (events: ActivityEvent[]) => void;
+      signal?: AbortSignal;
     },
   ): Promise<TaskResult> {
     // If raw mode is set, skip all prompt wrapping — send prompt as-is
@@ -293,6 +289,7 @@ export class CliProxyAdapter implements AgentAdapter {
         fullPrompt,
         options?.onActivity,
         logFile,
+        options?.signal,
       );
       const output = this.preset.parseOutput
         ? this.preset.parseOutput(spawn.output)
@@ -425,22 +422,6 @@ export class CliProxyAdapter implements AgentAdapter {
     }
   }
 
-  async killAgent(teammate: string): Promise<SpawnResult | null> {
-    const entry = this.activeProcesses.get(teammate);
-    if (!entry || entry.child.killed) return null;
-
-    // Kill with SIGTERM → 5s → SIGKILL
-    entry.child.kill("SIGTERM");
-    setTimeout(() => {
-      if (!entry.child.killed) {
-        entry.child.kill("SIGKILL");
-      }
-    }, 5_000);
-
-    // Wait for the process to exit — the spawnAndProxy close handler resolves this
-    return entry.done;
-  }
-
   async destroySession(_sessionId: string): Promise<void> {
     // Clean up any leaked temp prompt files
     for (const file of this.pendingTempFiles) {
@@ -462,8 +443,8 @@ export class CliProxyAdapter implements AgentAdapter {
     fullPrompt: string,
     onActivity?: (events: ActivityEvent[]) => void,
     logFile?: string,
+    signal?: AbortSignal,
   ): Promise<SpawnResult> {
-    // Create a deferred promise so killAgent() can await the same result
     let resolveOuter!: (result: SpawnResult) => void;
     let rejectOuter!: (err: Error) => void;
     const done = new Promise<SpawnResult>((res, rej) => {
@@ -513,8 +494,26 @@ export class CliProxyAdapter implements AgentAdapter {
     });
     const taskStartTime = Date.now();
 
-    // Register the active process for killAgent() access
-    this.activeProcesses.set(teammate.name, { child, done, debugFile });
+    // Listen for abort signal — kill the child process on cancellation.
+    // Uses SIGTERM → 5s → SIGKILL escalation, same as the old killAgent().
+    let abortKillTimer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = () => {
+      if (!child.killed) {
+        child.kill("SIGTERM");
+        abortKillTimer = setTimeout(() => {
+          if (!child.killed) {
+            child.kill("SIGKILL");
+          }
+        }, 5_000);
+      }
+    };
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
 
     // Start watching for real-time activity events.
     // Claude: parse the debug log for tool names + errors (Claude writes this file via --debug-file).
@@ -600,11 +599,12 @@ export class CliProxyAdapter implements AgentAdapter {
     const cleanup = () => {
       clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
+      if (abortKillTimer) clearTimeout(abortKillTimer);
+      if (signal) signal.removeEventListener("abort", onAbort);
       if (onUserInput) {
         process.stdin.removeListener("data", onUserInput);
       }
       for (const stop of stopWatchers) stop();
-      this.activeProcesses.delete(teammate.name);
     };
 
     child.on("close", (code, signal) => {

@@ -11,7 +11,7 @@ import {
   formatActivityTime,
 } from "./activity-watcher.js";
 import type { StatusTracker } from "./status-tracker.js";
-import { theme, tp } from "./theme.js";
+import { theme } from "./theme.js";
 import type { ThreadContainer } from "./thread-container.js";
 import type { ActivityEvent, QueueEntry } from "./types.js";
 
@@ -28,7 +28,6 @@ export interface ActivityManagerDeps {
   makeSpan(...segs: { text: string; style: { fg?: Color } }[]): StyledSpan;
   refreshView(): void;
   feedLine(text?: string | StyledSpan): void;
-  getAdapter(): { killAgent?(teammate: string): Promise<any> };
 }
 
 // ─── ActivityManager ─────────────────────────────────────────────────
@@ -288,42 +287,6 @@ export class ActivityManager {
         }),
       },
     ]);
-  }
-
-  /** Cancel a running task by killing the agent process. */
-  async cancelRunningTask(queueId: string): Promise<boolean> {
-    const activeEntry = [...this.deps.agentActive.values()].find(
-      (e) => e.id === queueId,
-    );
-    if (!activeEntry) return false;
-
-    const adapter = this.deps.getAdapter();
-    if (!adapter.killAgent) {
-      this.deps.feedLine(
-        tp.warning("  Agent adapter does not support cancellation"),
-      );
-      return false;
-    }
-
-    const result = await adapter.killAgent(activeEntry.teammate);
-    if (!result) {
-      this.deps.feedLine(
-        tp.warning(`  No running task found for ${activeEntry.teammate}`),
-      );
-      return false;
-    }
-
-    this.cleanupActivityLines(activeEntry.teammate);
-
-    const displayName =
-      activeEntry.teammate === this.deps.selfName
-        ? this.deps.adapterName
-        : activeEntry.teammate;
-    this.deps.statusTracker.showNotification(
-      tp.warning(`✖ ${displayName}: task cancelled`),
-    );
-    this.deps.refreshView();
-    return true;
   }
 
   /** Initialize activity tracking state for a new task. */

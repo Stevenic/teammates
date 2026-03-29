@@ -40,6 +40,8 @@ export interface AgentAdapter {
       system?: boolean;
       skipMemoryUpdates?: boolean;
       onActivity?: (events: import("./types.js").ActivityEvent[]) => void;
+      /** Abort signal — when aborted, the adapter should kill/disconnect the running agent. */
+      signal?: AbortSignal;
     },
   ): Promise<TaskResult>;
 
@@ -48,15 +50,6 @@ export interface AgentAdapter {
    * Falls back to startSession if not implemented.
    */
   resumeSession?(teammate: TeammateConfig, sessionId: string): Promise<string>;
-
-  /**
-   * Kill a running agent and return its partial output.
-   * Used by the interrupt-and-resume system to capture in-progress work.
-   * Returns null if no agent is running for this teammate.
-   */
-  killAgent?(
-    teammate: string,
-  ): Promise<import("./adapters/cli-proxy.js").SpawnResult | null>;
 
   /** Clean up a session. */
   destroySession?(sessionId: string): Promise<void>;
