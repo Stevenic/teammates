@@ -48,6 +48,15 @@ describe("buildTeammatePrompt", () => {
     expect(prompt).toContain(".teammates/beacon/memory/");
   });
 
+  it("suppresses memory update instructions for ephemeral tasks", () => {
+    const prompt = buildTeammatePrompt(makeConfig(), "task", {
+      skipMemoryUpdates: true,
+    });
+    expect(prompt).toContain("### Memory Updates");
+    expect(prompt).toContain("ephemeral side task");
+    expect(prompt).not.toContain(".teammates/beacon/memory/");
+  });
+
   it("skips wisdom section when empty", () => {
     const prompt = buildTeammatePrompt(makeConfig({ wisdom: "" }), "task");
     expect(prompt).not.toContain("<WISDOM>");
@@ -108,14 +117,6 @@ describe("buildTeammatePrompt", () => {
     });
     expect(prompt).toContain("<HANDOFF_CONTEXT>");
     expect(prompt).toContain("Handed off from scribe");
-  });
-
-  it("includes session file when provided", () => {
-    const prompt = buildTeammatePrompt(makeConfig(), "task", {
-      sessionFile: "/tmp/beacon-session.md",
-    });
-    expect(prompt).toContain("### Session State");
-    expect(prompt).toContain("/tmp/beacon-session.md");
   });
 
   it("drops daily logs that exceed the 12k daily budget", () => {

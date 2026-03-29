@@ -1,11 +1,10 @@
 // Public API for @teammates/cli
 
-export { ensureActivityHook } from "./activity-hook.js";
 export {
+  collapseActivityEvents,
   formatActivityTime,
-  parseActivityLog,
   parseClaudeActivity,
-  watchActivityLog,
+  watchCodexDebugLog,
   watchDebugLog,
   watchDebugLogErrors,
 } from "./activity-watcher.js";
@@ -22,12 +21,18 @@ export {
   queryRecallContext,
   syncRecallIndex,
 } from "./adapter.js";
+export { ClaudeAdapter, type ClaudeAdapterOptions } from "./adapters/claude.js";
 export {
   type AgentPreset,
   CliProxyAdapter,
   type CliProxyOptions,
   PRESETS,
 } from "./adapters/cli-proxy.js";
+export { CodexAdapter, type CodexAdapterOptions } from "./adapters/codex.js";
+export {
+  CopilotAdapter,
+  type CopilotAdapterOptions,
+} from "./adapters/copilot.js";
 export { EchoAdapter } from "./adapters/echo.js";
 export type { BannerInfo, ServiceInfo, ServiceStatus } from "./banner.js";
 export { AnimatedBanner } from "./banner.js";

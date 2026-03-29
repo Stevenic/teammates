@@ -38,6 +38,7 @@ export interface AgentAdapter {
     options?: {
       raw?: boolean;
       system?: boolean;
+      skipMemoryUpdates?: boolean;
       onActivity?: (events: import("./types.js").ActivityEvent[]) => void;
     },
   ): Promise<TaskResult>;
@@ -47,9 +48,6 @@ export interface AgentAdapter {
    * Falls back to startSession if not implemented.
    */
   resumeSession?(teammate: TeammateConfig, sessionId: string): Promise<string>;
-
-  /** Get the session file path for a teammate (if session is active). */
-  getSessionFile?(teammateName: string): string | undefined;
 
   /**
    * Kill a running agent and return its partial output.
@@ -200,7 +198,6 @@ export function buildTeammatePrompt(
     handoffContext?: string;
     roster?: RosterEntry[];
     services?: InstalledService[];
-    sessionFile?: string;
     recallResults?: SearchResult[];
     /** Contents of USER.md — injected just before the task. */
     userProfile?: string;
@@ -208,6 +205,8 @@ export function buildTeammatePrompt(
     tokenBudget?: number;
     /** System task — skip daily log / memory update instructions. */
     system?: boolean;
+    /** Ephemeral task — suppress memory update instructions. */
+    skipMemoryUpdates?: boolean;
   },
 ): string {
   const parts: string[] = [];
@@ -409,26 +408,6 @@ export function buildTeammatePrompt(
     '- Do NOT just say "I\'ll hand this off" in prose — that does nothing. You MUST use the fenced block.',
   ];
 
-  // Session state (conditional)
-  if (options?.sessionFile) {
-    instrLines.push(
-      "",
-      "### Session State",
-      "",
-      `Your session file is at: \`${options.sessionFile}\``,
-      "",
-      "**After completing the task**, append a brief entry to this file with:",
-      "- What you did",
-      "- Key decisions made",
-      "- Files changed",
-      "- Anything the next task should know",
-      "",
-      "This is how you maintain continuity across tasks. Always read it, always update it.",
-      "",
-      "**IMPORTANT:** If the session file already contains an entry for the current task (from a prior lost response), you MUST still do the work and produce a full text response. The session file is for YOUR continuity — the user only sees your text output. A prior session entry does NOT mean the user received your response.",
-    );
-  }
-
   // Cross-folder write boundary (AI teammates only)
   if (teammate.type === "ai") {
     instrLines.push(
@@ -441,13 +420,20 @@ export function buildTeammatePrompt(
     );
   }
 
-  // Memory updates (skip for system tasks — they must not pollute daily logs)
+  // Memory updates (skip for system and ephemeral tasks)
   if (options?.system) {
     instrLines.push(
       "",
       "### Memory Updates",
       "",
       "**This is a system maintenance task.** Do NOT update daily logs, typed memories, or WISDOM.md. Do NOT create or append to any memory files. Just do the work and produce your text response.",
+    );
+  } else if (options?.skipMemoryUpdates) {
+    instrLines.push(
+      "",
+      "### Memory Updates",
+      "",
+      "**This is an ephemeral side task.** Do NOT update daily logs, typed memories, or WISDOM.md. Do NOT create or append to any memory files. Just answer the question and produce your text response.",
     );
   } else {
     instrLines.push(

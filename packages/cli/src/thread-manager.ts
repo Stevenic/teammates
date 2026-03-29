@@ -81,7 +81,7 @@ export class ThreadManager {
       originMessage,
       originTimestamp: Date.now(),
       entries: [],
-      pendingAgents: new Set(),
+      pendingTasks: new Set(),
       collapsed: false,
       collapsedEntries: new Set(),
       focusedAt: Date.now(),
@@ -94,13 +94,13 @@ export class ThreadManager {
 
   /**
    * Update the footer right hint to show the focused thread.
-   * Shows "replying to #N" when a thread is focused, or "? /help" otherwise.
+   * Shows "replying to task #N" when a thread is focused, or "? /help" otherwise.
    */
   updateFooterHint(): void {
     if (!this.view.chatView) return;
     if (this.focusedThreadId != null && this.getThread(this.focusedThreadId)) {
       this.view.chatView.setFooterRight(
-        tp.muted(`replying to #${this.focusedThreadId} `),
+        tp.muted(`replying to task #${this.focusedThreadId} `),
       );
     } else if (this.view.defaultFooterRight) {
       this.view.chatView.setFooterRight(this.view.defaultFooterRight);
@@ -329,45 +329,69 @@ export class ThreadManager {
     container.clearInsertAt();
   }
 
-  /** Render a working placeholder for an agent in a thread with [show activity] [cancel] verbs. */
-  renderWorkingPlaceholder(threadId: number, teammate: string): void {
+  /** Render a queued or working placeholder for an agent in a thread. */
+  renderTaskPlaceholder(
+    threadId: number,
+    placeholderId: string,
+    teammate: string,
+    state: "queued" | "working",
+  ): void {
     if (!this.view.chatView) return;
     const container = this.containers.get(threadId);
     if (!container) return;
     const t = theme();
     const displayName =
       teammate === this.view.selfName ? this.view.adapterName : teammate;
-    const activityId = `activity-${teammate}-${threadId}`;
-    const cancelId = `cancel-${teammate}-${threadId}`;
+    const activityId = `activity-${placeholderId}`;
+    const cancelId = `cancel-${placeholderId}`;
+    const statusText = state === "queued" ? "queued..." : "working...";
+    const actions =
+      state === "queued"
+        ? [
+            {
+              id: cancelId,
+              normalStyle: this.view.makeSpan(
+                { text: `  ${displayName}: `, style: { fg: t.accent } },
+                { text: statusText, style: { fg: t.textDim } },
+                { text: "  [cancel]", style: { fg: t.textDim } },
+              ),
+              hoverStyle: this.view.makeSpan(
+                { text: `  ${displayName}: `, style: { fg: t.accent } },
+                { text: statusText, style: { fg: t.textDim } },
+                { text: "  [cancel]", style: { fg: t.accent } },
+              ),
+            },
+          ]
+        : [
+            {
+              id: activityId,
+              normalStyle: this.view.makeSpan(
+                { text: `  ${displayName}: `, style: { fg: t.accent } },
+                { text: statusText, style: { fg: t.textDim } },
+                { text: "  [show activity]", style: { fg: t.textDim } },
+              ),
+              hoverStyle: this.view.makeSpan(
+                { text: `  ${displayName}: `, style: { fg: t.accent } },
+                { text: statusText, style: { fg: t.textDim } },
+                { text: "  [show activity]", style: { fg: t.accent } },
+              ),
+            },
+            {
+              id: cancelId,
+              normalStyle: this.view.makeSpan({
+                text: " [cancel]",
+                style: { fg: t.textDim },
+              }),
+              hoverStyle: this.view.makeSpan({
+                text: " [cancel]",
+                style: { fg: t.accent },
+              }),
+            },
+          ];
     container.addPlaceholder(
       this.view.chatView,
-      teammate,
-      [
-        {
-          id: activityId,
-          normalStyle: this.view.makeSpan(
-            { text: `  ${displayName}: `, style: { fg: t.accent } },
-            { text: "working on task...", style: { fg: t.textDim } },
-            { text: "  [show activity]", style: { fg: t.textDim } },
-          ),
-          hoverStyle: this.view.makeSpan(
-            { text: `  ${displayName}: `, style: { fg: t.accent } },
-            { text: "working on task...", style: { fg: t.textDim } },
-            { text: "  [show activity]", style: { fg: t.accent } },
-          ),
-        },
-        {
-          id: cancelId,
-          normalStyle: this.view.makeSpan({
-            text: " [cancel]",
-            style: { fg: t.textDim },
-          }),
-          hoverStyle: this.view.makeSpan({
-            text: " [cancel]",
-            style: { fg: t.accent },
-          }),
-        },
-      ],
+      placeholderId,
+      actions,
       this.shiftAllContainers,
     );
   }
@@ -440,6 +464,7 @@ export class ThreadManager {
     cleaned: string,
     threadId: number,
     container: ThreadContainer,
+    placeholderId: string,
   ): void {
     const t = theme();
     const subject = result.summary || "Task completed";
@@ -448,7 +473,7 @@ export class ThreadManager {
     // and insert the completed response at the reply insert point
     // (before remaining working placeholders) so completed replies float up.
     if (this.view.chatView) {
-      container.hidePlaceholder(this.view.chatView, result.teammate);
+      container.hidePlaceholder(this.view.chatView, placeholderId);
     }
 
     // Track reply key for individual collapse

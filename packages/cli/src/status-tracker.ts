@@ -206,22 +206,28 @@ export class StatusTracker {
         ? `(${idx + 1}/${total} - ${elapsedStr.slice(1, -1)})`
         : elapsedStr;
 
-    const prefix = `${spinChar} ${displayName}... `;
+    const prefix = `${spinChar} ${displayName} - `;
     const suffix = ` ${tag}`;
-    const maxTask = 80 - prefix.length - suffix.length;
+    const cols = process.stdout.columns || 80;
+    const budget = cols - prefix.length;
     const cleanTask = task.replace(/[\r\n]+/g, " ").trim();
+
+    // If the suffix won't fit alongside even a minimal task, omit it entirely
+    const useSuffix = budget - suffix.length > 3;
+    const maxTask = useSuffix ? budget - suffix.length : budget;
     const taskText =
       maxTask <= 3
         ? ""
         : cleanTask.length > maxTask
           ? `${cleanTask.slice(0, maxTask - 1)}…`
           : cleanTask;
+    const finalSuffix = useSuffix ? suffix : "";
 
     if (this.view.chatView) {
       this.view.chatView.setProgress(
         concat(
-          tp.accent(`${spinChar} ${displayName}... `),
-          tp.muted(`${taskText}${suffix}`),
+          tp.accent(`${spinChar} ${displayName} - `),
+          tp.muted(`${taskText}${finalSuffix}`),
         ),
       );
       this.view.app.scheduleRefresh();
@@ -230,8 +236,8 @@ export class StatusTracker {
       const line =
         `  ${spinColor(spinChar)} ` +
         chalk.bold(displayName) +
-        chalk.gray(`... ${taskText}`) +
-        chalk.gray(suffix);
+        chalk.gray(` - ${taskText}`) +
+        chalk.gray(finalSuffix);
       this.view.input.setStatus(line);
     }
   }

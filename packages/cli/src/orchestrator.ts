@@ -123,6 +123,7 @@ export class Orchestrator {
     const result = await this.adapter.executeTask(sessionId, teammate, prompt, {
       raw: assignment.raw,
       system: assignment.system,
+      skipMemoryUpdates: assignment.skipMemoryUpdates,
       onActivity: assignment.onActivity,
     });
     // Propagate system flag so event handlers can distinguish system vs user tasks

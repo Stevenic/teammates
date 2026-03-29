@@ -564,6 +564,14 @@ export async function buildWisdomPrompt(
 
   const today = new Date().toISOString().slice(0, 10);
 
+  // Skip if already distilled today
+  const compactedMatch = currentWisdom.match(
+    /Last compacted:\s*(\d{4}-\d{2}-\d{2})/,
+  );
+  if (compactedMatch && compactedMatch[1] === today) {
+    return null;
+  }
+
   const parts: string[] = [];
   parts.push("# Wisdom Distillation Task\n");
   parts.push(

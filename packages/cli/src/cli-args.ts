@@ -7,7 +7,9 @@ import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import chalk from "chalk";
 import type { AgentAdapter } from "./adapter.js";
-import { CliProxyAdapter, PRESETS } from "./adapters/cli-proxy.js";
+import { ClaudeAdapter } from "./adapters/claude.js";
+import { PRESETS } from "./adapters/cli-proxy.js";
+import { CodexAdapter } from "./adapters/codex.js";
 import type { CopilotAdapterOptions } from "./adapters/copilot.js";
 import { EchoAdapter } from "./adapters/echo.js";
 
@@ -108,8 +110,24 @@ export async function resolveAdapter(
     } satisfies CopilotAdapterOptions);
   }
 
-  // All other adapters go through the CLI proxy
+  // Agent-specific adapters
+  if (name === "claude") {
+    return new ClaudeAdapter({
+      model: opts.modelOverride,
+      extraFlags: opts.agentPassthrough,
+    });
+  }
+
+  if (name === "codex") {
+    return new CodexAdapter({
+      model: opts.modelOverride,
+      extraFlags: opts.agentPassthrough,
+    });
+  }
+
+  // Fallback for other CLI-proxy presets (e.g. aider)
   if (PRESETS[name]) {
+    const { CliProxyAdapter } = await import("./adapters/cli-proxy.js");
     return new CliProxyAdapter({
       preset: name,
       model: opts.modelOverride,

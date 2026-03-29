@@ -25,12 +25,16 @@ export class EchoAdapter implements AgentAdapter {
     options?: {
       raw?: boolean;
       system?: boolean;
+      skipMemoryUpdates?: boolean;
       onActivity?: (events: ActivityEvent[]) => void;
     },
   ): Promise<TaskResult> {
     const fullPrompt = options?.raw
       ? prompt
-      : buildTeammatePrompt(teammate, prompt);
+      : buildTeammatePrompt(teammate, prompt, {
+          system: options?.system,
+          skipMemoryUpdates: options?.skipMemoryUpdates,
+        });
 
     return {
       teammate: teammate.name,

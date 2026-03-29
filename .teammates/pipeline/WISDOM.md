@@ -1,4 +1,4 @@
-# Pipeline — Wisdom
+# Pipeline - Wisdom
 
 Distilled principles. Read this first every session (after SOUL.md).
 
@@ -6,35 +6,59 @@ Last compacted: 2026-03-29
 
 ---
 
-**Co-ownership is a valid pattern — don't block on it.**
-SOUL.md files can legitimately assign the same file as primary to multiple teammates (e.g., `adapter.ts` is co-owned by Beacon and Lexicon). The ownership check script warns but exits 0. Don't treat multi-primary as an error.
+**Co-ownership should warn, not block.**
+Multiple teammates can legitimately share primary ownership of a file.
+Ownership checks should surface that as review context, but only fail on actual map corruption.
 
-**Ownership script: bash scoping gotcha.**
-`[[ =~ ]]` with backtick regex patterns breaks inside functions when using `local` variables. Move regex patterns and match arrays to global scope. This bit me during the check-ownership.sh build.
+**Bash regex state belongs at script scope.**
+In `check-ownership.sh`, `[[ =~ ]]` gets brittle when regex patterns or match arrays live in `local` function scope. Keep shared regex state global to avoid false negatives and parsing surprises.
 
-**Branch protection: solo-dev settings.**
-For a solo developer: require PRs + CI status checks, 0 required approvals, `strict=true` (up-to-date before merge), `enforce_admins=false` (escape hatch). This balances process discipline with practical solo workflow.
+**Local verification beats workflow speculation.**
+CI changes are not done when they merely look correct.
+Run the real workspace commands locally against current repo state before declaring a workflow, cache, or policy change complete.
 
-**Prompt token budgets are real.**
-Teammate prompts can easily blow past model limits when conversation history (last 10 exchanges), 7 days of daily logs, and 15+ boilerplate sections are all injected. The actual task instruction gets buried. Keep daily logs concise — verbose logs directly hurt response quality.
+**Sandbox failures need signature-based triage.**
+On this Windows sandbox, Vitest can fail before loading config with Vite `externalize-deps` and `spawn EPERM`.
+Treat that startup signature as an environment constraint first, not immediate evidence that CI or workspace tests are broken.
 
-**Verify locally before declaring done.**
-Never trust that a CI change works based on reasoning alone. Run the script locally against real data. This caught multiple bugs in check-ownership.sh (false-positive conflicts, bash scoping) that would have been embarrassing in CI.
+**Dirty worktrees require scope discipline.**
+This repo is often used with unrelated local edits in flight.
+Pipeline work should avoid reverting or "cleaning up" user-owned changes and stay tightly scoped to CI/CD files.
 
-**changelog.yml has a known path bug.**
-`${PACKAGE}/` should be `packages/${PACKAGE}/`. Identified in retro on 2026-03-17, fix still pending. Appears on lines 57, 63, 84, 89.
+**Repo-root paths matter in workflows.**
+GitHub Actions steps start at the repository root unless a working directory is set.
+Package-scoped logic should use explicit repo-root paths like `packages/${PACKAGE}/`, not assume the package directory is current.
 
-**GitHub App > PAT for auth UX.**
-When integrating with GitHub: `gh` CLI with browser OAuth is dramatically simpler than PAT generation. Hybrid approach (`gh auth token` feeding Octokit) gives programmatic control when needed.
+**New packages must be added everywhere CI reasons about packages.**
+A workspace is not covered just because it builds locally.
+Update lint, type-check, build, test, coverage, publish, changelog, and any OS-specific or E2E matrix logic in the same pass.
 
-**Retro follow-through matters.**
-Proposals identified in retrospectives must be applied in the same session. Two retros on 2026-03-17 found the same unfixed issues — execution velocity means nothing if retro outputs aren't acted on.
+**Audit at `high` unless reality forces lower.**
+The default security bar for this repo is `npm audit --audit-level=high`.
+Only relax it when an unfixable transitive issue makes CI noisy, and treat that downgrade as temporary debt to remove later.
 
-**New packages need full CI coverage.**
-When a new package is added to the monorepo (e.g., Hands/MCP server), it needs: build, test, lint, publish pipeline, plus platform matrix if it has OS-specific behavior. Don't forget E2E testing infrastructure (Xvfb for display-dependent tests).
+**Deployment concurrency should protect in-flight releases.**
+For publish and deploy workflows, serialize runs without canceling the one already shipping.
+A stale deploy is recoverable; a half-canceled release is how you get broken state.
 
-**paths-ignore for non-code files.**
-Handoff files, memory files, and other teammate metadata (`.teammates/_handoffs/`, `.teammates/*/memory/`) should be in `paths-ignore` to avoid triggering CI on non-code changes.
+**Solo branch protection still needs discipline.**
+For a one-developer repo, require PRs and required status checks, keep `strict=true`, allow 0 approvals, and leave `enforce_admins=false` as the emergency escape hatch.
 
-**CI audit level: high is the bar.**
-Audit level was tightened from `critical` to `high` after Beacon resolved all transitive vulns (vectra->openai->axios). Don't regress to `critical` unless there's an unfixable transitive vuln blocking CI.
+**Operational metadata should not trigger product CI.**
+Memory files, handoffs, and other teammate-only metadata belong under `paths-ignore`. CI should burn minutes on product changes, not on internal coordination artifacts.
+
+**Pages deploys work best as docs-only builds.**
+GitHub Pages should build from `./docs` with a manual dispatch escape hatch.
+Its deploy concurrency should avoid canceling an in-flight publish, and docs hosting should stay isolated from the main app build.
+
+**Minimal-theme layout changes require wrapper overrides.**
+On GitHub Pages' minimal theme, full-width docs layouts require overriding the theme's default `.wrapper` max-width and float-based structure.
+Styling tweaks alone will not break the built-in narrow layout.
+
+**`gh` auth is the pragmatic default for GitHub automation.**
+Browser-based `gh auth login` is usually simpler and safer than managing long-lived PATs.
+If code needs a token, piping `gh auth token` into tooling is cleaner than inventing new secret handling.
+
+**Daily logs are part of the prompt budget.**
+Verbose teammate logs crowd out the actual task in future sessions.
+Record durable outcomes and key numbers only when they change decisions; compress or omit the rest.

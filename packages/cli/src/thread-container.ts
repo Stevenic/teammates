@@ -67,7 +67,7 @@ export class ThreadContainer {
   /** Feed line index of the thread-level [reply] [copy thread] action line, or null if not yet rendered. */
   replyActionIdx: number | null = null;
 
-  /** Maps teammate name → feed line index of the "working..." placeholder. */
+  /** Maps placeholder ID → feed line index of the queued/working placeholder. */
   private placeholders: Map<string, number> = new Map();
 
   /**
@@ -182,7 +182,7 @@ export class ThreadContainer {
    */
   addPlaceholder(
     view: ThreadFeedView,
-    teammate: string,
+    placeholderId: string,
     actions: FeedActionItem[],
     onShift: ShiftCallback,
   ): void {
@@ -197,30 +197,33 @@ export class ThreadContainer {
     const oldEnd = this.endIdx;
     onShift(insertAt, 1);
     if (this.endIdx === oldEnd) this.endIdx++;
-    this.placeholders.set(teammate, insertAt);
+    this.placeholders.set(placeholderId, insertAt);
   }
 
   /**
    * Hide a working placeholder and remove it from tracking.
    * Returns the placeholder's feed line index, or undefined if not found.
    */
-  hidePlaceholder(view: ThreadFeedView, teammate: string): number | undefined {
-    const idx = this.placeholders.get(teammate);
+  hidePlaceholder(
+    view: ThreadFeedView,
+    placeholderId: string,
+  ): number | undefined {
+    const idx = this.placeholders.get(placeholderId);
     if (idx != null) {
       view.setFeedLineHidden(idx, true);
-      this.placeholders.delete(teammate);
+      this.placeholders.delete(placeholderId);
     }
     return idx;
   }
 
   /** Check if a working placeholder exists for a teammate. */
-  hasPlaceholder(teammate: string): boolean {
-    return this.placeholders.has(teammate);
+  hasPlaceholder(placeholderId: string): boolean {
+    return this.placeholders.has(placeholderId);
   }
 
   /** Get the feed line index of a teammate's working placeholder, or undefined. */
-  getPlaceholderIndex(teammate: string): number | undefined {
-    return this.placeholders.get(teammate);
+  getPlaceholderIndex(placeholderId: string): number | undefined {
+    return this.placeholders.get(placeholderId);
   }
 
   /** Number of active (visible) working placeholders. */

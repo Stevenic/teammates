@@ -91,6 +91,10 @@ export interface TaskResult {
   rawOutput?: string;
   /** The full prompt sent to the agent (for debug logging) */
   fullPrompt?: string;
+  /** Path to the prompt file (.teammates/.tmp/<logfile>-prompt.md) */
+  promptFile?: string;
+  /** Path to the activity/debug log file (.teammates/.tmp/<logfile>.md) */
+  logFile?: string;
   /** Process diagnostics for debugging empty/failed responses */
   diagnostics?: {
     /** Process exit code (null if killed by signal) */
@@ -118,6 +122,8 @@ export interface TaskAssignment {
   raw?: boolean;
   /** When true, this is a system-initiated task — suppress progress bar */
   system?: boolean;
+  /** When true, suppress memory-writing instructions in the teammate prompt. */
+  skipMemoryUpdates?: boolean;
   /** Callback fired during execution with real-time activity events from the agent. */
   onActivity?: (events: ActivityEvent[]) => void;
 }
@@ -131,6 +137,7 @@ export type OrchestratorEvent =
 /** A task queue entry — either an agent task or an internal operation. */
 export type QueueEntry =
   | {
+      id: string;
       type: "agent";
       teammate: string;
       task: string;
@@ -144,12 +151,48 @@ export type QueueEntry =
         summary: string;
       };
     }
-  | { type: "compact"; teammate: string; task: string; threadId?: number }
-  | { type: "retro"; teammate: string; task: string; threadId?: number }
-  | { type: "btw"; teammate: string; task: string; threadId?: number }
-  | { type: "debug"; teammate: string; task: string; threadId?: number }
-  | { type: "script"; teammate: string; task: string; threadId?: number }
-  | { type: "summarize"; teammate: string; task: string; threadId?: number };
+  | {
+      id: string;
+      type: "compact";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "retro";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "btw";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "debug";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "script";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "summarize";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    };
 
 /** State captured when an agent is interrupted mid-task. */
 export interface InterruptState {
@@ -179,8 +222,8 @@ export interface TaskThread {
   originTimestamp: number;
   /** Flat append-only list of replies. */
   entries: ThreadEntry[];
-  /** Teammates currently working on tasks in this thread. */
-  pendingAgents: Set<string>;
+  /** Queue entry IDs still pending or running in this thread. */
+  pendingTasks: Set<string>;
   /** Whether the whole thread is collapsed in the feed. */
   collapsed: boolean;
   /** Indices of individually collapsed replies. */

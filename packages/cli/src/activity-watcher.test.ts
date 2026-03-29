@@ -1,0 +1,174 @@
+import { describe, expect, it } from "vitest";
+import { parseCodexJsonlLine } from "./activity-watcher.js";
+
+describe("parseCodexJsonlLine", () => {
+  const start = Date.parse("2026-03-29T12:00:00.000Z");
+  const receivedAt = start + 4_000;
+
+  it("maps Get-Content shell commands to Read activity", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "tool_call",
+        name: "shell_command",
+        arguments: { command: "Get-Content -Raw packages\\cli\\src\\cli.ts" },
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Read", detail: "cli.ts" },
+    ]);
+  });
+
+  it("maps rg shell commands to Grep activity", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "tool_call",
+        name: "shell_command",
+        arguments: { command: 'rg -n "watchDebugLog" packages/cli/src' },
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Grep", detail: "watchDebugLog" },
+    ]);
+  });
+
+  it("maps apply_patch to Edit activity with the target file", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "tool_call",
+        name: "apply_patch",
+        arguments: {
+          patch: [
+            "*** Begin Patch",
+            "*** Update File: packages/cli/src/status-tracker.ts",
+            "@@",
+            "-old",
+            "+new",
+            "*** End Patch",
+          ].join("\n"),
+        },
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Edit", detail: "status-tracker.ts" },
+    ]);
+  });
+
+  it("maps exec_command_begin events to live shell activity", () => {
+    const line = JSON.stringify({
+      type: "exec_command_begin",
+      command: "Get-Content -Raw packages\\cli\\src\\cli.ts",
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Read", detail: "cli.ts" },
+    ]);
+  });
+
+  it("maps command_execution item.started events from the JSONL debug log", () => {
+    const line = JSON.stringify({
+      type: "item.started",
+      item: {
+        type: "command_execution",
+        command:
+          '"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -Command "Get-Content .teammates\\beacon\\SOUL.md"',
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Read", detail: "SOUL.md" },
+    ]);
+  });
+
+  it("maps patch_apply_begin events to live edit activity", () => {
+    const line = JSON.stringify({
+      type: "patch_apply_begin",
+      changes: {
+        path: "packages/cli/src/activity-watcher.ts",
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Edit", detail: "activity-watcher.ts" },
+    ]);
+  });
+
+  it("accepts stringified tool arguments", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "tool_call",
+        name: "shell_command",
+        arguments: JSON.stringify({
+          command: 'rg -n "parseCodexJsonlLine" packages/cli/src',
+        }),
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Grep", detail: "parseCodexJsonlLine" },
+    ]);
+  });
+
+  it("accepts custom_tool_call items with input payloads", () => {
+    const line = JSON.stringify({
+      type: "response.output_item.done",
+      item: {
+        type: "custom_tool_call",
+        name: "shell_command",
+        input: {
+          command: "Get-Content -Raw packages\\cli\\src\\activity-watcher.ts",
+        },
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Read", detail: "activity-watcher.ts" },
+    ]);
+  });
+
+  it("accepts function_call items with stringified input", () => {
+    const line = JSON.stringify({
+      type: "response.output_item.added",
+      output_item: {
+        type: "function_call",
+        name: "apply_patch",
+        input: JSON.stringify({
+          patch: [
+            "*** Begin Patch",
+            "*** Update File: packages/cli/src/cli.ts",
+            "@@",
+            "-old",
+            "+new",
+            "*** End Patch",
+          ].join("\n"),
+        }),
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Edit", detail: "cli.ts" },
+    ]);
+  });
+
+  it("maps error events to error activity", () => {
+    const line = JSON.stringify({
+      type: "error",
+      message: "stream disconnected before completion",
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      {
+        elapsedMs: 4_000,
+        tool: "Codex",
+        detail: "stream disconnected before completion",
+        isError: true,
+      },
+    ]);
+  });
+});

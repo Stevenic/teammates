@@ -2,29 +2,14 @@
  * Activity watcher — monitors an agent's activity in real-time
  * and emits parsed activity events (tool calls, errors) as they appear.
  *
- * Two data sources:
- *   1. **Activity hook log** — a PostToolUse hook writes tool name + input
- *      details (file path, command, pattern) to a per-agent log file.
- *      This provides rich detail for every tool call.
- *   2. **Debug log** — Claude's built-in debug log provides tool errors.
- *      Used as a fallback for error detection.
- *
- * Currently supports Claude debug logs. Codex support can be added later
- * by parsing JSONL stdout events.
+ * Data sources:
+ *   - **Claude debug log** — tool names + errors, written by Claude via --debug-file.
+ *   - **Codex JSONL debug log** — tailed from the paired `.tmp/debug/*.md` file.
  */
 
 import { readFileSync, statSync, unwatchFile, watchFile } from "node:fs";
+import { basename } from "node:path";
 import type { ActivityEvent } from "./types.js";
-
-// ── Activity hook log parsing ───────────────────────────────────────
-
-/**
- * Activity hook log format (one line per tool call):
- *   `2026-03-29T22:15:00.000Z Read WISDOM.md`
- *   `2026-03-29T22:15:05.000Z Bash npm run build`
- *   `2026-03-29T22:15:10.000Z Grep /pattern/`
- */
-const ACTIVITY_LINE_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+(\w+)\s*(.*)/;
 
 /** Tools that represent actual agent work (not internal plumbing). */
 const WORK_TOOLS = new Set([
@@ -39,27 +24,372 @@ const WORK_TOOLS = new Set([
   "WebFetch",
   "WebSearch",
   "NotebookEdit",
-  "TodoWrite",
 ]);
 
-/**
- * Parse activity events from the hook log file content.
- */
-export function parseActivityLog(
-  content: string,
-  taskStartTime: number,
-): ActivityEvent[] {
-  const events: ActivityEvent[] = [];
-  for (const line of content.split("\n")) {
-    const m = ACTIVITY_LINE_RE.exec(line);
-    if (!m) continue;
-    const tool = m[2];
-    if (!WORK_TOOLS.has(tool)) continue;
-    const ts = new Date(m[1]).getTime();
-    const detail = m[3].trim() || undefined;
-    events.push({ elapsedMs: ts - taskStartTime, tool, detail });
+/** Read-only / research tools — collapsed into "Exploring" summaries. */
+const RESEARCH_TOOLS = new Set(["Read", "Grep", "Glob", "Search", "Agent"]);
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function getString(
+  record: Record<string, unknown> | null,
+  key: string,
+): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function getObjectOrParsedJson(
+  record: Record<string, unknown> | null,
+  key: string,
+): Record<string, unknown> | null {
+  const value = record?.[key];
+  if (value && typeof value === "object") {
+    return value as Record<string, unknown>;
   }
-  return events;
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getNestedObject(
+  record: Record<string, unknown> | null,
+  ...keys: string[]
+): Record<string, unknown> | null {
+  for (const key of keys) {
+    const nested = getObjectOrParsedJson(record, key);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function unwrapShellWrapper(command: string): string {
+  const trimmed = command.trim();
+  const idx = trimmed.search(/\s-Command\s+/i);
+  if (idx < 0) return trimmed;
+  let inner = trimmed
+    .slice(idx)
+    .replace(/^\s-Command\s+/i, "")
+    .trim();
+  if (inner.length >= 2) {
+    const first = inner[0];
+    const last = inner[inner.length - 1];
+    if ((first === '"' || first === "'") && first === last) {
+      inner = inner.slice(1, -1).trim();
+    }
+  }
+  return inner || trimmed;
+}
+
+function summarizeCommand(command: string, max = 80): string {
+  const singleLine = unwrapShellWrapper(command).replace(/\s+/g, " ").trim();
+  return singleLine.length > max
+    ? `${singleLine.slice(0, max - 3)}...`
+    : singleLine;
+}
+
+function extractQuotedValue(command: string): string | undefined {
+  const match = unwrapShellWrapper(command).match(/["'`]([^"'`]+)["'`]/);
+  return match?.[1];
+}
+
+function extractFileFromCommand(command: string): string | undefined {
+  const normalized = unwrapShellWrapper(command);
+  const quoted = extractQuotedValue(normalized);
+  if (quoted) return basename(quoted);
+
+  const tokens = normalized.trim().split(/\s+/);
+  const last = tokens[tokens.length - 1];
+  if (!last || last.startsWith("-")) return undefined;
+  return basename(last.replace(/^['"`]|['"`]$/g, ""));
+}
+
+function extractPatternFromCommand(command: string): string | undefined {
+  const normalized = unwrapShellWrapper(command);
+  const selectString = normalized.match(/-Pattern\s+["'`]([^"'`]+)["'`]/i);
+  if (selectString) return selectString[1];
+
+  const rg = normalized.match(
+    /\brg\b(?:\s+[^\s-][^\s]*)*\s+["'`]([^"'`]+)["'`]/i,
+  );
+  if (rg) return rg[1];
+
+  return extractQuotedValue(normalized);
+}
+
+function summarizePatchTarget(patch: string): string | undefined {
+  const matches = Array.from(
+    patch.matchAll(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm),
+  );
+  if (matches.length === 0) return undefined;
+  const first = basename(matches[0][1].trim());
+  return matches.length > 1 ? `${first} (+${matches.length - 1} files)` : first;
+}
+
+function summarizeCodexPatchEvent(
+  event: Record<string, unknown> | null,
+): string | undefined {
+  const changes = getObjectOrParsedJson(event, "changes");
+  const explicitPath =
+    getString(changes, "path") ??
+    getString(event, "path") ??
+    getString(event, "file_path");
+  if (explicitPath) return basename(explicitPath);
+
+  const patchText =
+    getString(changes, "patch") ??
+    getString(event, "patch") ??
+    getString(event, "diff");
+  if (patchText) return summarizePatchTarget(patchText);
+
+  const countValue =
+    (changes?.change_count as number | undefined) ??
+    (event?.change_count as number | undefined);
+  if (typeof countValue === "number" && Number.isFinite(countValue)) {
+    return `${countValue} files`;
+  }
+
+  return undefined;
+}
+
+function getCodexToolArgs(
+  record: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  return (
+    getNestedObject(
+      record,
+      "arguments",
+      "input",
+      "tool_input",
+      "parameters",
+      "payload",
+      "data",
+      "details",
+    ) ?? asRecord(record?.args)
+  );
+}
+
+function getCodexToolName(record: Record<string, unknown> | null): string {
+  return (
+    getString(record, "name") ??
+    getString(record, "tool_name") ??
+    getString(record, "call_name") ??
+    getString(getNestedObject(record, "tool"), "name") ??
+    ""
+  );
+}
+
+function getCodexToolCallItem(
+  event: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const item =
+    getNestedObject(event, "item", "output_item") ??
+    getNestedObject(getNestedObject(event, "delta"), "item");
+  if (!item) return null;
+
+  const itemType = getString(item, "type");
+  if (
+    itemType === "tool_call" ||
+    itemType === "custom_tool_call" ||
+    itemType === "function_call"
+  ) {
+    return item;
+  }
+
+  return null;
+}
+
+function getCodexCommandExecutionItem(
+  event: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const item =
+    getNestedObject(event, "item", "output_item") ??
+    getNestedObject(getNestedObject(event, "delta"), "item");
+  if (!item) return null;
+  return getString(item, "type") === "command_execution" ? item : null;
+}
+
+function mapCodexToolCall(
+  name: string,
+  args: Record<string, unknown> | null,
+): ActivityEvent | null {
+  switch (name) {
+    case "shell_command": {
+      const command = getString(args, "command");
+      if (!command) return { elapsedMs: 0, tool: "Bash" };
+      const normalized = unwrapShellWrapper(command);
+      if (/^\s*(Get-Content|cat|type)\b/i.test(normalized)) {
+        return {
+          elapsedMs: 0,
+          tool: "Read",
+          detail: extractFileFromCommand(normalized),
+        };
+      }
+      if (/\b(rg|Select-String|findstr)\b/i.test(normalized)) {
+        return {
+          elapsedMs: 0,
+          tool: "Grep",
+          detail:
+            extractPatternFromCommand(normalized) ??
+            summarizeCommand(normalized),
+        };
+      }
+      if (/\b(Get-ChildItem|ls|dir)\b/i.test(normalized)) {
+        return {
+          elapsedMs: 0,
+          tool: "Glob",
+          detail: summarizeCommand(normalized),
+        };
+      }
+      return {
+        elapsedMs: 0,
+        tool: "Bash",
+        detail: summarizeCommand(normalized),
+      };
+    }
+    case "apply_patch":
+      return {
+        elapsedMs: 0,
+        tool: "Edit",
+        detail: summarizePatchTarget(getString(args, "patch") ?? ""),
+      };
+    case "view_image":
+      return {
+        elapsedMs: 0,
+        tool: "Read",
+        detail: basename(
+          getString(args, "path") ?? getString(args, "image_path") ?? "image",
+        ),
+      };
+    case "read_mcp_resource":
+      return {
+        elapsedMs: 0,
+        tool: "Read",
+        detail: getString(args, "uri"),
+      };
+    case "list_mcp_resources":
+    case "list_mcp_resource_templates":
+      return {
+        elapsedMs: 0,
+        tool: "Search",
+        detail: getString(args, "server"),
+      };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Parse one Codex JSONL event line into zero or more activity events.
+ * Uses wall-clock arrival time because the JSONL stream doesn't expose
+ * a stable per-tool timestamp we can rely on here.
+ */
+export function parseCodexJsonlLine(
+  line: string,
+  taskStartTime: number,
+  receivedAt = Date.now(),
+): ActivityEvent[] {
+  const trimmed = line.trim();
+  if (!trimmed) return [];
+
+  let event: Record<string, unknown> | null = null;
+  try {
+    event = JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+
+  const elapsedMs = Math.max(0, receivedAt - taskStartTime);
+  const eventType = getString(event, "type");
+  if (!eventType) return [];
+
+  if (eventType === "error") {
+    return [
+      {
+        elapsedMs,
+        tool: "Codex",
+        detail: getString(event, "message")?.slice(0, 120),
+        isError: true,
+      },
+    ];
+  }
+
+  if (eventType === "exec_command_begin") {
+    const mapped = mapCodexToolCall("shell_command", {
+      command: getString(event, "command") ?? "",
+    });
+    return mapped ? [{ ...mapped, elapsedMs }] : [];
+  }
+
+  if (eventType === "patch_apply_begin") {
+    return [
+      {
+        elapsedMs,
+        tool: "Edit",
+        detail: summarizeCodexPatchEvent(event),
+      },
+    ];
+  }
+
+  if (eventType === "mcp_tool_call_begin") {
+    const mapped = mapCodexToolCall(
+      getCodexToolName(event),
+      getCodexToolArgs(event),
+    );
+    return mapped ? [{ ...mapped, elapsedMs }] : [];
+  }
+
+  if (eventType === "web_search_begin") {
+    return [
+      {
+        elapsedMs,
+        tool: "Search",
+        detail:
+          getString(event, "query") ??
+          getString(asRecord(event.payload), "query") ??
+          getString(asRecord(event.input), "query"),
+      },
+    ];
+  }
+
+  if (eventType === "item.started") {
+    const commandItem = getCodexCommandExecutionItem(event);
+    if (commandItem) {
+      const mapped = mapCodexToolCall("shell_command", {
+        command: getString(commandItem, "command") ?? "",
+      });
+      return mapped ? [{ ...mapped, elapsedMs }] : [];
+    }
+  }
+
+  if (
+    eventType !== "item.completed" &&
+    eventType !== "item.started" &&
+    eventType !== "response.output_item.added" &&
+    eventType !== "response.output_item.done"
+  ) {
+    return [];
+  }
+
+  const item = getCodexToolCallItem(event);
+  if (!item) return [];
+
+  const mapped = mapCodexToolCall(
+    getCodexToolName(item),
+    getCodexToolArgs(item),
+  );
+  if (!mapped) return [];
+  return [{ ...mapped, elapsedMs }];
 }
 
 // ── Debug log parsing (errors only) ─────────────────────────────────
@@ -92,7 +422,7 @@ export function parseDebugLogErrors(
   return events;
 }
 
-// ── Legacy parser (kept for backward compat) ────────────────────────
+// ── Claude debug log parser ──────────────────────────────────────────
 
 const TOOL_USE_RE =
   /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[DEBUG\]\s+Getting matching hook commands for PostToolUse with query:\s+(\w+)/;
@@ -104,8 +434,9 @@ const RENAMING_RE =
   /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[DEBUG\]\s+Renaming\s+\S+\s+to\s+(.+)/;
 
 /**
- * Parse activity events from a Claude debug log (legacy — no hook).
- * Falls back to this when no activity hook log is available.
+ * Parse activity events from a Claude debug log.
+ * Extracts tool names from PostToolUse hook lines, file paths from
+ * write/rename events, and errors from tool error lines.
  */
 export function parseClaudeActivity(
   content: string,
@@ -212,26 +543,8 @@ function watchFile_(
 }
 
 /**
- * Watch an activity hook log file for tool call events with details.
- */
-export function watchActivityLog(
-  activityFilePath: string,
-  taskStartTime: number,
-  callback: ActivityCallback,
-  pollIntervalMs = 1000,
-): () => void {
-  return watchFile_(
-    activityFilePath,
-    taskStartTime,
-    parseActivityLog,
-    callback,
-    pollIntervalMs,
-  );
-}
-
-/**
  * Watch a Claude debug log for tool errors only.
- * Use alongside watchActivityLog for complete coverage.
+ * Use alongside watchDebugLog for complete coverage.
  */
 export function watchDebugLogErrors(
   debugFilePath: string,
@@ -249,8 +562,8 @@ export function watchDebugLogErrors(
 }
 
 /**
- * Watch a Claude debug log file for activity events (legacy — no hook).
- * Used when no activity hook is installed.
+ * Watch a Claude debug log file for activity events.
+ * Parses tool names, file paths, and errors from the debug log.
  */
 export function watchDebugLog(
   debugFilePath: string,
@@ -265,6 +578,176 @@ export function watchDebugLog(
     callback,
     pollIntervalMs,
   );
+}
+
+/**
+ * Watch a Codex JSONL debug log and emit live activity as new lines arrive.
+ * Uses polling (fs.watchFile) for Windows reliability and preserves a trailing
+ * partial line between reads so incomplete JSONL writes are not dropped.
+ */
+export function watchCodexDebugLog(
+  debugFilePath: string,
+  taskStartTime: number,
+  callback: ActivityCallback,
+  pollIntervalMs = 1000,
+): () => void {
+  let lastSize = 0;
+  let stopped = false;
+  let trailing = "";
+
+  try {
+    const s = statSync(debugFilePath);
+    lastSize = s.size;
+  } catch {
+    // File may not exist yet.
+  }
+
+  const checkForNew = () => {
+    if (stopped) return;
+    try {
+      const s = statSync(debugFilePath);
+      if (s.size <= lastSize) return;
+      const fd = readFileSync(debugFilePath, "utf-8");
+      const newContent = fd.slice(lastSize);
+      lastSize = s.size;
+
+      const chunk = trailing + newContent;
+      const lines = chunk.split(/\r?\n/);
+      trailing = lines.pop() ?? "";
+
+      const now = Date.now();
+      const events = lines.flatMap((line) =>
+        parseCodexJsonlLine(line, taskStartTime, now),
+      );
+      if (events.length > 0) callback(events);
+    } catch {
+      // File not ready yet or read error.
+    }
+  };
+
+  watchFile(debugFilePath, { interval: pollIntervalMs }, () => checkForNew());
+  checkForNew();
+
+  return () => {
+    stopped = true;
+    unwatchFile(debugFilePath);
+    if (!trailing.trim()) return;
+    const events = parseCodexJsonlLine(trailing, taskStartTime, Date.now());
+    if (events.length > 0) callback(events);
+  };
+}
+
+// ── Collapsing ──────────────────────────────────────────────────────
+
+/**
+ * Collapse raw activity events into a compact display-friendly list.
+ *
+ * Rules:
+ * - Consecutive research tools (Read, Grep, Glob, Search, Agent) are
+ *   collapsed into a single "Exploring" entry with tool counts.
+ * - Consecutive Edit/Write calls to the same file are collapsed into
+ *   one entry with a count (e.g. "chat-view.ts ×7").
+ * - Bash events with detail are shown individually.
+ * - Errors are never collapsed.
+ * - TodoWrite and ToolSearch are filtered out entirely.
+ */
+export function collapseActivityEvents(
+  events: ActivityEvent[],
+): ActivityEvent[] {
+  if (events.length === 0) return [];
+
+  const result: ActivityEvent[] = [];
+
+  // Accumulator for research phase
+  let researchStart = -1;
+  const researchCounts = new Map<string, number>();
+
+  const flushResearch = () => {
+    if (researchStart < 0) return;
+    const parts: string[] = [];
+    for (const [tool, count] of researchCounts) {
+      parts.push(`${count}× ${tool}`);
+    }
+    result.push({
+      elapsedMs: researchStart,
+      tool: "Exploring",
+      detail: parts.join(", "),
+    });
+    researchStart = -1;
+    researchCounts.clear();
+  };
+
+  // Accumulator for consecutive edits to the same file
+  let editFile: string | undefined;
+  let editStart = -1;
+  let editCount = 0;
+  let editTool = "Edit";
+
+  const flushEdits = () => {
+    if (editCount === 0) return;
+    const detail =
+      editCount > 1
+        ? `${editFile ?? "file"} (×${editCount})`
+        : (editFile ?? "file");
+    result.push({ elapsedMs: editStart, tool: editTool, detail });
+    editFile = undefined;
+    editStart = -1;
+    editCount = 0;
+  };
+
+  for (const ev of events) {
+    // Skip internal plumbing tools
+    if (ev.tool === "TodoWrite" || ev.tool === "ToolSearch") continue;
+
+    // Errors always shown individually
+    if (ev.isError) {
+      flushResearch();
+      flushEdits();
+      result.push(ev);
+      continue;
+    }
+
+    // Research tools → accumulate into a phase
+    if (RESEARCH_TOOLS.has(ev.tool)) {
+      flushEdits();
+      if (researchStart < 0) researchStart = ev.elapsedMs;
+      researchCounts.set(ev.tool, (researchCounts.get(ev.tool) ?? 0) + 1);
+      continue;
+    }
+
+    // Bash without meaningful detail → treat as research
+    if (ev.tool === "Bash" && !ev.detail) {
+      flushEdits();
+      if (researchStart < 0) researchStart = ev.elapsedMs;
+      researchCounts.set("Bash", (researchCounts.get("Bash") ?? 0) + 1);
+      continue;
+    }
+
+    // Write/Edit — collapse consecutive same-file edits
+    if (ev.tool === "Edit" || ev.tool === "Write") {
+      flushResearch();
+      const file = ev.detail ?? "file";
+      if (ev.tool === editTool && file === editFile) {
+        editCount++;
+      } else {
+        flushEdits();
+        editFile = file;
+        editStart = ev.elapsedMs;
+        editCount = 1;
+        editTool = ev.tool;
+      }
+      continue;
+    }
+
+    // Everything else (Bash with detail, WebFetch, etc.) — individual line
+    flushResearch();
+    flushEdits();
+    result.push(ev);
+  }
+
+  flushResearch();
+  flushEdits();
+  return result;
 }
 
 // ── Formatting ──────────────────────────────────────────────────────

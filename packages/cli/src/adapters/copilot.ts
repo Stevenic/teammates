@@ -10,7 +10,8 @@
  *   - Access to Copilot's built-in coding tools (file ops, git, bash, etc.)
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   approveAll,
@@ -64,10 +65,7 @@ export class CopilotAdapter implements AgentAdapter {
   private options: CopilotAdapterOptions;
   private client: CopilotClient | null = null;
   private sessions: Map<string, CopilotSession> = new Map();
-  /** Session files per teammate — persists state across task invocations. */
-  private sessionFiles: Map<string, string> = new Map();
-  /** Base directory for session files. */
-  private sessionsDir = "";
+  private _tmpInitialized = false;
 
   constructor(options: CopilotAdapterOptions = {}) {
     this.options = options;
@@ -79,14 +77,10 @@ export class CopilotAdapter implements AgentAdapter {
     // Ensure the client is running
     await this.ensureClient(teammate.cwd);
 
-    // Always ensure sessions directory exists before writing — startupMaintenance
-    // runs concurrently and may delete empty dirs between calls.
-    const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
-    const dir = join(tmpBase, "sessions");
-    await mkdir(dir, { recursive: true });
-
-    if (!this.sessionsDir) {
-      this.sessionsDir = dir;
+    // Ensure .tmp is gitignored (needed for debug dir)
+    if (!this._tmpInitialized) {
+      this._tmpInitialized = true;
+      const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
       const gitignorePath = join(tmpBase, "..", ".gitignore");
       const existing = await readFile(gitignorePath, "utf-8").catch(() => "");
       if (!existing.includes(".tmp/")) {
@@ -98,9 +92,6 @@ export class CopilotAdapter implements AgentAdapter {
         ).catch(() => {});
       }
     }
-    const sessionFile = join(this.sessionsDir, `${teammate.name}.md`);
-    await writeFile(sessionFile, `# Session — ${teammate.name}\n\n`, "utf-8");
-    this.sessionFiles.set(teammate.name, sessionFile);
 
     return id;
   }
@@ -112,12 +103,11 @@ export class CopilotAdapter implements AgentAdapter {
     options?: {
       raw?: boolean;
       system?: boolean;
+      skipMemoryUpdates?: boolean;
       onActivity?: (events: ActivityEvent[]) => void;
     },
   ): Promise<TaskResult> {
     await this.ensureClient(teammate.cwd);
-
-    const sessionFile = this.sessionFiles.get(teammate.name);
 
     // Build the full teammate prompt (identity + memory + task)
     let fullPrompt: string;
@@ -160,10 +150,10 @@ export class CopilotAdapter implements AgentAdapter {
       fullPrompt = buildTeammatePrompt(teammate, prompt, {
         roster: this.roster,
         services: this.services,
-        sessionFile,
         recallResults: recall?.results,
         userProfile,
         system: options?.system,
+        skipMemoryUpdates: options?.skipMemoryUpdates,
       });
     } else {
       // Raw agent mode — minimal wrapping
@@ -190,6 +180,28 @@ export class CopilotAdapter implements AgentAdapter {
       fullPrompt = parts.join("\n");
     }
 
+    // Generate persistent log file paths in .teammates/.tmp/debug/
+    //   <logBase>-prompt.md  — the full prompt sent to the agent
+    //   <logBase>.md          — copilot session event log
+    const debugDir = join(
+      teammate.cwd ?? process.cwd(),
+      ".teammates",
+      ".tmp",
+      "debug",
+    );
+    try {
+      mkdirSync(debugDir, { recursive: true });
+    } catch {
+      /* best effort */
+    }
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const baseName = `${teammate.name}-${ts}`;
+    const promptFile = join(debugDir, `${baseName}-prompt.md`);
+    const logFile = join(debugDir, `${baseName}.md`);
+
+    // Write prompt to persistent file for /debug
+    await writeFile(promptFile, fullPrompt, "utf-8");
+
     // Create a Copilot session with the teammate prompt as the system message
     const session = await this.client!.createSession({
       model: this.options.model,
@@ -211,6 +223,8 @@ export class CopilotAdapter implements AgentAdapter {
     // Collect the assistant's response silently — the CLI handles rendering.
     // We do NOT write to stdout here; that would corrupt the consolonia UI.
     const outputParts: string[] = [];
+    // Collect all session events for the activity log
+    const activityLog: string[] = [];
 
     session.on("assistant.message_delta" as SessionEvent["type"], (event) => {
       const delta = (event as { data: { deltaContent?: string } }).data
@@ -220,6 +234,24 @@ export class CopilotAdapter implements AgentAdapter {
       }
     });
 
+    // Capture all events for activity logging
+    const originalEmit = (session as any).emit?.bind(session) as
+      | ((...args: unknown[]) => boolean)
+      | undefined;
+    if (originalEmit) {
+      const wrappedEmit = (eventName: string, ...eventArgs: unknown[]) => {
+        try {
+          const ts = new Date().toISOString();
+          const data = eventArgs[0] ? JSON.stringify(eventArgs[0]) : "";
+          activityLog.push(`${ts} ${eventName} ${data}`);
+        } catch {
+          /* best effort */
+        }
+        return originalEmit(eventName, ...eventArgs);
+      };
+      (session as any).emit = wrappedEmit;
+    }
+
     try {
       const timeout = this.options.timeout ?? 600_000;
       const reply = await session.sendAndWait({ prompt }, timeout);
@@ -228,9 +260,18 @@ export class CopilotAdapter implements AgentAdapter {
       const output =
         (reply?.data as { content?: string })?.content ?? outputParts.join("");
 
+      // Write activity log
+      try {
+        writeFileSync(logFile, activityLog.join("\n"), "utf-8");
+      } catch {
+        /* best effort */
+      }
+
       const teammateNames = this.roster.map((r) => r.name);
       const result = parseResult(teammate.name, output, teammateNames, prompt);
       result.fullPrompt = fullPrompt;
+      result.promptFile = promptFile;
+      result.logFile = logFile;
       return result;
     } finally {
       // Disconnect the session (preserves data for potential resume)
@@ -292,10 +333,6 @@ export class CopilotAdapter implements AgentAdapter {
     } finally {
       await session.disconnect().catch(() => {});
     }
-  }
-
-  getSessionFile(teammateName: string): string | undefined {
-    return this.sessionFiles.get(teammateName);
   }
 
   async destroySession(_sessionId: string): Promise<void> {

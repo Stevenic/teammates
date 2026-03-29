@@ -1,4 +1,4 @@
-# Beacon — Wisdom
+# Beacon - Wisdom
 
 Distilled principles. Read this first every session (after SOUL.md).
 
@@ -6,62 +6,150 @@ Last compacted: 2026-03-29
 
 ---
 
-### Codebase map — three packages
-CLI has ~61 source files (~4,100 lines in cli.ts after Phase 2 extraction); consolonia has ~51 files; recall has ~13 files. Big files: `cli.ts` (~4,100), `onboard-flow.ts` (~1,089), `chat-view.ts` (~1,670), `markdown.ts` (~970), `compact.ts` (~800), `cli-proxy.ts` (~810), `thread-manager.ts` (~579), `adapter.ts` (~570). Extracted modules from cli.ts: `status-tracker.ts`, `handoff-manager.ts`, `retro-manager.ts`, `wordwheel.ts`, `service-config.ts`, `thread-manager.ts`, `onboard-flow.ts`, `activity-watcher.ts`, `activity-hook.ts`. When debugging, start with cli.ts and cli-proxy.ts.
+## Prompt & Context
 
-### Three-tier memory system
-WISDOM.md (distilled, ~20 entry cap), typed memory files (`memory/<type>_<topic>.md`), and daily logs (`memory/YYYY-MM-DD.md`). All memory files include YAML frontmatter with `version: <current>` (currently `0.7.0`). Daily logs add `type: daily`, typed memories add their type. Metadata fields pass through to the model intact — no stripping. Entries should be decision rationale and gotchas — not API docs. If `grep` can find it, it doesn't belong here.
+**Prompt structure drives compliance**
+Put context first, the concrete task next, and hard rules last. Restate the user request near the bottom so the model ends on the actual ask, not on background instructions.
 
-### Context window budget model
-Target 128k tokens. Daily logs (days 2-7) get 12k pool. Recall gets min 8k + unused daily budget. Conversation history budget derived dynamically. Weekly summaries excluded (recall indexes them). USER.md placed just before the task.
+**Budgets must be explicit**
+Prompt context needs fixed budgets, not intuition. Daily logs, recall results, and conversation history should each have bounded allocations so one source cannot starve the rest.
 
-### Prompt architecture — two key decisions
-(1) Instructions at the end (after context/task) — leverages recency effect for agent attention. (2) Five attention dilution defenses: dedup recall vs daily logs, 12k daily budget, echo user request at bottom, task-first priority statement, always-inline conversation context.
+**Conversation context stays inline**
+Do not offload conversation history into temp markdown files. Inline context is more reliable, avoids concurrent file races, and works better with deterministic compression. Pre-dispatch compression keeps history within budget.
 
-### @everyone — snapshot isolation required
-`queueTask()` must freeze `conversationHistory` + `conversationSummary` into a `contextSnapshot` before pushing @everyone entries. Without this, the first drain loop's `preDispatchCompress()` mutates shared state before concurrent drains read it. This race condition caused 3/6 teammates to fail with empty context.
+**Concurrent fan-out needs snapshots**
+When dispatching `@everyone` or any parallel queue, capture immutable `conversationHistory` and `conversationSummary` per entry at queue time. Shared mutable context will bleed across drain loops.
 
-### Empty response defense — four layers
-(1) Two-phase prompt — output protocol before housekeeping instructions. (2) Raw retry on empty `rawOutput`. (3) Synthetic fallback from `changedFiles` + `summary` metadata. (4) Three lazy-response guardrails: "Task completed" is not a valid body, prior session entries don't mean user received output, only log work from THIS turn. All layers needed — agents find creative ways to produce nothing or short-circuit with "already logged."
+**Empty-response defense is layered**
+Use response-first prompting, retry in raw mode when `rawOutput` is empty, and synthesize a fallback from `changedFiles` plus `summary` if needed. Reject lazy bodies and stale session recaps.
 
-### Feed index gotchas — three bugs that burned hours
-(1) **Use container methods, not feedLine** — `feedLine()`/`feedMarkdown()` append to feed end; inside threads, use `container.insertLine()`/`threadFeedMarkdown()` which insert at the correct position. (2) **endIdx double-increment** — `shiftIndices()` already extends `endIdx` for inserts inside range; only manually increment if `oldEnd === endIdx`. (3) **ChatView shift threshold** — `_shiftFeedIndices()` must use `clamped`, not `clamped + 1`; the off-by-one corrupts hidden set alignment and makes inserted lines invisible.
+**System behavior belongs on task flags, not agent scope**
+Drive maintenance behavior from `system` on the task/result, not agent-level muting. Agent-scoped silence leaks across concurrent work. The `system` flag must reach `buildTeammatePrompt()` so the prompt builder can suppress memory-update instructions for system tasks.
 
-### ThreadContainer — thread feed encapsulation
-`ThreadContainer` class (~230 LOC) encapsulates per-thread feed-line index management. Replaced 5 scattered maps + 10+ methods in cli.ts. Provides `insertLine()`, `insertActions()`, `addPlaceholder()`, `getInsertPoint()`/`peekInsertPoint()`, and thread-level action management. Thread-level `[reply] [copy thread]` verbs ONLY at the bottom — per-response actions are `[show/hide] [copy]` on the subject line. Key: `getInsertPoint()` auto-increments `_insertAt` — use only when actually inserting. `peekInsertPoint()` reads without consuming — use for tracking body range indices. Using `getInsertPoint()` to read without inserting pushes body content past `replyActionIdx`.
+**Session state belongs in-process, not in files**
+Do not persist session state to per-teammate markdown files. Session files waste tokens, create phantom agent activity, and add no value over inline conversation context. The Orchestrator's in-memory `sessions` Map is sufficient.
 
-### HandoffContainerCtx — render inside thread containers
-`HandoffManager.renderHandoffs()` accepts an optional `HandoffContainerCtx` with `insertLine()`/`insertActions()` methods. When provided, handoff boxes insert within the thread range instead of appending globally. Without this, handoff boxes land AFTER the thread's `[reply] [copy thread]` verbs.
+**Pre-dispatch compression is mechanical**
+`preDispatchCompress()` runs before every task dispatch — if conversation history exceeds the budget (96k tokens / 384k chars), it mechanically compresses the oldest entries into bullet summaries. Async agent summarization runs post-task for quality. Keep both paths; they serve different timing needs.
 
-### StatusTracker — clean 3-method public API
-`startTask(id, teammate, description)`, `stopTask(id)`, `showNotification(content: StyledLine)`. Tasks rotate with spinner + elapsed time. Notifications are one-shot styled messages that auto-purge on next rotation. Animation lifecycle is fully private — callers never manage start/stop. Use `showNotification()` for transient feedback (clipboard, compact results), not `feedLine()`. For migration progress, add a synthetic `activeTasks` entry — don't duplicate with custom spinner code.
+## Memory & Persistence
 
-### Activity tracking — dual-watcher with PostToolUse hook
-Two-layer architecture: (1) `scripts/activity-hook.mjs` — a PostToolUse hook auto-installed in `.claude/settings.local.json` by `ensureActivityHook()` at CLI startup. Reads `{tool_name, tool_input}` from stdin, extracts detail (file_path, command, pattern), appends to `$TEAMMATES_ACTIVITY_LOG`. (2) `activity-watcher.ts` — `watchActivityLog()` polls the hook log for tool details, `watchDebugLogErrors()` polls Claude's debug log for errors only. Both use `fs.watchFile` (1s interval) for Windows reliability. `cli-proxy.ts` sets `TEAMMATES_ACTIVITY_LOG` env var pointing to per-agent file in `.teammates/.tmp/activity/`. Activity lines render inside thread containers via `insertStyledToFeed` + `shiftAllContainers`. Key gotchas: always `cleanupActivityLines()` (hide + delete state) on both task completion and cancel paths; cancel uses `killAgent()` with SIGTERM → SIGKILL escalation. Claude-only for now.
+**Memory is three-tier**
+WISDOM.md stores durable rules, typed memories store reusable decisions and feedback, and daily logs store chronology. Keep full YAML frontmatter in prompt context; the metadata is part of the memory.
 
-### System task isolation — filter by flag, not agent
-When suppressing events for system tasks, filter on the `system` flag on `TaskAssignment`/`TaskResult` — never by agent name. Agent-level suppression (`silentAgents`) blocks ALL events for that agent including concurrent user tasks. The `system` flag threads through to `buildTeammatePrompt()` and `AgentAdapter.executeTask()` — when true, the prompt tells agents "Do NOT update daily logs, typed memories, or WISDOM.md." Never log system tasks (compaction, wisdom distillation, summarization) in daily logs or weekly summaries.
+**System tasks must not write memories**
+Maintenance work like compaction, summarization, and wisdom distillation should not touch daily logs or typed memories. The prompt path must explicitly suppress memory-update instructions for system tasks.
 
-### Workspace deps — use wildcard, not pinned versions
-Pinned versions cause npm workspace resolution failures when local packages bump — npm marks them **invalid** and may resolve to registry versions missing newer APIs. `"*"` always resolves to the local workspace copy.
+**Migrations are markdown and commit last**
+Keep upgrade instructions in `packages/cli/MIGRATIONS.md`, parse them by version heading, and persist the new version only after every migration succeeds. Interrupted upgrades should rerun cleanly on next startup. Resolve the file via `import.meta.url`, never `__dirname`.
 
-### Action buttons need unique IDs
-Static IDs cause all buttons to share one handler. Pattern: `<action>-<teammate>-<timestamp>` with a `Map` storing per-ID context. Handler looks up by ID, falls back to latest.
+## Feed & Rendering
 
-### Handoff format — fenced code blocks only
-Agents must use ` ```handoff\n@name\ntask\n``` `. Natural-language fallback catches "hand off to @name" as a safety net, but only fires when zero fenced blocks found.
+**Feed state should be identity-based**
+Inside `ChatView`, track feed items by stable IDs through `FeedStore`, not parallel index-keyed arrays. `FeedItem` carries `id`, `content`, `actions`, `hidden`. Height caching lives in `VirtualList`, not on `FeedItem`.
 
-### Folder naming convention in .teammates/
-No prefix = teammate folder (contains SOUL.md). `_` prefix = shared, checked in. `.` prefix = local/ephemeral, gitignored. Registry skips `_` and `.` prefixed dirs.
+**Virtualized height caches need explicit invalidation**
+`VirtualList` caches geometry by item ID, so any item whose rendered height can change must be invalidated deliberately. The banner (`__banner__`) is the canonical case — invalidate it every render during animation.
 
-### Migrations are just markdown
-MIGRATIONS.md lives in `packages/cli/` (ships with npm package). Plain markdown with `## <version>` sections. `buildMigrationPrompt()` parses it, filters by previous version, queues one agent task per teammate. Don't over-engineer this — the first attempt with a typed Migration interface + programmatic/agent types was ripped out the same day. `commitVersionUpdate()` only fires when ALL migrations complete — interrupted CLI re-runs on next startup.
+**Shift every related index in one place**
+Any feed insertion that shifts thread ranges must also shift adjacent bookkeeping like activity-line indices and blank-line indices. The `shiftAllContainers` getter is the single coordination point — extend it, never duplicate the shift logic elsewhere.
 
-### ESM path resolution — no __dirname
-`__dirname` is undefined in ESM modules. Use `fileURLToPath(new URL("../relative/path", import.meta.url))` instead. Silent `catch` on `readFileSync` masked this for days — migrations silently skipped because the path resolved to nothing.
+**Rendered actions need unique IDs**
+Every clickable action needs its own ID plus a side lookup for payload state. Reused IDs make later clicks act on the newest handler state instead of the rendered item.
 
-### Spec-first for UI features
-Write a design spec before starting any multi-phase visual feature. The thread view took 18+ rounds partly because the first implementation had to be thrown away when the spec arrived mid-feature.
+**Progress belongs behind a tiny API**
+Keep progress behind `startTask()`, `stopTask()`, and `showNotification()`. `StatusTracker` owns animation, truncation, and terminal-width budgeting; callers should not manage lifecycle details themselves. Never create custom spinners that duplicate StatusTracker's job.
 
-### Verify before logging
-Never log a fix as done in daily logs or session files without confirming the source file was actually written. The `_shiftFeedIndices` off-by-one was logged as fixed on 03-28 but never committed — wasting an entire round re-diagnosing on 03-29.
+**Terminal width must be measured, not assumed**
+Use `process.stdout.columns || 80` for layout math. Hardcoded `80` causes suffix clipping and stray characters on narrower terminals. When the elapsed-time suffix won't fit, omit it entirely.
+
+## Threads
+
+**Thread insertion must be non-destructive**
+Use `peekInsertPoint()` to inspect where thread content should go and reserve `getInsertPoint()` for the actual write. Reading with the destructive path pushes content past the thread action line.
+
+**Thread action ownership is fixed**
+Thread-level verbs are only `[reply] [copy thread]`, and they live at the bottom of the thread container. Per-item verbs are `[show/hide] [copy]` on the subject line, never between subject and body.
+
+**Thread-local content stays in the container**
+Anything that belongs to a thread — including handoffs, activity blocks, and replies — must insert through the thread container context. Appending to the global feed breaks thread boundaries and verb placement.
+
+**Container context pattern for scoped insertion**
+When a subsystem (handoffs, activity) needs to insert lines within a thread, pass a container context interface (`insertLine()`/`insertActions()`) rather than always appending to the global feed. This keeps thread boundaries intact without coupling the subsystem to `ThreadContainer` internals.
+
+## Activity Tracking
+
+**Activity pipelines are adapter-specific**
+Claude activity comes from layered hook and debug-log watchers; Codex activity comes from incremental parsing of `codex exec --json` stdout. Post-task markdown logs and `codex-tui.log` are not the live source of truth.
+
+**Claude activity needs three watchers**
+(1) Hook log for rich tool details (file paths, commands), (2) legacy debug-log parser for tool names when the hook doesn't fire, (3) debug-log error watcher. Suppress legacy events when hook events are flowing to avoid duplicates.
+
+**Hook environment variables don't propagate**
+Claude Code does not pass custom env vars (like `TEAMMATES_ACTIVITY_LOG`) to hook subprocesses. The PostToolUse hook script can't reliably receive the activity log path this way. Always wire up the legacy debug-log parser as a fallback alongside the hook watcher.
+
+**Codex activity is a multi-shape stream**
+Treat Codex live activity as a family of JSONL event shapes: `exec_command_begin`, `patch_apply_begin`, `web_search_begin`, `mcp_tool_call_begin`, `item.started`, `item.completed`, `response.output_item.added/done`, and tool-call types `custom_tool_call`/`function_call`. Arguments may arrive as objects or stringified JSON under various field names. De-dup start/completed pairs and flush the final buffered stdout line on close.
+
+**Codex TUI log lacks tool events**
+`codex-tui.log` contains runtime telemetry (session init, thread spawn, shutdown) but no `tool_call`, `shell_command`, or `apply_patch` entries. It is not useful for `[show activity]` — only as an optional coarse lifecycle side channel.
+
+**Collapse activity before rendering it**
+Raw tool streams are too noisy for the UI. Group consecutive research tools into a single "Exploring" line, merge repeated edits to the same file, filter out internal plumbing (TodoWrite, ToolSearch), and never collapse errors.
+
+**Activity cleanup must be thorough**
+When a task completes or is cancelled, hide all activity display lines and delete all bookkeeping state (buffers, indices, blank lines, shown flags). Stale indices from prior feed insertions are the #1 cause of leftover activity lines.
+
+## Architecture
+
+**Extract large CLI subsystems behind typed deps**
+When breaking up `cli.ts`, move logic into focused managers with explicit dependency interfaces and closure-backed getters for shared mutable state. This shrinks the file without inventing premature global abstractions. Seven modules extracted so far: `status-tracker`, `handoff-manager`, `retro-manager`, `wordwheel`, `service-config`, `thread-manager`, `onboard-flow`.
+
+**Adapter presets live outside the base class**
+Keep shared preset definitions in `presets.ts` and agent-specific adapters in their own files (`claude.ts`, `codex.ts`). Putting presets inside `cli-proxy.ts` creates circular imports that can leave the base class undefined at extension time.
+
+**Cross-folder write boundaries are two-layer**
+Layer 1 is the prompt rule in `adapter.ts` for AI teammates. Layer 2 is a post-task audit with `[revert]` and `[allow]` actions. Relying on either layer alone is too weak.
+
+**Handoffs are fenced blocks first**
+Structured handoffs should be fenced `handoff` blocks. Natural-language detection is only an emergency fallback and should not be treated as a normal path.
+
+**Registry discovery skips special folders**
+Inside `.teammates\`, bare names are teammates, `_` prefixes are shared checked-in folders, and `.` prefixes are local ephemeral folders. Discovery logic must ignore `_` and `.` entries when resolving teammates.
+
+**Human avatars are not teammates**
+When importing teammates from another project, skip folders where SOUL.md has `**Type:** human`. Never copy USER.md during import — it is user-specific and gitignored.
+
+**Debug logging is paired files per task**
+Each adapter writes two files under `.teammates/.tmp/debug/`: `<teammate>-<timestamp>-prompt.md` (full prompt sent) and `<teammate>-<timestamp>.md` (activity/debug log). For Claude, the log file is passed as `--debug-file` so the agent writes directly. For Codex/others, raw stdout is dumped to the log file on process close. `/debug` reads both files for analysis.
+
+## Build & Ship
+
+**Clean dist before rebuilding**
+Always remove `dist` before `npm run build`. Stale build artifacts hide compile problems and can make a broken source tree look healthy.
+
+**Lint after every build**
+Run Biome with auto-fix after the build, then rebuild if lint changed code. Build-clean-build is the required verification loop, not an optional polish step.
+
+**Version bumps touch every reference**
+When bumping package versions, update all package manifests, `.teammates/settings.json` (`cliVersion`), and grep for any other copies of the old version string. Partial bumps leave the workspace inconsistent.
+
+**Workspace deps should stay wildcarded**
+Use `"*"` for workspace package references. Pinned semver can resolve to registry builds or invalidate newer local workspace packages after a bump.
+
+**ESM path resolution must be explicit**
+Resolve sibling files with `fileURLToPath(new URL(..., import.meta.url))`, never `__dirname`. Path-sensitive startup code should fail loudly or log clearly; silent catches hide broken behavior too long.
+
+**Spawned stdin needs EOF protection**
+Whenever the CLI writes to a child process stdin, attach an error handler that swallows `EPIPE` and `EOF`. Some agents close stdin early and that should not crash the parent.
+
+## Process
+
+**Spec first for major UI shifts**
+Write the UI spec before implementing changes that alter layout, action placement, or state ownership. Terminal UI work drifts fast without a written target.
+
+**Verify before logging**
+Do not record a fix until the file is actually written and verified. False "done" entries poison future debugging by sending the next pass after behavior that never shipped.
+
+**Restart the CLI after rebuilds**
+Node.js caches modules at startup. After rebuilding packages, the running CLI still uses old code until it is restarted.

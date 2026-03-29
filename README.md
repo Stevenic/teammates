@@ -33,6 +33,8 @@ teammates aider        # Aider
 teammates copilot      # GitHub Copilot
 ```
 
+Always run your coding agent at least once from the project's workspace folder first so its sandboxing is initialized for that workspace before you rely on teammates.
+
 ### 3. Set up your profile
 
 On first run, the CLI sets up your user profile **before** the terminal UI starts. You'll be asked for:

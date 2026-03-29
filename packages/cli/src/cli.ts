@@ -33,8 +33,7 @@ import {
 } from "@teammates/consolonia";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
-import { ensureActivityHook } from "./activity-hook.js";
-import { formatActivityTime } from "./activity-watcher.js";
+import { ActivityManager } from "./activity-manager.js";
 import type { AgentAdapter } from "./adapter.js";
 import { DAILY_LOG_BUDGET_TOKENS, syncRecallIndex } from "./adapter.js";
 import { AnimatedBanner, type ServiceInfo } from "./banner.js";
@@ -135,6 +134,7 @@ class TeammatesREPL {
     result: TaskResult,
     entryType: string,
     threadId?: number,
+    placeholderId?: string,
   ): void {
     // Suppress display for internal summarization tasks
     if (entryType === "summarize") return;
@@ -156,7 +156,13 @@ class TeammatesREPL {
     const container =
       threadId != null ? this.containers.get(threadId) : undefined;
     if (container && this.chatView) {
-      this.displayThreadedResult(result, cleaned, threadId!, container);
+      this.displayThreadedResult(
+        result,
+        cleaned,
+        threadId!,
+        container,
+        placeholderId ?? result.teammate,
+      );
     } else {
       this.displayFlatResult(result, cleaned, entryType, threadId);
     }
@@ -266,12 +272,14 @@ class TeammatesREPL {
     cleaned: string,
     threadId: number,
     container: ThreadContainer,
+    placeholderId: string,
   ): void {
     this.threadManager.displayThreadedResult(
       result,
       cleaned,
       threadId,
       container,
+      placeholderId,
     );
   }
 
@@ -324,6 +332,7 @@ class TeammatesREPL {
 
     // Queue the summarization task through the user's agent
     this.taskQueue.push({
+      id: this.makeQueueEntryId(),
       type: "summarize",
       teammate: this.selfName,
       task: prompt,
@@ -362,7 +371,8 @@ class TeammatesREPL {
   private adapterName: string;
   private teammatesDir!: string;
   private taskQueue: QueueEntry[] = [];
-  /** Per-agent active tasks — one per agent running in parallel. */
+  private nextQueueEntryId = 1;
+  /** Per-agent active tasks - one per agent running in parallel. */
   private agentActive: Map<string, QueueEntry> = new Map();
   /** Active system tasks — multiple can run concurrently per agent. */
   private systemActive: Map<string, QueueEntry> = new Map();
@@ -384,20 +394,14 @@ class TeammatesREPL {
   private lastCleanedOutput = ""; // last teammate output for clipboard copy
   /** Maps copy action IDs to the cleaned output text for that response. */
   private _copyContexts: Map<string, string> = new Map();
-  /** Last debug log file path per teammate — for /debug analysis. */
-  private lastDebugFiles: Map<string, string> = new Map();
+  /** Last debug file paths per teammate — for /debug analysis. */
+  private lastDebugFiles: Map<
+    string,
+    { promptFile?: string; logFile?: string }
+  > = new Map();
   /** Last task prompt per teammate — for /debug analysis. */
   private lastTaskPrompts: Map<string, string> = new Map();
-  /** Buffered activity events per teammate (cleared when task completes). */
-  private _activityBuffers: Map<string, ActivityEvent[]> = new Map();
-  /** Whether the activity feed is toggled on for a given teammate. */
-  private _activityShown: Map<string, boolean> = new Map();
-  /** Feed line indices for activity lines per teammate (for hiding on toggle off). */
-  private _activityLineIndices: Map<string, number[]> = new Map();
-  /** Thread IDs associated with activity per teammate. */
-  private _activityThreadIds: Map<string, number> = new Map();
-  /** Trailing blank line index per teammate (inserted after activity block). */
-  private _activityBlankIdx: Map<string, number> = new Map();
+  private activityManager!: ActivityManager;
 
   private handoffManager!: HandoffManager;
   private retroManager!: RetroManager;
@@ -440,14 +444,14 @@ class TeammatesREPL {
     return (atIndex: number, delta: number) => {
       base(atIndex, delta);
       // Also shift activity line indices so cleanup hides the correct lines
-      for (const [_tm, indices] of this._activityLineIndices) {
+      for (const [_tm, indices] of this.activityManager.lineIndices) {
         for (let i = 0; i < indices.length; i++) {
           if (indices[i] >= atIndex) indices[i] += delta;
         }
       }
       // Shift trailing blank line indices
-      for (const [tm, idx] of this._activityBlankIdx) {
-        if (idx >= atIndex) this._activityBlankIdx.set(tm, idx + delta);
+      for (const [tm, idx] of this.activityManager.blankIdx) {
+        if (idx >= atIndex) this.activityManager.blankIdx.set(tm, idx + delta);
       }
     };
   }
@@ -483,8 +487,18 @@ class TeammatesREPL {
   ): void {
     this.threadManager.renderThreadReply(threadId, displayText, targetNames);
   }
-  private renderWorkingPlaceholder(threadId: number, teammate: string): void {
-    this.threadManager.renderWorkingPlaceholder(threadId, teammate);
+  private renderTaskPlaceholder(
+    threadId: number,
+    placeholderId: string,
+    teammate: string,
+    state: "queued" | "working",
+  ): void {
+    this.threadManager.renderTaskPlaceholder(
+      threadId,
+      placeholderId,
+      teammate,
+      state,
+    );
   }
   private toggleThreadCollapse(threadId: number): void {
     this.threadManager.toggleThreadCollapse(threadId);
@@ -507,6 +521,34 @@ class TeammatesREPL {
         return adapterName;
       },
     });
+  }
+
+  private makeQueueEntryId(): string {
+    return `q${this.nextQueueEntryId++}`;
+  }
+
+  private isAgentBusy(teammate: string): boolean {
+    return (
+      this.agentActive.has(teammate) ||
+      this.taskQueue.some(
+        (e) => e.teammate === teammate && !this.isSystemTask(e),
+      )
+    );
+  }
+
+  private getThreadTaskCounts(threadId: number): {
+    working: number;
+    queued: number;
+  } {
+    let working = 0;
+    let queued = 0;
+    for (const entry of this.agentActive.values()) {
+      if (entry.threadId === threadId && !this.isSystemTask(entry)) working++;
+    }
+    for (const entry of this.taskQueue) {
+      if (entry.threadId === threadId && !this.isSystemTask(entry)) queued++;
+    }
+    return { working, queued };
   }
 
   /**
@@ -876,14 +918,18 @@ class TeammatesREPL {
         summary: this.conversationSummary,
       };
       for (const teammate of names) {
-        this.taskQueue.push({
+        const entry = {
+          id: this.makeQueueEntryId(),
           type: "agent",
           teammate,
           task,
           threadId: tid,
           contextSnapshot,
-        });
-        thread.pendingAgents.add(teammate);
+        } as const;
+        const state = this.isAgentBusy(teammate) ? "queued" : "working";
+        this.taskQueue.push(entry);
+        thread.pendingTasks.add(entry.id);
+        this.renderTaskPlaceholder(tid, entry.id, teammate, state);
       }
       // Render dispatch line (part of user message) + blank line + working placeholders
       if (threadId == null) {
@@ -897,9 +943,6 @@ class TeammatesREPL {
       }
       const ec = this.containers.get(tid);
       if (ec && this.chatView) ec.hideThreadActions(this.chatView);
-      for (const teammate of names) {
-        this.renderWorkingPlaceholder(tid, teammate);
-      }
       this.refreshView();
       this.kickDrain();
       return;
@@ -927,13 +970,17 @@ class TeammatesREPL {
     if (mentioned.length > 0) {
       // Queue a copy of the full message to every mentioned teammate
       for (const teammate of mentioned) {
-        this.taskQueue.push({
+        const entry = {
+          id: this.makeQueueEntryId(),
           type: "agent",
           teammate,
           task: input,
           threadId: tid,
-        });
-        thread.pendingAgents.add(teammate);
+        } as const;
+        const state = this.isAgentBusy(teammate) ? "queued" : "working";
+        this.taskQueue.push(entry);
+        thread.pendingTasks.add(entry.id);
+        this.renderTaskPlaceholder(tid, entry.id, teammate, state);
       }
       // Render dispatch line (part of user message) + blank line + working placeholders
       if (threadId == null) {
@@ -947,9 +994,6 @@ class TeammatesREPL {
       }
       const mc = this.containers.get(tid);
       if (mc && this.chatView) mc.hideThreadActions(this.chatView);
-      for (const teammate of mentioned) {
-        this.renderWorkingPlaceholder(tid, teammate);
-      }
       this.refreshView();
       this.kickDrain();
       return;
@@ -984,15 +1028,18 @@ class TeammatesREPL {
     }
     const dc = this.containers.get(tid);
     if (dc && this.chatView) dc.hideThreadActions(this.chatView);
-    this.renderWorkingPlaceholder(tid, match);
-    this.refreshView();
-    this.taskQueue.push({
+    const entry = {
+      id: this.makeQueueEntryId(),
       type: "agent",
       teammate: match,
       task: input,
       threadId: tid,
-    });
-    thread.pendingAgents.add(match);
+    } as const;
+    const state = this.isAgentBusy(match) ? "queued" : "working";
+    this.renderTaskPlaceholder(tid, entry.id, match, state);
+    this.refreshView();
+    this.taskQueue.push(entry);
+    thread.pendingTasks.add(entry.id);
     this.kickDrain();
   }
 
@@ -1291,6 +1338,7 @@ class TeammatesREPL {
       wordWrap: (text, maxW) => this.wordWrap(text, maxW),
       listTeammates: () => this.orchestrator.listTeammates(),
       getThread: (id) => this.getThread(id),
+      makeQueueEntryId: () => this.makeQueueEntryId(),
       taskQueue: this.taskQueue,
       kickDrain: () => this.kickDrain(),
       teammatesDir: this.teammatesDir,
@@ -1300,6 +1348,7 @@ class TeammatesREPL {
       feedLine: (text?) => this.feedLine(text),
       refreshView: () => this.refreshView(),
       makeSpan: (...segs) => this.makeSpan(...segs),
+      makeQueueEntryId: () => this.makeQueueEntryId(),
       taskQueue: this.taskQueue,
       kickDrain: () => this.kickDrain(),
       hasPendingHandoffs: () => this.handoffManager.pendingHandoffs.length > 0,
@@ -1621,19 +1670,11 @@ class TeammatesREPL {
         const tid = parseInt(key.split("-")[0], 10);
         this.toggleReplyCollapse(tid, key);
       } else if (id.startsWith("activity-")) {
-        // activity-<teammate>-<threadId>
-        const rest = id.slice("activity-".length);
-        const lastDash = rest.lastIndexOf("-");
-        const actTeammate = rest.slice(0, lastDash);
-        const actTid = parseInt(rest.slice(lastDash + 1), 10);
-        this.toggleActivity(actTeammate, actTid);
+        const queueId = id.slice("activity-".length);
+        this.toggleActivity(queueId);
       } else if (id.startsWith("cancel-")) {
-        // cancel-<teammate>-<threadId>
-        const rest = id.slice("cancel-".length);
-        const lastDash = rest.lastIndexOf("-");
-        const cancelTeammate = rest.slice(0, lastDash);
-        const cancelTid = parseInt(rest.slice(lastDash + 1), 10);
-        this.cancelTask(cancelTeammate, cancelTid);
+        const queueId = id.slice("cancel-".length);
+        this.cancelTask(queueId);
       } else if (id.startsWith("copy-cmd:")) {
         this.doCopy(id.slice("copy-cmd:".length));
       } else if (id.startsWith("copy-")) {
@@ -1711,6 +1752,28 @@ class TeammatesREPL {
     // Re-bind handoff/retro managers with the real chatView
     (this.handoffManager as any).view.chatView = this.chatView;
     (this.retroManager as any).view.chatView = this.chatView;
+
+    // Initialize activity manager now that chatView exists
+    this.activityManager = new ActivityManager({
+      get chatView() {
+        return chatViewRef();
+      },
+      get selfName() {
+        return selfNameFn();
+      },
+      get adapterName() {
+        return adapterNameFn();
+      },
+      statusTracker: this.statusTracker,
+      agentActive: this.agentActive,
+      containers: this.containers,
+      shiftAllContainers: (at, delta) => this.shiftAllContainers(at, delta),
+      makeSpan: (...segs) => this.makeSpan(...segs),
+      refreshView: () => this.refreshView(),
+      feedLine: (text?) => this.feedLine(text),
+      getAdapter: () => this.orchestrator.getAdapter(),
+    });
+    const chatViewRef = () => this.chatView;
 
     // Closures to bridge private accessors into the view interfaces
     const selfNameFn = () => this.selfName;
@@ -2457,7 +2520,7 @@ class TeammatesREPL {
         const replies = thread.entries.filter(
           (e) => e.type !== "user" || thread.entries.indexOf(e) > 0,
         ).length;
-        const pending = thread.pendingAgents.size;
+        const { working, queued } = this.getThreadTaskCounts(id);
         const focusTag = isFocused ? tp.info(" ◀ focused") : "";
         this.feedLine(
           concat(tp.accent(`  #${id}`), tp.text(`  ${origin}`), focusTag),
@@ -2465,7 +2528,8 @@ class TeammatesREPL {
         const parts: string[] = [];
         if (replies > 0)
           parts.push(`${replies} repl${replies === 1 ? "y" : "ies"}`);
-        if (pending > 0) parts.push(`${pending} working`);
+        if (working > 0) parts.push(`${working} working`);
+        if (queued > 0) parts.push(`${queued} queued`);
         if (thread.collapsed) parts.push("collapsed");
         if (parts.length > 0) {
           this.feedLine(tp.muted(`    ${parts.join(" · ")}`));
@@ -2521,23 +2585,32 @@ class TeammatesREPL {
    * @param debugFocus Optional focus area the user wants to investigate
    */
   private queueDebugAnalysis(teammate: string, debugFocus?: string): void {
-    const debugFile = this.lastDebugFiles.get(teammate);
+    const files = this.lastDebugFiles.get(teammate);
     const lastPrompt = this.lastTaskPrompts.get(teammate);
 
-    if (!debugFile) {
+    if (!files?.promptFile && !files?.logFile) {
       this.feedLine(tp.muted(`  No debug log available for @${teammate}.`));
       this.refreshView();
       return;
     }
 
-    // Read the debug log file
-    let debugContent: string;
-    try {
-      debugContent = readFileSync(debugFile, "utf-8");
-    } catch {
-      this.feedLine(tp.muted(`  Could not read debug log: ${debugFile}`));
-      this.refreshView();
-      return;
+    // Read both debug files
+    let promptContent = "";
+    if (files.promptFile) {
+      try {
+        promptContent = readFileSync(files.promptFile, "utf-8");
+      } catch {
+        /* may not exist */
+      }
+    }
+
+    let logContent = "";
+    if (files.logFile) {
+      try {
+        logContent = readFileSync(files.logFile, "utf-8");
+      } catch {
+        /* may not exist */
+      }
     }
 
     const focusLine = debugFocus
@@ -2545,19 +2618,26 @@ class TeammatesREPL {
       : "";
 
     const analysisPrompt = [
-      `Analyze the following debug log from @${teammate}'s last task execution. Identify any issues, errors, or anomalies. If the response was empty, explain likely causes. Provide a concise diagnosis and suggest fixes if applicable.${focusLine}`,
+      `Analyze the following debug information from @${teammate}'s last task execution. Identify any issues, errors, or anomalies. If the response was empty, explain likely causes. Provide a concise diagnosis and suggest fixes if applicable.${focusLine}`,
       "",
-      "## Last Request Sent to Agent",
+      "## Prompt Sent to Agent",
       "",
-      lastPrompt ?? "(not available)",
+      promptContent || lastPrompt || "(not available)",
       "",
-      "## Debug Log",
+      "## Activity / Debug Log",
       "",
-      debugContent,
+      logContent || "(no activity log)",
     ].join("\n");
 
-    // Show the debug log path — ctrl+click to open
-    this.feedLine(concat(tp.muted("  Debug log: "), tp.accent(debugFile)));
+    // Show file paths — ctrl+click to open
+    if (files.promptFile) {
+      this.feedLine(
+        concat(tp.muted("  Prompt: "), tp.accent(files.promptFile)),
+      );
+    }
+    if (files.logFile) {
+      this.feedLine(concat(tp.muted("  Activity: "), tp.accent(files.logFile)));
+    }
     if (debugFocus) {
       this.feedLine(tp.muted(`  Focus: ${debugFocus}`));
     }
@@ -2565,6 +2645,7 @@ class TeammatesREPL {
     this.refreshView();
 
     this.taskQueue.push({
+      id: this.makeQueueEntryId(),
       type: "debug",
       teammate: this.selfName,
       task: analysisPrompt,
@@ -2587,6 +2668,17 @@ class TeammatesREPL {
     }
 
     const removed = this.taskQueue.splice(n - 1, 1)[0];
+    if (removed.threadId != null) {
+      const thread = this.getThread(removed.threadId);
+      thread?.pendingTasks.delete(removed.id);
+      const container = this.containers.get(removed.threadId);
+      if (container && this.chatView) {
+        container.hidePlaceholder(this.chatView, removed.id);
+        if (container.placeholderCount === 0) {
+          container.showThreadActions(this.chatView);
+        }
+      }
+    }
     const cancelDisplay =
       removed.teammate === this.selfName ? this.adapterName : removed.teammate;
     this.feedLine(
@@ -2711,6 +2803,7 @@ class TeammatesREPL {
 
       // Queue the resumed task
       this.taskQueue.push({
+        id: this.makeQueueEntryId(),
         type: "agent",
         teammate: resolvedName,
         task: resumePrompt,
@@ -2781,223 +2874,63 @@ class TeammatesREPL {
     return parts.join("\n");
   }
 
-  // ── Activity tracking ─────────────────────────────────────────────
+  // ── Activity tracking (delegated to ActivityManager) ──────────────
 
-  /** Handle incoming activity events from an agent's debug log watcher. */
   private handleActivityEvents(
     teammate: string,
     events: ActivityEvent[],
   ): void {
-    const buf = this._activityBuffers.get(teammate);
-    if (!buf) return;
-    buf.push(...events);
-
-    // If activity view is toggled on, insert new lines into the feed
-    if (this._activityShown.get(teammate) && this.chatView) {
-      this.insertActivityLines(teammate, events);
-      this.refreshView();
-    }
+    this.activityManager.handleActivityEvents(teammate, events);
   }
-
-  /** Toggle the activity view for a teammate on/off. */
-  private toggleActivity(teammate: string, threadId: number): void {
-    const shown = this._activityShown.get(teammate) ?? false;
-    if (shown) {
-      // Hide all activity lines + trailing blank
-      const indices = this._activityLineIndices.get(teammate) ?? [];
-      for (const idx of indices) {
-        this.chatView?.setFeedLineHidden(idx, true);
-      }
-      const blankIdx = this._activityBlankIdx.get(teammate);
-      if (blankIdx != null) this.chatView?.setFeedLineHidden(blankIdx, true);
-      this._activityShown.set(teammate, false);
-      // Update the placeholder action text
-      this.updatePlaceholderVerb(teammate, threadId, "[show activity]");
-    } else {
-      // Show existing activity lines (or insert them if first time)
-      const indices = this._activityLineIndices.get(teammate) ?? [];
-      if (indices.length > 0) {
-        // Already inserted — just unhide
-        for (const idx of indices) {
-          this.chatView?.setFeedLineHidden(idx, false);
-        }
-        const blankIdx = this._activityBlankIdx.get(teammate);
-        if (blankIdx != null) this.chatView?.setFeedLineHidden(blankIdx, false);
-      } else {
-        // First time — insert "Activity" header + blank line, then buffered events
-        this.insertActivityHeader(teammate);
-        const buf = this._activityBuffers.get(teammate) ?? [];
-        if (buf.length > 0) {
-          this.insertActivityLines(teammate, buf);
-        }
-      }
-      this._activityShown.set(teammate, true);
-      this.updatePlaceholderVerb(teammate, threadId, "[hide activity]");
-    }
-    this.refreshView();
-  }
-
-  /** Insert the "Activity" header line below the placeholder (first time showing). */
-  private insertActivityHeader(teammate: string): void {
-    const threadId = this._activityThreadIds.get(teammate);
-    if (threadId == null) return;
-    const container = this.containers.get(threadId);
-    if (!container || !this.chatView) return;
-
-    const t = theme();
-    const indices = this._activityLineIndices.get(teammate) ?? [];
-    const placeholderIdx = container.getPlaceholderIndex(teammate);
-    if (placeholderIdx == null) return;
-
-    // Insert "Activity" header in accent color
-    const insertAt = placeholderIdx + 1 + indices.length;
-    const headerLine = this.makeSpan({
-      text: "    Activity",
-      style: { fg: t.accent },
-    });
-    this.chatView.insertStyledToFeed(insertAt, headerLine);
-    this.shiftAllContainers(insertAt, 1);
-    indices.push(insertAt);
-    this._activityLineIndices.set(teammate, indices);
-
-    // Insert trailing blank line after activity block
-    const blankAt = insertAt + 1;
-    this.chatView.insertStyledToFeed(
-      blankAt,
-      this.makeSpan({ text: "", style: {} }),
-    );
-    this.shiftAllContainers(blankAt, 1);
-    this._activityBlankIdx.set(teammate, blankAt);
-  }
-
-  /** Insert activity event lines into the thread container below the placeholder. */
-  private insertActivityLines(teammate: string, events: ActivityEvent[]): void {
-    const threadId = this._activityThreadIds.get(teammate);
-    if (threadId == null) return;
-    const container = this.containers.get(threadId);
-    if (!container || !this.chatView) return;
-
-    const t = theme();
-    const indices = this._activityLineIndices.get(teammate) ?? [];
-    const placeholderIdx = container.getPlaceholderIndex(teammate);
-    if (placeholderIdx == null) return;
-
-    for (const ev of events) {
-      const time = formatActivityTime(ev.elapsedMs);
-      const toolText = ev.isError ? `${ev.tool} ERROR` : ev.tool;
-      const detail = ev.detail ? ` ${ev.detail}` : "";
-      const fg = ev.isError ? t.error : t.textDim;
-
-      // Insert right after the placeholder line (and after any existing activity lines)
-      const insertAt = placeholderIdx + 1 + indices.length;
-      const line = this.makeSpan(
-        { text: `    ${time} `, style: { fg: t.textDim } },
-        { text: toolText, style: { fg } },
-        { text: detail, style: { fg: t.textDim } },
-      );
-      this.chatView.insertStyledToFeed(insertAt, line);
-      // Shift all containers and activity indices (wrapper handles activity)
-      this.shiftAllContainers(insertAt, 1);
-      // The newly inserted line is at insertAt — record it AFTER shift
-      // (shiftAllContainers already shifted existing indices >= insertAt)
-      indices.push(insertAt);
-    }
-    this._activityLineIndices.set(teammate, indices);
-  }
-
-  /** Hide all activity lines and clean up activity state for a teammate. */
   private cleanupActivityLines(teammate: string): void {
-    const indices = this._activityLineIndices.get(teammate) ?? [];
-    if (indices.length > 0 && this.chatView) {
-      for (const idx of indices) {
-        this.chatView.setFeedLineHidden(idx, true);
-      }
-    }
-    // Also hide the trailing blank line
-    const blankIdx = this._activityBlankIdx.get(teammate);
-    if (blankIdx != null && this.chatView) {
-      this.chatView.setFeedLineHidden(blankIdx, true);
-    }
-    this._activityBuffers.delete(teammate);
-    this._activityShown.delete(teammate);
-    this._activityLineIndices.delete(teammate);
-    this._activityThreadIds.delete(teammate);
-    this._activityBlankIdx.delete(teammate);
+    this.activityManager.cleanupActivityLines(teammate);
   }
-
-  /** Update the [show activity]/[hide activity] verb text on a working placeholder. */
+  private toggleActivity(queueId: string): void {
+    this.activityManager.toggleActivity(queueId);
+  }
   private updatePlaceholderVerb(
+    queueId: string,
     teammate: string,
     threadId: number,
     label: string,
   ): void {
-    const container = this.containers.get(threadId);
-    if (!container || !this.chatView) return;
-    const placeholderIdx = container.getPlaceholderIndex(teammate);
-    if (placeholderIdx == null) return;
-
-    const t = theme();
-    const displayName =
-      teammate === this.selfName ? this.adapterName : teammate;
-    const activityId = `activity-${teammate}-${threadId}`;
-    const cancelId = `cancel-${teammate}-${threadId}`;
-    this.chatView.updateActionList(placeholderIdx, [
-      {
-        id: activityId,
-        normalStyle: this.makeSpan(
-          { text: `  ${displayName}: `, style: { fg: t.accent } },
-          { text: "working on task...", style: { fg: t.textDim } },
-          { text: `  ${label}`, style: { fg: t.textDim } },
-        ),
-        hoverStyle: this.makeSpan(
-          { text: `  ${displayName}: `, style: { fg: t.accent } },
-          { text: "working on task...", style: { fg: t.textDim } },
-          { text: `  ${label}`, style: { fg: t.accent } },
-        ),
-      },
-      {
-        id: cancelId,
-        normalStyle: this.makeSpan({
-          text: " [cancel]",
-          style: { fg: t.textDim },
-        }),
-        hoverStyle: this.makeSpan({
-          text: " [cancel]",
-          style: { fg: t.accent },
-        }),
-      },
-    ]);
+    this.activityManager.updatePlaceholderVerb(queueId, teammate, threadId, label);
   }
 
-  /** Cancel a running task by killing the agent process. */
-  private async cancelTask(teammate: string, _threadId: number): Promise<void> {
-    const adapter = this.orchestrator.getAdapter();
-    if (!adapter.killAgent) {
-      this.feedLine(
-        tp.warning("  Agent adapter does not support cancellation"),
-      );
+  /** Cancel a running task or remove a queued task from the queue. */
+  private async cancelTask(queueId: string): Promise<void> {
+    // Try cancelling an active running task first
+    const cancelled = await this.activityManager.cancelRunningTask(queueId);
+    if (cancelled) return;
+
+    const queuedIdx = this.taskQueue.findIndex((e) => e.id === queueId);
+    if (queuedIdx < 0) {
+      this.feedLine(tp.warning("  No queued task found."));
       return;
     }
 
-    const result = await adapter.killAgent(teammate);
-    if (!result) {
-      this.feedLine(tp.warning(`  No running task found for ${teammate}`));
-      return;
+    const removed = this.taskQueue.splice(queuedIdx, 1)[0];
+    if (removed.threadId != null) {
+      const thread = this.getThread(removed.threadId);
+      thread?.pendingTasks.delete(removed.id);
+      const container = this.containers.get(removed.threadId);
+      if (container && this.chatView) {
+        container.hidePlaceholder(this.chatView, removed.id);
+        if (container.placeholderCount === 0) {
+          container.showThreadActions(this.chatView);
+        }
+      }
     }
 
-    // Hide activity lines and clean up state
-    this.cleanupActivityLines(teammate);
-
-    // Show cancellation notification
     const displayName =
-      teammate === this.selfName ? this.adapterName : teammate;
+      removed.teammate === this.selfName ? this.adapterName : removed.teammate;
     this.statusTracker.showNotification(
-      tp.warning(`✖ ${displayName}: task cancelled`),
+      tp.warning(`? ${displayName}: queued task cancelled`),
     );
     this.refreshView();
   }
 
-  /** Drain user tasks for a single agent — runs in parallel with other agents.
+  /** Drain user tasks for a single agent - runs in parallel with other agents.
    *  System tasks are handled separately by runSystemTask(). */
   private async drainAgentQueue(agent: string): Promise<void> {
     while (true) {
@@ -3008,6 +2941,14 @@ class TeammatesREPL {
 
       const entry = this.taskQueue.splice(idx, 1)[0];
       this.agentActive.set(agent, entry);
+      if (entry.threadId != null) {
+        this.updatePlaceholderVerb(
+          entry.id,
+          entry.teammate,
+          entry.threadId,
+          "[show activity]",
+        );
+      }
 
       const startTime = Date.now();
       try {
@@ -3042,15 +2983,13 @@ class TeammatesREPL {
           // Set up activity tracking for this task
           const teammate = entry.teammate;
           const tid = entry.threadId;
-          this._activityBuffers.set(teammate, []);
-          this._activityShown.set(teammate, false);
-          this._activityLineIndices.set(teammate, []);
-          if (tid != null) this._activityThreadIds.set(teammate, tid);
+          this.activityManager.initForTask(teammate, tid ?? undefined);
 
           let result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
             extraContext: extraContext || undefined,
+            skipMemoryUpdates: entry.type === "btw",
             onActivity: (events) => this.handleActivityEvents(teammate, events),
           });
 
@@ -3103,7 +3042,7 @@ class TeammatesREPL {
           this.cleanupActivityLines(entry.teammate);
 
           // Display the (possibly retried) result to the user
-          this.displayTaskResult(result, entry.type, entry.threadId);
+          this.displayTaskResult(result, entry.type, entry.threadId, entry.id);
 
           // Append result to thread
           if (entry.threadId != null) {
@@ -3117,7 +3056,7 @@ class TeammatesREPL {
             });
             const thread = this.getThread(entry.threadId);
             if (thread) {
-              thread.pendingAgents.delete(entry.teammate);
+              thread.pendingTasks.delete(entry.id);
             }
 
             // Propagate threadId to handoff entries
@@ -3173,108 +3112,27 @@ class TeammatesREPL {
   }
 
   /**
-   * Write a debug log file to .teammates/.tmp/debug/ for the task.
-   * Each task gets its own file. The path is stored in lastDebugFiles for /debug.
+   * Record debug file paths from the adapter for /debug analysis.
+   * The adapters themselves write:
+   *   - `<logBase>-prompt.md` — full prompt
+   *   - `<logBase>.md` — adapter-specific activity/debug log
+   * This method just stores the paths and the task prompt for /debug.
    */
   private writeDebugEntry(
     teammate: string,
     task: string,
     result: TaskResult | null,
-    startTime: number,
-    error?: any,
+    _startTime: number,
+    _error?: any,
   ): void {
     try {
-      const debugDir = join(this.teammatesDir, ".tmp", "debug");
-      try {
-        mkdirSync(debugDir, { recursive: true });
-      } catch {
-        return;
-      }
-
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      const timestamp = new Date().toISOString();
-      const ts = timestamp.replace(/[:.]/g, "-");
-      const debugFile = join(debugDir, `${teammate}-${ts}.md`);
-
-      const lines: string[] = [
-        `# Debug — ${teammate}`,
-        "",
-        `**Timestamp:** ${timestamp}`,
-        `**Duration:** ${elapsed}s`,
-        "",
-        "## Request",
-        "",
-        task,
-        "",
-      ];
-
-      // Include the full prompt sent to the agent (with identity, memory, etc.)
+      const promptFile = result?.promptFile;
+      const logFile = result?.logFile;
       const fullPrompt = result?.fullPrompt;
-      if (fullPrompt) {
-        lines.push("## Full Prompt");
-        lines.push("");
-        lines.push(fullPrompt);
-        lines.push("");
+
+      if (promptFile || logFile) {
+        this.lastDebugFiles.set(teammate, { promptFile, logFile });
       }
-
-      if (error) {
-        lines.push("## Result");
-        lines.push("");
-        lines.push(`**Status:** ERROR`);
-        lines.push(`**Error:** ${error?.message ?? String(error)}`);
-      } else if (result) {
-        lines.push("## Result");
-        lines.push("");
-        lines.push(`**Status:** ${result.success ? "OK" : "FAILED"}`);
-        lines.push(`**Summary:** ${result.summary || "(no summary)"}`);
-        if (result.changedFiles.length > 0) {
-          lines.push(`**Changed files:** ${result.changedFiles.join(", ")}`);
-        }
-        if (result.handoffs.length > 0) {
-          lines.push(
-            `**Handoffs:** ${result.handoffs.map((h) => `@${h.to}`).join(", ")}`,
-          );
-        }
-
-        // Process diagnostics — exit code, signal, stderr
-        const diag = result.diagnostics;
-        if (diag) {
-          lines.push("");
-          lines.push("### Process");
-          lines.push(`**Exit code:** ${diag.exitCode ?? "(killed by signal)"}`);
-          if (diag.signal) lines.push(`**Signal:** ${diag.signal}`);
-          if (diag.timedOut) lines.push(`**Timed out:** yes`);
-          if (diag.debugFile) {
-            lines.push(`**Agent debug log:** ${diag.debugFile}`);
-            // Inline Claude's debug file content if it exists
-            try {
-              const agentDebugContent = readFileSync(diag.debugFile, "utf-8");
-              lines.push("");
-              lines.push("### Agent Debug Log");
-              lines.push("");
-              lines.push(agentDebugContent);
-            } catch {
-              /* debug file may not exist yet or be unreadable */
-            }
-          }
-
-          if (diag.stderr.trim()) {
-            lines.push("");
-            lines.push("### stderr");
-            lines.push("");
-            lines.push(diag.stderr);
-          }
-        }
-
-        lines.push("");
-        lines.push("### Raw Output");
-        lines.push("");
-        lines.push(result.rawOutput ?? "(empty)");
-      }
-
-      lines.push("");
-      writeFileSync(debugFile, lines.join("\n"), "utf-8");
-      this.lastDebugFiles.set(teammate, debugFile);
       this.lastTaskPrompts.set(teammate, fullPrompt ?? task);
     } catch {
       // Don't let debug logging break task execution
@@ -3350,6 +3208,7 @@ class TeammatesREPL {
           sourceDir,
         );
         this.taskQueue.push({
+          id: this.makeQueueEntryId(),
           type: "agent",
           teammate: this.selfName,
           task: prompt,
@@ -3474,6 +3333,7 @@ class TeammatesREPL {
     // Queue a compact task for each teammate
     for (const name of valid) {
       this.taskQueue.push({
+        id: this.makeQueueEntryId(),
         type: "compact",
         teammate: name,
         task: "compact + index update",
@@ -3584,6 +3444,7 @@ class TeammatesREPL {
         const wisdomPrompt = await buildWisdomPrompt(teammateDir, name);
         if (wisdomPrompt) {
           this.taskQueue.push({
+            id: this.makeQueueEntryId(),
             type: "agent",
             teammate: name,
             task: wisdomPrompt,
@@ -3676,7 +3537,12 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     this.refreshView();
 
     for (const name of targets) {
-      this.taskQueue.push({ type: "retro", teammate: name, task: retroPrompt });
+      this.taskQueue.push({
+        id: this.makeQueueEntryId(),
+        type: "retro",
+        teammate: name,
+        task: retroPrompt,
+      });
     }
     this.kickDrain();
   }
@@ -3698,8 +3564,8 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       if (entry.isDirectory()) {
         await this.cleanOldTempFiles(fullPath, maxAgeMs);
         // Remove dir if now empty — but skip structural dirs that are
-        // recreated concurrently (sessions by startSession, debug by writeDebugEntry).
-        if (entry.name !== "sessions" && entry.name !== "debug") {
+        // recreated concurrently (debug by writeDebugEntry).
+        if (entry.name !== "debug") {
           const remaining = await readdir(fullPath).catch(() => [""]);
           if (remaining.length === 0)
             await rm(fullPath, { recursive: true }).catch(() => {});
@@ -3717,9 +3583,6 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     // Check and update installed CLI version
     const versionUpdate = this.checkVersionUpdate();
 
-    // Ensure the PostToolUse activity hook is installed for agent tracking
-    ensureActivityHook(dirname(this.teammatesDir));
-
     const tmpDir = join(this.teammatesDir, ".tmp");
 
     // Clean up debug log files older than 1 day
@@ -3728,14 +3591,6 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       await this.cleanOldTempFiles(debugDir, 24 * 60 * 60 * 1000);
     } catch {
       /* debug dir may not exist yet — non-fatal */
-    }
-
-    // Clean up activity log files older than 1 day
-    const activityDir = join(tmpDir, "activity");
-    try {
-      await this.cleanOldTempFiles(activityDir, 24 * 60 * 60 * 1000);
-    } catch {
-      /* activity dir may not exist yet — non-fatal */
     }
 
     // Clean up other .tmp files older than 1 week
@@ -3769,6 +3624,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
           }
           migrationCount++;
           this.taskQueue.push({
+            id: this.makeQueueEntryId(),
             type: "agent",
             teammate: name,
             task: prompt,
@@ -3800,6 +3656,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
           );
           if (compression) {
             this.taskQueue.push({
+              id: this.makeQueueEntryId(),
               type: "agent",
               teammate: name,
               task: compression.prompt,
@@ -4051,7 +3908,12 @@ Issues that can't be resolved unilaterally — they need input from other teamma
 
     // Has args — queue a task to apply the change
     const task = `Update the file ${userMdPath} with the following change:\n\n${change}\n\nKeep the existing content intact unless the change explicitly replaces something. This is the user's profile — be concise and accurate.`;
-    this.taskQueue.push({ type: "agent", teammate: this.selfName, task });
+    this.taskQueue.push({
+      id: this.makeQueueEntryId(),
+      type: "agent",
+      teammate: this.selfName,
+      task,
+    });
     this.feedLine(
       concat(
         tp.muted("  Queued USER.md update → "),
@@ -4072,6 +3934,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     }
 
     this.taskQueue.push({
+      id: this.makeQueueEntryId(),
       type: "btw",
       teammate: this.selfName,
       task: question,
@@ -4181,6 +4044,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       const task = `Run the following script located at ${scriptPath}:\n\n\`\`\`\n${scriptContent}\n\`\`\`\n\nExecute it and report the results. If it fails, diagnose the issue and fix it.`;
 
       this.taskQueue.push({
+        id: this.makeQueueEntryId(),
         type: "script",
         teammate: this.selfName,
         task,
@@ -4215,6 +4079,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     ].join("\n");
 
     this.taskQueue.push({
+      id: this.makeQueueEntryId(),
       type: "script",
       teammate: this.selfName,
       task,

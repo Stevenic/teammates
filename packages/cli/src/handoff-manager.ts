@@ -21,6 +21,7 @@ export interface HandoffView {
   wordWrap(text: string, maxWidth: number): string[];
   listTeammates(): string[];
   getThread(id: number): TaskThread | undefined;
+  makeQueueEntryId(): string;
   taskQueue: QueueEntry[];
   kickDrain(): void;
   teammatesDir: string;
@@ -125,7 +126,9 @@ export class HandoffManager {
       if (!isValid) {
         emit(tp.error(`  ✖  Unknown teammate: @${h.to}`));
       } else if (this.autoApproveHandoffs) {
+        const entryId = this.view.makeQueueEntryId();
         this.view.taskQueue.push({
+          id: entryId,
           type: "agent",
           teammate: h.to,
           task: h.task,
@@ -133,7 +136,7 @@ export class HandoffManager {
         });
         if (threadId != null) {
           const thread = this.view.getThread(threadId);
-          if (thread) thread.pendingAgents.add(h.to);
+          if (thread) thread.pendingTasks.add(entryId);
         }
         emit(tp.muted("  automatically approved"));
         this.view.kickDrain();
@@ -238,7 +241,9 @@ export class HandoffManager {
       const idx = this.pendingHandoffs.findIndex((h) => h.id === hId);
       if (idx >= 0 && this.view.chatView) {
         const h = this.pendingHandoffs.splice(idx, 1)[0];
+        const entryId = this.view.makeQueueEntryId();
         this.view.taskQueue.push({
+          id: entryId,
           type: "agent",
           teammate: h.envelope.to,
           task: h.envelope.task,
@@ -246,7 +251,7 @@ export class HandoffManager {
         });
         if (h.threadId != null) {
           const thread = this.view.getThread(h.threadId);
-          if (thread) thread.pendingAgents.add(h.envelope.to);
+          if (thread) thread.pendingTasks.add(entryId);
         }
         this.view.chatView.updateFeedLine(
           h.approveIdx,
@@ -292,7 +297,9 @@ export class HandoffManager {
 
     for (const h of this.pendingHandoffs) {
       if (isApprove) {
+        const entryId = this.view.makeQueueEntryId();
         this.view.taskQueue.push({
+          id: entryId,
           type: "agent",
           teammate: h.envelope.to,
           task: h.envelope.task,
@@ -300,7 +307,7 @@ export class HandoffManager {
         });
         if (h.threadId != null) {
           const thread = this.view.getThread(h.threadId);
-          if (thread) thread.pendingAgents.add(h.envelope.to);
+          if (thread) thread.pendingTasks.add(entryId);
         }
         const label =
           action === "Always approve"

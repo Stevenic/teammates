@@ -16,6 +16,7 @@ export interface RetroView {
   feedLine(text?: string | StyledSpan): void;
   refreshView(): void;
   makeSpan(...segs: { text: string; style: { fg?: Color } }[]): StyledSpan;
+  makeQueueEntryId(): string;
   taskQueue: QueueEntry[];
   kickDrain(): void;
   hasPendingHandoffs(): boolean;
@@ -303,7 +304,12 @@ After editing SOUL.md, record a brief summary of the retro outcome in your daily
 
 Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily log.`;
 
-    this.view.taskQueue.push({ type: "agent", teammate, task: applyPrompt });
+    this.view.taskQueue.push({
+      id: this.view.makeQueueEntryId(),
+      type: "agent",
+      teammate,
+      task: applyPrompt,
+    });
     this.view.feedLine(
       concat(
         tp.muted("  Queued SOUL.md update for "),

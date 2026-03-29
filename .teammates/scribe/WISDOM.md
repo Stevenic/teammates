@@ -1,4 +1,4 @@
-# Scribe — Wisdom
+# Scribe - Wisdom
 
 Distilled principles. Read this first every session (after SOUL.md).
 
@@ -6,59 +6,94 @@ Last compacted: 2026-03-29
 
 ---
 
-### Hand off, don't reach across
-If a task requires CLI or recall code changes, design the behavior and hand off to @beacon. Even when the feature originates from Scribe's domain (onboarding), the code belongs to Beacon. This boundary was violated once (03-13) and corrected — never repeat it.
+**Templates are upstream, tooling is downstream**
+Scribe defines memory formats and framework structure; implementation consumes that output.
+Any template change should be treated as an API change for recall, CLI behavior, and docs.
 
-### Templates are upstream, tooling is downstream
-Scribe defines memory file formats and framework structure. Beacon builds tooling that operates on the output. Breaking changes in templates propagate downstream to recall and CLI. Feature requests from tooling propagate upstream to Scribe.
+**Spec -> handoff -> docs is the full cycle**
+Design behavior before implementation, hand code work to the owner, then document the shipped result.
+Skipping the first step creates churn; skipping the last creates drift.
 
-### Ship only what's needed now
-Don't create artifacts for situations that don't exist yet. The migration guide was written before anyone had v2 and was immediately deleted. Speculative docs create churn. Wait for the actual need.
+**Cross-file consistency is non-negotiable**
+Framework concepts repeat across templates, onboarding, protocol docs, cookbook pages, and package READMEs.
+When one concept changes, audit every place that teaches or depends on it.
 
-### Spec → handoff → docs is the full cycle
-Scribe's workflow for new features: (1) design the behavior in a spec doc, (2) hand off to @beacon for implementation, (3) update docs/templates once implementation ships. Skipping step 1 leads to boundary violations. Skipping step 3 leads to stale docs.
+**Discoverability is part of the design**
+Specs and shared docs should live in stable locations and be linked from shared indexes like `CROSS-TEAM.md`.
+If a teammate cannot find a decision quickly, the documentation is incomplete.
 
-### Cross-file consistency is non-negotiable
-When updating a concept (memory tiers, context window, onboarding flow), audit ALL files that reference it. The same information lives in PROTOCOL.md (live + template), ARCHITECTURE.md, EPISODIC-COMPACTION.md, teammates-memory.md, CLI README, ONBOARDING.md, and sometimes cookbook.md. Missing one creates drift.
+**Automation stops at recommendation**
+Anything that affects teammate work should use propose-then-approve, not silent execution.
+Good automation narrows the choice; the human still makes it.
 
-### Retro proposals need a decision gate
-Retro proposals don't self-apply. They were proposed 3 times across 2 days before getting approved. When running a retro, explicitly ask the user to approve or reject each proposal in the same session.
+**Start with the no-server path**
+Collaboration features should first prove their value with files, git, and local conventions before adding infrastructure.
+Add a server only when latency, presence, or scale problems are concrete rather than hypothetical.
 
-### Folder naming convention: no prefix / _ / .
-In `.teammates/`: no prefix = teammate folder, `_` prefix = shared checked-in content (`_standups/`, `_tasks/`), `.` prefix = local gitignored content (`.tmp/`, `.index/`).
+**`.teammates/` stays authoritative**
+Use task worktrees for product code, but keep memory, handoffs, and session state in the main checkout.
+That split keeps collaboration state singular, visible, and immediately shared.
 
-### The three-project landscape
-P1 Parity (S16/S17/S26 — CLI feature parity with Claude Code), P2 Campfire v0.5.0 (multi-human collaboration with twins, "no server first" design), P3 Hands (cross-agent computer use via MCP). Parity ships first because it unblocks everything else. Hands depends on S26 (MCP Passthrough).
+**Claims belong in `.git/`, not the repo**
+Advisory claims must be shared across local worktrees without becoming committed project state.
+Putting them under `.git/teammates/claims/` preserves that boundary.
 
-### Specs live in scribe/docs/specs/
-All feature specs go in `.teammates/scribe/docs/specs/` with a pointer added to CROSS-TEAM.md Shared Docs. Naming: `S##-slug.md` for parity specs, `F#-slug.md` for novel features, `P#-slug.md` for project-level specs, `F-slug.md` for unnumbered feature specs.
+**Recall is retrieval, not reasoning**
+Recall should surface relevant context; the agent should do the thinking.
+Use it to inject likely relevant memory, not to replace analysis.
 
-### Nothing automatic that a human doesn't control
-Twins and AI automation must use a propose-then-approve model. Smart defaults are fine (suggest the right action), but execution requires human confirmation. This applies to PM twin queue reordering, routing decisions, and any action with team-wide impact. User stated this explicitly — it's a hard rule, not a preference.
+**Batch long-running work**
+Large write sets and other heavy tasks should be split into checkpointable batches with clear resume points.
+Timeout-prone workflows are easier to recover when progress is chunked.
 
-### Worktrees are per-task, .teammates/ stays in main tree
-Code changes happen in a task worktree (branch: `teammates/<agent>/<task-slug>`), but `.teammates/` operations (memory, handoffs, session state) always happen in the main worktree via absolute path. This keeps handoffs and memory writes immediately visible to all agents. Only create worktrees for tasks touching files outside `.teammates/`.
+**Design for interruption, not just completion**
+Agents can be stopped by timeout or by humans mid-task.
+Long-running workflows should define how to checkpoint, reconstruct state, and resume cleanly.
 
-### Claims live in .git/, never committed
-Advisory file locks (`.git/teammates/claims/`) are inside the shared `.git` dir so all worktrees on the same machine can see them. Claims are NEVER committed to git — Phase 1 is single-machine only. Cross-machine claims require the Campfire server (Phase 2).
+**Oversized files deserve structural fixes**
+Once a source file grows beyond comfortable review size, edits get slower and more error-prone.
+Specs touching oversized files should recommend extraction, not just more careful editing.
 
-### Recall is LLM-free — two-pass architecture
-Recall stays a pure search engine with no LLM dependency. Pass 1 (pre-task, no LLM): adapter fires keyword-extracted queries at recall, injects results into prompt. Pass 2 (during task): agent invokes recall as a tool/MCP server with full context. The agent does the reasoning, recall does the searching.
+**Spec UI before coding UI**
+Interactive features need concrete rendering examples and behavior rules before implementation starts.
+Without that, visual work turns into serial guess-and-correct loops.
 
-### Teammates grow, they never shrink
-Evolution is always additive to experience. When a role changes (generalist → specialist), nothing is removed — the teammate evolves. SOUL.md = current state (always in context). RESUME.md = career history (loaded on demand, indexed in vector DB for associative recall). Past experience surfaces automatically through semantic search, not deliberate reflection triggers.
+**Batch visual feedback**
+For UI review, one consolidated feedback round is cheaper than many tiny corrections.
+Design workflows should encourage grouped critique so implementation converges faster.
 
-### Spec bulk operations with batch limits
-When designing specs that produce many artifacts (file creation, memory writes), include batch size guidance. Bulk creation of 42 files caused a 600s agent timeout. The fix is always "break into smaller batches" — specs should anticipate this and prescribe limits.
+**Prefer stable identities over index math**
+Interactive models should track durable item identity instead of parallel index-keyed structures when state can shift.
+Index-heavy designs make insertion, deletion, and selection logic brittle.
 
-### Design for interruption
-Agents can be killed mid-task (timeout, user interrupt). Conversation logs serve as implicit checkpoints — kill → parse log → resume with condensed context. Specs for long-running features should consider the interrupt/resume path, not just the happy path.
+**State-shifting logic needs dedicated tests**
+When behavior depends on inserting, removing, or reordering items, manual reasoning is not enough.
+Specs should call for focused tests around index shifts, selection movement, and list mutation.
 
-### Large source files are hostile to AI agents
-When a single file exceeds ~3k lines, agents struggle to hold full context and make targeted edits. cli.ts at 6,800 lines was a root cause of the thread view churn (18 rounds). Specs that touch large files should recommend extraction first, or at minimum flag the risk.
+**Command surfaces must fit both the host and the product**
+Slash commands should avoid collisions with the agent's native command set and align with the product's existing interaction model.
+A clear name is still wrong if it conflicts with the host or duplicates a better built-in affordance.
 
-### Spec UI before coding UI
-Visual/interactive features (thread view, feed layout) need a spec with exact rendering examples before any code is written. Without one, feedback becomes serial ("move this, change that") and rounds multiply. The thread view post-mortem confirmed: spec-after-code cost 18 rounds; spec-first features land in 1-3.
+**Shared summaries should report deltas**
+Standups, digests, and progress views are most useful when they emphasize what changed since the last update.
+Repeating static state creates noise and hides the actual movement.
 
-### Slash commands must not collide with host tools
-When naming CLI slash commands, check for conflicts with the host coding agent's built-in commands. `/compact` was removed because it collides with Claude Code's context compaction. Always audit against Claude, Codex, and Copilot built-ins before naming a command.
+**Progress views should separate signal from no-ops**
+Status UIs are clearer when housekeeping and no-op steps stay in progress reporting while user-meaningful work enters the main feed.
+This keeps activity visible without flooding the primary narrative.
+
+**Retro proposals need a decision gate**
+Retrospectives should end in explicit approve-or-reject calls, not a pile of unclaimed recommendations.
+A proposal without a decision is just deferred ambiguity.
+
+**Verify before logging completion**
+A fix is not done when it sounds plausible; it is done when someone confirmed the behavior.
+Any workflow that records completion should also define the verification step first.
+
+**Roadmap order matters more than feature count**
+Prerequisites and parity work ship before higher-level collaboration features because they unlock the rest.
+When prioritization is unclear, prefer the feature that removes downstream blockers.
+
+**WISDOM is for heuristics, not recipes**
+Keep this file to durable principles and short patterns, not post-mortems or implementation commentary.
+If an entry reads like a task note, it belongs somewhere else.
