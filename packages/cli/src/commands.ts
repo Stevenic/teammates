@@ -22,6 +22,7 @@ import type { AgentAdapter } from "./adapter.js";
 import type { AnimatedBanner, ServiceInfo } from "./banner.js";
 import { PKG_VERSION } from "./cli-args.js";
 import { relativeTime } from "./cli-utils.js";
+import type { ConversationManager } from "./conversation.js";
 import type { HandoffManager } from "./handoff-manager.js";
 import {
   buildImportAdaptationPrompt,
@@ -58,8 +59,7 @@ export interface CommandsDeps {
   readonly agentActive: Map<string, QueueEntry>;
   readonly abortControllers: Map<string, AbortController>;
   readonly commands: Map<string, SlashCommand>;
-  readonly conversationHistory: { role: string; text: string }[];
-  conversationSummary: string;
+  readonly conversation: ConversationManager;
   lastResult: TaskResult | null;
   readonly lastResults: Map<string, TaskResult>;
   readonly lastDebugFiles: Map<
@@ -831,8 +831,8 @@ export class CommandManager {
 
   private async cmdClear(): Promise<void> {
     const d = this.deps;
-    d.conversationHistory.length = 0;
-    d.conversationSummary = "";
+    d.conversation.history.length = 0;
+    d.conversation.summary = "";
     d.lastResult = null;
     d.lastResults.clear();
     d.taskQueue.length = 0;
@@ -936,7 +936,7 @@ export class CommandManager {
       return;
     }
 
-    const retroPrompt = `Run a structured self-retrospective. Review your SOUL.md, WISDOM.md, your last 2-3 weekly summaries (or last 7 daily logs if no weeklies exist), and any typed memories in your memory/ folder.
+    const retroPrompt = `Run a structured self-retrospective. Review your SOUL.md, GOALS.md, WISDOM.md, your last 2-3 weekly summaries (or last 7 daily logs if no weeklies exist), and any typed memories in your memory/ folder.
 
 Produce a response with these four sections:
 
@@ -994,10 +994,10 @@ Issues that can't be resolved unilaterally — they need input from other teamma
 
   buildSessionMarkdown(): string {
     const d = this.deps;
-    if (d.conversationHistory.length === 0) return "";
+    if (d.conversation.history.length === 0) return "";
     const lines: string[] = [];
     lines.push("# Chat Session\n");
-    for (const entry of d.conversationHistory) {
+    for (const entry of d.conversation.history) {
       if (entry.role === "user") {
         lines.push(`**User:** ${entry.text}\n`);
       } else {

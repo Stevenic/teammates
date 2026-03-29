@@ -342,6 +342,7 @@ export class CliProxyAdapter implements AgentAdapter {
           type: "ai" as const,
           role: "",
           soul: "",
+          goals: "",
           wisdom: "",
           dailyLogs: [],
           weeklyLogs: [],

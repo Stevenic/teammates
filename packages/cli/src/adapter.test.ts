@@ -8,6 +8,7 @@ function makeConfig(overrides?: Partial<TeammateConfig>): TeammateConfig {
     type: "ai" as const,
     role: "Platform engineer.",
     soul: "# Beacon\n\nBeacon owns the recall package.",
+    goals: "",
     wisdom: "",
     dailyLogs: [],
     weeklyLogs: [],

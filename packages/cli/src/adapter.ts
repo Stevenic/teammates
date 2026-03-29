@@ -209,6 +209,11 @@ export function buildTeammatePrompt(
   // <IDENTITY> — anchors persona
   parts.push(`<IDENTITY>\n# You are ${teammate.name}\n\n${teammate.soul}\n`);
 
+  // <GOALS> — active objectives and priorities
+  if (teammate.goals.trim()) {
+    parts.push(`<GOALS>\n${teammate.goals}\n`);
+  }
+
   // <WISDOM> — stable knowledge
   if (teammate.wisdom.trim()) {
     parts.push(`<WISDOM>\n${teammate.wisdom}\n`);
@@ -456,6 +461,11 @@ export function buildTeammatePrompt(
   instrLines.push(
     "- Stay in character as defined in `<IDENTITY>` — never break persona or speak as a generic assistant.",
   );
+  if (teammate.goals.trim()) {
+    instrLines.push(
+      "- Keep `<GOALS>` in mind — prioritize work that advances your active objectives.",
+    );
+  }
   if (teammate.wisdom.trim()) {
     instrLines.push(
       "- Apply lessons from `<WISDOM>` before proposing solutions — do not repeat past mistakes.",

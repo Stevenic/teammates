@@ -24,6 +24,8 @@ export interface TeammateConfig {
   role: string;
   /** Full SOUL.md content */
   soul: string;
+  /** Full GOALS.md content */
+  goals: string;
   /** Full WISDOM.md content */
   wisdom: string;
   /** Daily log entries (most recent first) */

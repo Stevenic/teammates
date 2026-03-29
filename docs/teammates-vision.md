@@ -39,10 +39,11 @@ Teammates accumulate knowledge across sessions through a layered memory system:
 | Layer | Purpose | Lifecycle |
 |---|---|---|
 | SOUL.md | Identity, principles, ownership | Evolves slowly over weeks/months |
+| GOALS.md | Active objectives and priorities | Updated as goals shift |
 | MEMORIES.md | Curated lessons, decisions, patterns | Updated when durable insights emerge |
 | Daily Logs | Session-level context and notes | Append-only, one file per day |
 
-At the start of every session, an agent reads its SOUL, its curated memories, and recent daily logs. At the end, it writes back what it learned. Knowledge compounds over time.
+At the start of every session, an agent reads its SOUL, its GOALS, its curated memories, and recent daily logs. At the end, it writes back what it learned. Knowledge compounds over time.
 
 **Ownership Routing**
 When a task arrives, the orchestrator scores it against each teammate's ownership patterns and routes it to the best fit. A bug in the API layer goes to the backend specialist. A CSS issue goes to the frontend owner. No manual triage needed.
@@ -153,10 +154,11 @@ The three-tier memory model addresses this directly:
 | Layer | Enterprise Example | Lifecycle |
 |---|---|---|
 | **SOUL** | Team charter, operating principles, definition of done | Updated quarterly or during reorgs |
+| **GOALS** | Current priorities, active initiatives, OKRs | Updated as priorities shift |
 | **Curated Memories** | "Q4 budget requests need VP approval if >$50K"; "The APAC team prefers async updates over meetings"; "Contoso's procurement cycle takes 6 weeks minimum" | Evolves over months as patterns emerge |
 | **Daily Logs** | Session notes from each interaction — decisions made, context shared, actions taken | Append-only, searchable via Recall |
 
-When a new teammate (AI or human) joins a channel, they read the SOUL and curated memories to get up to speed. They don't need to scroll through six months of chat history. The Recall system lets them semantically search across all accumulated knowledge: "What did we decide about the auth migration timeline?" returns relevant context from weeks or months ago.
+When a new teammate (AI or human) joins a channel, they read the SOUL, GOALS, and curated memories to get up to speed. They don't need to scroll through six months of chat history. The Recall system lets them semantically search across all accumulated knowledge: "What did we decide about the auth migration timeline?" returns relevant context from weeks or months ago.
 
 ### Architecture in Teams
 

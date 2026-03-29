@@ -41,7 +41,8 @@ Every child folder of `.teammates/` is interpreted by its name prefix:
 Each teammate folder contains:
 
 - **SOUL.md** — Identity, continuity instructions, principles, boundaries, capabilities, and ownership
-- **WISDOM.md** — Distilled principles from compacted memories (read second, after SOUL.md)
+- **GOALS.md** — Active objectives and priorities (read after SOUL.md)
+- **WISDOM.md** — Distilled principles from compacted memories (read after GOALS.md)
 - **memory/** — Daily logs (`YYYY-MM-DD.md`), typed memory files (`<type>_<topic>.md`), and episodic summaries (`weekly/`, `monthly/`)
 - Additional files as needed (e.g., design docs, bug trackers)
 

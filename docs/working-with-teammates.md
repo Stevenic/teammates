@@ -113,7 +113,7 @@ Retrospectives are how teammates grow. They review their own work, identify what
 
 ### What happens during a retro
 
-1. The teammate reviews its SOUL.md, WISDOM.md, recent logs, and typed memories
+1. The teammate reviews its SOUL.md, GOALS.md, WISDOM.md, recent logs, and typed memories
 2. It produces four sections:
    - **What's Working** — patterns worth reinforcing, with evidence
    - **What's Not Working** — friction or recurring issues

@@ -597,6 +597,50 @@ export class ThreadManager {
     // Blank line after reply
     container.insertLine(this.view.chatView, "", this.shiftAllContainers);
 
+    // Insert thread-level [reply] [copy thread] verbs (once, shifts automatically)
+    if (this.view.chatView) {
+      const threadReplyId = `thread-reply-${threadId}`;
+      const threadCopyId = `thread-copy-${threadId}`;
+      container.insertThreadActions(
+        this.view.chatView,
+        [
+          {
+            id: threadReplyId,
+            normalStyle: this.view.makeSpan({
+              text: "  [reply]",
+              style: { fg: t.textDim },
+            }),
+            hoverStyle: this.view.makeSpan({
+              text: "  [reply]",
+              style: { fg: t.accent },
+            }),
+          },
+          {
+            id: threadCopyId,
+            normalStyle: this.view.makeSpan({
+              text: " [copy thread]",
+              style: { fg: t.textDim },
+            }),
+            hoverStyle: this.view.makeSpan({
+              text: " [copy thread]",
+              style: { fg: t.accent },
+            }),
+          },
+        ],
+        this.shiftAllContainers,
+      );
+
+      // Show/hide thread-level actions based on whether work is still in progress
+      if (container.placeholderCount === 0) {
+        container.showThreadActions(this.view.chatView);
+      } else {
+        container.hideThreadActions(this.view.chatView);
+      }
+    }
+
+    // Update thread header
+    this.updateThreadHeader(threadId);
+
     // Clear insert position override
     container.clearInsertAt();
   }

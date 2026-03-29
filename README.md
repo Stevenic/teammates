@@ -123,6 +123,7 @@ your-project/
       memory/           # Your activity logs
     <teammate-name>/
       SOUL.md           # Identity, continuity, principles, boundaries, ownership
+      GOALS.md          # Active objectives and priorities
       WISDOM.md         # Distilled principles from compacted memories
       RESUME.md         # Career history — past projects and role changes
       memory/           # Daily logs (YYYY-MM-DD.md) and typed memories (<type>_<topic>.md)
@@ -133,6 +134,7 @@ your-project/
 ## Key Concepts
 
 - **Soul** — A teammate's identity: who they are, what they own, their principles, and their boundaries. Souls evolve — teammates update their own as they learn.
+- **Goals** — Active objectives and priorities. GOALS.md tracks what a teammate is working towards — distinct from identity (SOUL.md) and accumulated knowledge (WISDOM.md).
 - **Continuity** — Each session starts fresh. Files are the only memory. Teammates read their files at startup and write to them before ending a session.
 - **Memory** — Three tiers: raw daily logs (`memory/YYYY-MM-DD.md`), typed memories (`memory/<type>_<topic>.md`), and distilled wisdom (`WISDOM.md`). Memories compact into wisdom over time via the `/compact` command.
 - **Ownership** — File patterns each teammate is responsible for. Every part of the codebase has a clear owner.
@@ -192,10 +194,11 @@ teammates/
     PROTOCOL.md         # Collaboration rules template
     CROSS-TEAM.md       # Empty starter for cross-team notes
     DECISIONS.md        # Decision log template
-    TEMPLATE.md         # Template for individual teammate files (SOUL, WISDOM, RESUME, typed memories, daily logs)
+    TEMPLATE.md         # Template for individual teammate files (SOUL, GOALS, WISDOM, RESUME, typed memories, daily logs)
     USER.md             # User profile template (gitignored)
     example/
       SOUL.md           # Worked example of a filled-in SOUL.md
+      GOALS.md          # Worked example of a filled-in GOALS.md
 ```
 
 ## License

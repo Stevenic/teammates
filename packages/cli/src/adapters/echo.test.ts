@@ -7,6 +7,7 @@ const teammate: TeammateConfig = {
   type: "ai",
   role: "Platform engineer.",
   soul: "# Beacon\n\nBeacon owns the recall package.",
+  goals: "",
   wisdom: "",
   dailyLogs: [],
   weeklyLogs: [],
