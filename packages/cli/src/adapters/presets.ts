@@ -26,9 +26,8 @@ export const CODEX_PRESET: AgentPreset = {
     const args = ["exec", "-"];
     if (teammate.cwd) args.push("-C", teammate.cwd);
     const sandbox =
-      teammate.sandbox ?? options.defaultSandbox ?? "workspace-write";
+      teammate.sandbox ?? options.defaultSandbox ?? "danger-full-access";
     args.push("-s", sandbox);
-    args.push("--full-auto");
     args.push("--ephemeral");
     args.push("--json");
     if (options.model) args.push("-m", options.model);
@@ -68,9 +67,22 @@ export const AIDER_PRESET: AgentPreset = {
   env: { FORCE_COLOR: "1" },
 };
 
+export const COPILOT_PRESET: AgentPreset = {
+  name: "copilot",
+  command: "copilot",
+  buildArgs(_ctx, _teammate, options) {
+    const args = ["-p", "-", "--allow-all", "-s"];
+    if (options.model) args.push("--model", options.model);
+    return args;
+  },
+  env: { NO_COLOR: "1" },
+  stdinPrompt: true,
+};
+
 /** All built-in presets, keyed by name. */
 export const PRESETS: Record<string, AgentPreset> = {
   claude: CLAUDE_PRESET,
   codex: CODEX_PRESET,
+  copilot: COPILOT_PRESET,
   aider: AIDER_PRESET,
 };

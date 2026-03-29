@@ -21,8 +21,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/patch-copilot-sdk.cjs"
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "teammates",
@@ -34,7 +33,6 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@github/copilot-sdk": "^0.1.32",
     "@teammates/consolonia": "*",
     "@teammates/recall": "*",
     "chalk": "^5.6.2",

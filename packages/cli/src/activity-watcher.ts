@@ -600,13 +600,6 @@ function watchFile_(
   let lastSize = 0;
   let stopped = false;
 
-  try {
-    const s = statSync(filePath);
-    lastSize = s.size;
-  } catch {
-    // File may not exist yet
-  }
-
   const checkForNew = () => {
     if (stopped) return;
     try {
@@ -684,13 +677,6 @@ export function watchCodexDebugLog(
   let stopped = false;
   let trailing = "";
 
-  try {
-    const s = statSync(debugFilePath);
-    lastSize = s.size;
-  } catch {
-    // File may not exist yet.
-  }
-
   const checkForNew = () => {
     if (stopped) return;
     try {
@@ -750,9 +736,17 @@ export function collapseActivityEvents(
   // Accumulator for research phase
   let researchStart = -1;
   const researchCounts = new Map<string, number>();
+  const researchEvents: ActivityEvent[] = [];
 
   const flushResearch = () => {
     if (researchStart < 0) return;
+    if (researchEvents.length === 1) {
+      result.push(researchEvents[0]);
+      researchStart = -1;
+      researchCounts.clear();
+      researchEvents.length = 0;
+      return;
+    }
     const parts: string[] = [];
     for (const [tool, count] of researchCounts) {
       parts.push(`${count}× ${tool}`);
@@ -764,6 +758,7 @@ export function collapseActivityEvents(
     });
     researchStart = -1;
     researchCounts.clear();
+    researchEvents.length = 0;
   };
 
   // Accumulator for consecutive edits to the same file
@@ -801,6 +796,7 @@ export function collapseActivityEvents(
       flushEdits();
       if (researchStart < 0) researchStart = ev.elapsedMs;
       researchCounts.set(ev.tool, (researchCounts.get(ev.tool) ?? 0) + 1);
+      researchEvents.push(ev);
       continue;
     }
 
@@ -809,6 +805,7 @@ export function collapseActivityEvents(
       flushEdits();
       if (researchStart < 0) researchStart = ev.elapsedMs;
       researchCounts.set("Bash", (researchCounts.get("Bash") ?? 0) + 1);
+      researchEvents.push(ev);
       continue;
     }
 

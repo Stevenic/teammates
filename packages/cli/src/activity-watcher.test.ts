@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseCodexJsonlLine } from "./activity-watcher.js";
+import {
+  collapseActivityEvents,
+  parseCodexJsonlLine,
+} from "./activity-watcher.js";
 
 describe("parseCodexJsonlLine", () => {
   const start = Date.parse("2026-03-29T12:00:00.000Z");
@@ -211,6 +214,27 @@ describe("parseCodexJsonlLine", () => {
         detail: "stream disconnected before completion",
         isError: true,
       },
+    ]);
+  });
+});
+
+describe("collapseActivityEvents", () => {
+  it("keeps a single research event visible instead of collapsing it", () => {
+    expect(
+      collapseActivityEvents([
+        { elapsedMs: 4_000, tool: "Read", detail: "SOUL.md" },
+      ]),
+    ).toEqual([{ elapsedMs: 4_000, tool: "Read", detail: "SOUL.md" }]);
+  });
+
+  it("still collapses consecutive research events into Exploring", () => {
+    expect(
+      collapseActivityEvents([
+        { elapsedMs: 4_000, tool: "Read", detail: "SOUL.md" },
+        { elapsedMs: 5_000, tool: "Grep", detail: "watchCodexDebugLog" },
+      ]),
+    ).toEqual([
+      { elapsedMs: 4_000, tool: "Exploring", detail: "1× Read, 1× Grep" },
     ]);
   });
 });

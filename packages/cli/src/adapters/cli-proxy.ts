@@ -4,7 +4,7 @@
  *
  * Supports any CLI agent that accepts a prompt and runs to completion:
  *   claude -p "prompt"
- *   codex exec "prompt" --full-auto
+ *   codex exec "prompt" -s danger-full-access -a never
  *   aider --message "prompt"
  *   etc.
  *

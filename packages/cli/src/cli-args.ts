@@ -10,7 +10,7 @@ import type { AgentAdapter } from "./adapter.js";
 import { ClaudeAdapter } from "./adapters/claude.js";
 import { PRESETS } from "./adapters/cli-proxy.js";
 import { CodexAdapter } from "./adapters/codex.js";
-import type { CopilotAdapterOptions } from "./adapters/copilot.js";
+import { CopilotAdapter } from "./adapters/copilot.js";
 import { EchoAdapter } from "./adapters/echo.js";
 
 // ─── Version ─────────────────────────────────────────────────────────
@@ -101,16 +101,14 @@ export async function resolveAdapter(
 ): Promise<AgentAdapter> {
   if (name === "echo") return new EchoAdapter();
 
-  // GitHub Copilot SDK adapter — lazy-loaded to avoid pulling in
-  // @github/copilot-sdk (and vscode-jsonrpc) when not needed.
+  // Agent-specific adapters
   if (name === "copilot") {
-    const { CopilotAdapter } = await import("./adapters/copilot.js");
     return new CopilotAdapter({
       model: opts.modelOverride,
-    } satisfies CopilotAdapterOptions);
+      extraFlags: opts.agentPassthrough,
+    });
   }
 
-  // Agent-specific adapters
   if (name === "claude") {
     return new ClaudeAdapter({
       model: opts.modelOverride,
@@ -135,7 +133,7 @@ export async function resolveAdapter(
     });
   }
 
-  const available = ["echo", "copilot", ...Object.keys(PRESETS)].join(", ");
+  const available = ["echo", ...Object.keys(PRESETS)].join(", ");
   console.error(chalk.red(`Unknown adapter: ${name}`));
   console.error(`Available adapters: ${available}`);
   process.exit(1);
@@ -152,14 +150,17 @@ ${chalk.bold("Usage:")}
   teammates <agent>          Launch session with an agent
   teammates codex            Use OpenAI Codex
   teammates aider            Use Aider
+  teammates codex --search   Pass additional flags to the agent CLI
 
 ${chalk.bold("Options:")}
   --model <model>            Override the agent model
   --dir <path>               Override .teammates/ location
+  <agent args...>            Passed through to the selected agent CLI
 
 ${chalk.bold("Agents:")}
   claude     Claude Code CLI (requires 'claude' on PATH)
   codex      OpenAI Codex CLI (requires 'codex' on PATH)
+  copilot    GitHub Copilot CLI (requires 'copilot' on PATH)
   aider      Aider CLI (requires 'aider' on PATH)
   echo       Test adapter — echoes prompts (no external agent)
 

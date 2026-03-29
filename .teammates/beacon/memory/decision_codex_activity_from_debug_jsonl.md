@@ -15,6 +15,12 @@ The current Codex logs in this repo are emitting live shell work as `command_exe
 
 ## Consequences
 - Codex activity now follows a log-watcher model similar to Claude.
+- Per-task activity watchers must read from byte `0` on startup, not from the
+  current file size, otherwise early commands can be lost before the watcher
+  attaches.
 - The parser must unwrap PowerShell `-Command "..."` wrappers before classifying `Read` / `Grep` / `Glob` / `Bash`.
 - The parser must map `file_change` batches into `Edit` / `Write` activity so Codex runs show visible implementation phases instead of only research.
 - The watcher needs trailing-line buffering so partial JSONL appends are not dropped.
+- Collapsing should preserve a single research event as-is; turning one `Read`
+  into a generic `Exploring (1× Read)` line hides useful evidence that the
+  renderer is working.
