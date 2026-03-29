@@ -4,7 +4,12 @@
 
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
-import type { ChatView, Color, StyledSpan } from "@teammates/consolonia";
+import type {
+  ChatView,
+  Color,
+  FeedActionItem,
+  StyledSpan,
+} from "@teammates/consolonia";
 import { theme, tp } from "./theme.js";
 import type { HandoffEnvelope, QueueEntry, TaskThread } from "./types.js";
 
@@ -36,6 +41,16 @@ export interface PendingViolation {
   actionIdx: number;
 }
 
+/**
+ * Optional thread container context for rendering handoffs inside a thread.
+ * When provided, handoff lines are inserted via the container instead of
+ * appended to the global feed — keeping them inside the thread range.
+ */
+export interface HandoffContainerCtx {
+  insertLine(text: string | StyledSpan): void;
+  insertActions(actions: FeedActionItem[]): number;
+}
+
 export class HandoffManager {
   pendingHandoffs: PendingHandoff[] = [];
   pendingViolations: PendingViolation[] = [];
@@ -47,11 +62,16 @@ export class HandoffManager {
     this.view = view;
   }
 
-  /** Render handoff blocks with approve/reject actions. */
+  /** Render handoff blocks with approve/reject actions.
+   *  When `containerCtx` is provided, lines are inserted into the thread
+   *  container instead of appended to the global feed — keeping handoffs
+   *  inside the thread range so [reply] [copy thread] stays at the bottom.
+   */
   renderHandoffs(
     _from: string,
     handoffs: HandoffEnvelope[],
     threadId?: number,
+    containerCtx?: HandoffContainerCtx,
   ): void {
     const t = theme();
     const names = this.view.listTeammates();
@@ -59,16 +79,21 @@ export class HandoffManager {
     const boxW = Math.max(40, Math.round(avail * 0.6));
     const innerW = boxW - 4;
 
+    // Use container-aware insert when inside a thread, global feedLine otherwise
+    const emit = containerCtx
+      ? (text?: string | StyledSpan) => containerCtx.insertLine(text ?? "")
+      : (text?: string | StyledSpan) => this.view.feedLine(text);
+
     for (let i = 0; i < handoffs.length; i++) {
       const h = handoffs[i];
       const isValid = names.includes(h.to);
       const handoffId = `handoff-${Date.now()}-${i}`;
       const chrome = isValid ? t.accentDim : t.error;
 
-      this.view.feedLine();
+      emit();
       const label = ` handoff → @${h.to} `;
       const topFill = Math.max(0, boxW - 2 - label.length);
-      this.view.feedLine(
+      emit(
         this.view.makeSpan({
           text: `  ┌${label}${"─".repeat(topFill)}┐`,
           style: { fg: chrome },
@@ -80,7 +105,7 @@ export class HandoffManager {
           rawLine.length === 0 ? [""] : this.view.wordWrap(rawLine, innerW);
         for (const wl of wrapped) {
           const pad = Math.max(0, innerW - wl.length);
-          this.view.feedLine(
+          emit(
             this.view.makeSpan(
               { text: "  │ ", style: { fg: chrome } },
               { text: wl + " ".repeat(pad), style: { fg: t.textMuted } },
@@ -90,7 +115,7 @@ export class HandoffManager {
         }
       }
 
-      this.view.feedLine(
+      emit(
         this.view.makeSpan({
           text: `  └${"─".repeat(Math.max(0, boxW - 2))}┘`,
           style: { fg: chrome },
@@ -98,7 +123,7 @@ export class HandoffManager {
       );
 
       if (!isValid) {
-        this.view.feedLine(tp.error(`  ✖  Unknown teammate: @${h.to}`));
+        emit(tp.error(`  ✖  Unknown teammate: @${h.to}`));
       } else if (this.autoApproveHandoffs) {
         this.view.taskQueue.push({
           type: "agent",
@@ -110,11 +135,10 @@ export class HandoffManager {
           const thread = this.view.getThread(threadId);
           if (thread) thread.pendingAgents.add(h.to);
         }
-        this.view.feedLine(tp.muted("  automatically approved"));
+        emit(tp.muted("  automatically approved"));
         this.view.kickDrain();
       } else if (this.view.chatView) {
-        const actionIdx = this.view.chatView.feedLineCount;
-        this.view.chatView.appendActionList([
+        const actions = [
           {
             id: `approve-${handoffId}`,
             normalStyle: this.view.makeSpan({
@@ -137,7 +161,14 @@ export class HandoffManager {
               style: { fg: t.accent },
             }),
           },
-        ]);
+        ];
+        const actionIdx = containerCtx
+          ? containerCtx.insertActions(actions)
+          : (() => {
+              const idx = this.view.chatView.feedLineCount;
+              this.view.chatView.appendActionList(actions);
+              return idx;
+            })();
         this.pendingHandoffs.push({
           id: handoffId,
           envelope: h,

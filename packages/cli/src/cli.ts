@@ -744,8 +744,9 @@ class TeammatesREPL {
     from: string,
     handoffs: HandoffEnvelope[],
     threadId?: number,
+    containerCtx?: import("./handoff-manager.js").HandoffContainerCtx,
   ): void {
-    this.handoffManager.renderHandoffs(from, handoffs, threadId);
+    this.handoffManager.renderHandoffs(from, handoffs, threadId, containerCtx);
   }
   private showHandoffDropdown(): void {
     this.handoffManager.showHandoffDropdown();
@@ -1684,8 +1685,8 @@ class TeammatesREPL {
         feedMarkdown: (source) => this.feedMarkdown(source),
         refreshView: () => this.refreshView(),
         makeSpan: (...segs) => this.makeSpan(...segs),
-        renderHandoffs: (from, handoffs, tid) =>
-          this.renderHandoffs(from, handoffs, tid),
+        renderHandoffs: (from, handoffs, tid, containerCtx) =>
+          this.renderHandoffs(from, handoffs, tid, containerCtx),
         doCopy: (content?) => this.doCopy(content),
         get selfName() {
           return selfNameFn();

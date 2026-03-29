@@ -6,6 +6,7 @@
 import type { ChatView, Color, StyledSpan } from "@teammates/consolonia";
 import { concat, pen, renderMarkdown } from "@teammates/consolonia";
 import { wrapLine } from "./cli-utils.js";
+import type { HandoffContainerCtx } from "./handoff-manager.js";
 import { theme, tp } from "./theme.js";
 import { type ShiftCallback, ThreadContainer } from "./thread-container.js";
 import type { HandoffEnvelope, TaskThread, ThreadEntry } from "./types.js";
@@ -23,6 +24,7 @@ export interface ThreadManagerView {
     from: string,
     handoffs: HandoffEnvelope[],
     threadId?: number,
+    containerCtx?: HandoffContainerCtx,
   ): void;
   doCopy(content?: string): void;
   get selfName(): string;
@@ -518,9 +520,29 @@ export class ThreadManager {
       copyId,
     );
 
-    // Render handoffs inside thread
+    // Render handoffs inside thread (using container insert so they stay
+    // within the thread range, before the [reply] [copy thread] verbs)
     if (result.handoffs.length > 0) {
-      this.view.renderHandoffs(result.teammate, result.handoffs, threadId);
+      const containerCtx: HandoffContainerCtx = {
+        insertLine: (text) =>
+          container.insertLine(
+            this.view.chatView,
+            text,
+            this.shiftAllContainers,
+          ),
+        insertActions: (actions) =>
+          container.insertActions(
+            this.view.chatView,
+            actions,
+            this.shiftAllContainers,
+          ),
+      };
+      this.view.renderHandoffs(
+        result.teammate,
+        result.handoffs,
+        threadId,
+        containerCtx,
+      );
     }
 
     // Blank line after reply

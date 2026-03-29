@@ -7,7 +7,7 @@ Last compacted: 2026-03-29
 ---
 
 ### Codebase map — three packages
-CLI has ~52 source files (~4,100 lines in cli.ts after Phase 2 extraction); consolonia has ~51 files; recall has ~13 files. Big files: `cli.ts` (~4,100), `onboard-flow.ts` (~1,089), `chat-view.ts` (~1,670), `markdown.ts` (~970), `compact.ts` (~800), `cli-proxy.ts` (~810), `thread-manager.ts` (~579), `adapter.ts` (~570). When debugging, start with cli.ts and cli-proxy.ts.
+CLI has ~52 source files (~4,100 lines in cli.ts after Phase 2 extraction); consolonia has ~51 files; recall has ~13 files. Big files: `cli.ts` (~4,100), `onboard-flow.ts` (~1,089), `chat-view.ts` (~1,670), `markdown.ts` (~970), `compact.ts` (~800), `cli-proxy.ts` (~810), `thread-manager.ts` (~579), `adapter.ts` (~570), `migrations.ts` (~100). When debugging, start with cli.ts and cli-proxy.ts.
 
 ### cli.ts decomposition — extracted module pattern
 Phase 1+2 extracted 7 modules (6815 → ~4,100 lines): `status-tracker.ts`, `handoff-manager.ts`, `retro-manager.ts`, `wordwheel.ts`, `service-config.ts`, `thread-manager.ts`, `onboard-flow.ts`. Each receives deps via a typed interface. cli.ts creates instances after orchestrator/chatView init, passing closure-based getters. Slash commands (~2,100 lines) were NOT extracted — too entangled with private state.
@@ -64,7 +64,13 @@ After modifying TypeScript source: `rm -rf dist && npm run build`, then `npx bio
 Update ALL references on version bump — not just the three package.json files. Also update `cliVersion` in `.teammates/settings.json`. Grep for old version string to catch stragglers.
 
 ### Migrations are just markdown
-MIGRATIONS.md lives in `packages/cli/` (ships with npm package). Plain markdown with `## <version>` sections. `buildMigrationPrompt()` parses it, filters by previous version, queues one agent task per teammate. Don't over-engineer this — the first attempt with a typed Migration interface + programmatic/agent types was ripped out the same day.
+MIGRATIONS.md lives in `packages/cli/` (ships with npm package). Plain markdown with `## <version>` sections. `buildMigrationPrompt()` parses it, filters by previous version, queues one agent task per teammate. Don't over-engineer this — the first attempt with a typed Migration interface + programmatic/agent types was ripped out the same day. `commitVersionUpdate()` only fires when ALL migrations complete — interrupted CLI re-runs on next startup.
+
+### ESM path resolution — no __dirname
+`__dirname` is undefined in ESM modules. Use `fileURLToPath(new URL("../relative/path", import.meta.url))` instead. Silent `catch` on `readFileSync` masked this for days — migrations silently skipped because the path resolved to nothing.
+
+### Reuse existing infrastructure — don't duplicate
+Custom progress spinners, status lines, or notification patterns should use `StatusTracker` (startTask/stopTask/showNotification), not bespoke code. The migration spinner was rewritten twice before using the standard API. When adding new progress/status UI, check if StatusTracker already handles it.
 
 ### Spec-first for UI features
 Write a design spec before starting any multi-phase visual feature. The thread view took 18+ rounds partly because the first implementation had to be thrown away when the spec arrived mid-feature.
