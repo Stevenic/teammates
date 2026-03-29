@@ -5,10 +5,10 @@
 
 import type { ChatView, Color, StyledSpan } from "@teammates/consolonia";
 import { concat, pen, renderMarkdown } from "@teammates/consolonia";
+import { wrapLine } from "./cli-utils.js";
 import { theme, tp } from "./theme.js";
 import { type ShiftCallback, ThreadContainer } from "./thread-container.js";
 import type { HandoffEnvelope, TaskThread, ThreadEntry } from "./types.js";
-import { wrapLine } from "./cli-utils.js";
 
 // ── View interface ──────────────────────────────────────────────────
 
@@ -96,10 +96,7 @@ export class ThreadManager {
    */
   updateFooterHint(): void {
     if (!this.view.chatView) return;
-    if (
-      this.focusedThreadId != null &&
-      this.getThread(this.focusedThreadId)
-    ) {
+    if (this.focusedThreadId != null && this.getThread(this.focusedThreadId)) {
       this.view.chatView.setFooterRight(
         tp.muted(`replying to #${this.focusedThreadId} `),
       );
@@ -407,7 +404,13 @@ export class ThreadManager {
 
   /** Render a task result indented inside a thread, replacing the working placeholder in-place. */
   displayThreadedResult(
-    result: { teammate: string; summary: string; rawOutput?: string; changedFiles: string[]; handoffs: HandoffEnvelope[] },
+    result: {
+      teammate: string;
+      summary: string;
+      rawOutput?: string;
+      changedFiles: string[];
+      handoffs: HandoffEnvelope[];
+    },
     cleaned: string,
     threadId: number,
     container: ThreadContainer,

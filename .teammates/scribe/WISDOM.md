@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-29
+Last compacted: 2026-03-29 (evening)
 
 ---
 
@@ -56,3 +56,9 @@ When designing specs that produce many artifacts (file creation, memory writes),
 
 ### Design for interruption
 Agents can be killed mid-task (timeout, user interrupt). Conversation logs serve as implicit checkpoints — kill → parse log → resume with condensed context. Specs for long-running features should consider the interrupt/resume path, not just the happy path.
+
+### Large source files are hostile to AI agents
+When a single file exceeds ~3k lines, agents struggle to hold full context and make targeted edits. cli.ts at 6,800 lines was a root cause of the thread view churn (18 rounds). Specs that touch large files should recommend extraction first, or at minimum flag the risk.
+
+### Spec UI before coding UI
+Visual/interactive features (thread view, feed layout) need a spec with exact rendering examples before any code is written. Without one, feedback becomes serial ("move this, change that") and rounds multiply. The thread view post-mortem confirmed: spec-after-code cost 18 rounds; spec-first features land in 1-3.

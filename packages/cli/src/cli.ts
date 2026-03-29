@@ -9,7 +9,7 @@
  *   teammates --dir <path>        Override .teammates/ location
  */
 
-import { exec as execCb, execSync, spawnSync } from "node:child_process";
+import { exec as execCb } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -19,7 +19,6 @@ import {
 } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 
 import {
   App,
@@ -60,29 +59,27 @@ import {
 import {
   autoCompactForBudget,
   buildDailyCompressionPrompt,
-  buildMigrationCompressionPrompt,
   buildWisdomPrompt,
   compactEpisodic,
-  findUncompressedDailies,
   purgeStaleDailies,
 } from "./compact.js";
 import { PromptInput } from "./console/prompt-input.js";
-import { buildTitle } from "./console/startup.js";
 import { HandoffManager } from "./handoff-manager.js";
 import { buildConversationLog } from "./log-parser.js";
+import { buildMigrationPrompt } from "./migrations.js";
 import {
   buildImportAdaptationPrompt,
   copyTemplateFiles,
-  getOnboardingPrompt,
   importTeammates,
 } from "./onboard.js";
+import { OnboardFlow } from "./onboard-flow.js";
 import { Orchestrator } from "./orchestrator.js";
-import { loadPersonas, scaffoldFromPersona } from "./personas.js";
 import { RetroManager } from "./retro-manager.js";
 import { cmdConfigure, detectServices } from "./service-config.js";
 import { StatusTracker } from "./status-tracker.js";
 import { colorToHex, theme, tp } from "./theme.js";
-import { type ShiftCallback, ThreadContainer } from "./thread-container.js";
+import type { ThreadContainer } from "./thread-container.js";
+import { ThreadManager } from "./thread-manager.js";
 import type {
   HandoffEnvelope,
   OrchestratorEvent,
@@ -260,166 +257,19 @@ class TeammatesREPL {
     this.feedLine();
   }
 
-  /** Render a task result indented inside a thread, replacing the working placeholder in-place. */
+  /** Render a task result indented inside a thread (delegated to ThreadManager). */
   private displayThreadedResult(
     result: TaskResult,
     cleaned: string,
     threadId: number,
     container: ThreadContainer,
   ): void {
-    const t = theme();
-    const subject = result.summary || "Task completed";
-
-    // Hide the original working placeholder (don't update in-place)
-    // and insert the completed response at the reply insert point
-    // (before remaining working placeholders) so completed replies float up.
-    if (this.chatView) {
-      container.hidePlaceholder(this.chatView, result.teammate);
-    }
-
-    // Track reply key for individual collapse
-    const thread = this.getThread(threadId);
-    const replyIndex = thread
-      ? thread.entries.filter((e) => e.type !== "user").length
-      : 0;
-    const replyKey = `${threadId}-${replyIndex}`;
-    const ts = Date.now();
-    const collapseId = `reply-collapse-${replyKey}`;
-    const copyId = `copy-${result.teammate}-${ts}`;
-
-    // Store copy context for [copy] action
-    if (cleaned) {
-      this._copyContexts.set(copyId, cleaned);
-    }
-
-    // Insert subject line as action list with inline [hide] [copy]
-    // (starts as [hide] since body is visible; toggles to [show] when collapsed)
-    const displayName =
-      result.teammate === this.selfName ? this.adapterName : result.teammate;
-    const subjectActions = [
-      {
-        id: collapseId,
-        normalStyle: this.makeSpan(
-          { text: `  @${displayName}: `, style: { fg: t.accent } },
-          { text: subject, style: { fg: t.text } },
-          { text: "  [hide]", style: { fg: t.textDim } },
-        ),
-        hoverStyle: this.makeSpan(
-          { text: `  @${displayName}: `, style: { fg: t.accent } },
-          { text: subject, style: { fg: t.text } },
-          { text: "  [hide]", style: { fg: t.accent } },
-        ),
-      },
-      {
-        id: copyId,
-        normalStyle: this.makeSpan({
-          text: " [copy]",
-          style: { fg: t.textDim },
-        }),
-        hoverStyle: this.makeSpan({
-          text: " [copy]",
-          style: { fg: t.accent },
-        }),
-      },
-    ];
-    const headerIdx = container.insertActions(
-      this.chatView,
-      subjectActions,
-      this.shiftAllContainers,
+    this.threadManager.displayThreadedResult(
+      result,
+      cleaned,
+      threadId,
+      container,
     );
-
-    // Set insert position to right after the subject line
-    container.setInsertAt(headerIdx + 1);
-
-    // Track body start for individual collapse (peek — don't consume a position)
-    const bodyStartIdx = container.peekInsertPoint();
-
-    if (cleaned) {
-      this.threadFeedMarkdown(threadId, cleaned);
-    } else if (result.changedFiles.length > 0 || result.summary) {
-      const syntheticLines: string[] = [];
-      if (result.summary) syntheticLines.push(result.summary);
-      if (result.changedFiles.length > 0) {
-        syntheticLines.push("", "**Files changed:**");
-        for (const f of result.changedFiles) syntheticLines.push(`- ${f}`);
-      }
-      this.threadFeedMarkdown(threadId, syntheticLines.join("\n"));
-    } else {
-      container.insertLine(
-        this.chatView,
-        tp.muted(
-          "    (no response text — the agent may have only performed tool actions)",
-        ),
-        this.shiftAllContainers,
-      );
-    }
-
-    // Track body end for individual collapse (peek — don't consume a position)
-    const bodyEndIdx = container.peekInsertPoint();
-    container.trackReplyBody(
-      replyKey,
-      headerIdx,
-      bodyStartIdx,
-      bodyEndIdx,
-      displayName,
-      subject,
-      copyId,
-    );
-
-    // Render handoffs inside thread
-    if (result.handoffs.length > 0) {
-      this.renderHandoffs(result.teammate, result.handoffs, threadId);
-    }
-
-    // Blank line after reply
-    container.insertLine(this.chatView, "", this.shiftAllContainers);
-
-    // Clear insert position override
-    container.clearInsertAt();
-
-    // Insert thread-level [reply] [copy thread] verbs (once, shifts automatically)
-    if (this.chatView) {
-      const threadReplyId = `thread-reply-${threadId}`;
-      const threadCopyId = `thread-copy-${threadId}`;
-      container.insertThreadActions(
-        this.chatView,
-        [
-          {
-            id: threadReplyId,
-            normalStyle: this.makeSpan({
-              text: "  [reply]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.makeSpan({
-              text: "  [reply]",
-              style: { fg: t.accent },
-            }),
-          },
-          {
-            id: threadCopyId,
-            normalStyle: this.makeSpan({
-              text: " [copy thread]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.makeSpan({
-              text: " [copy thread]",
-              style: { fg: t.accent },
-            }),
-          },
-        ],
-        this.shiftAllContainers,
-      );
-
-      // Show/hide thread-level actions based on whether work is still in progress
-      if (container.placeholderCount === 0) {
-        container.showThreadActions(this.chatView);
-      } else {
-        container.hideThreadActions(this.chatView);
-      }
-    }
-
-    // Update thread header
-    this.updateThreadHeader(threadId);
   }
 
   /** Target context window in tokens. Conversation history budget is derived from this. */
@@ -556,359 +406,64 @@ class TeammatesREPL {
   /** The local user's alias (avatar name). Set after USER.md is read or interview completes. */
   private userAlias: string | null = null;
 
-  // ── Thread tracking ───────────────────────────────────────────────
-  /** All task threads, keyed by numeric thread ID. */
-  private threads: Map<number, TaskThread> = new Map();
-  /** Auto-incrementing thread ID counter (session-scoped). */
-  private nextThreadId = 1;
-  /** Currently focused thread ID (for default routing and rendering). */
-  private focusedThreadId: number | null = null;
+  // ── Thread management (delegated to ThreadManager) ──────────────
+  private threadManager!: ThreadManager;
 
-  /** Create a new thread and return it. */
+  private get threads() {
+    return this.threadManager.threads;
+  }
+  private get focusedThreadId() {
+    return this.threadManager.focusedThreadId;
+  }
+  private set focusedThreadId(v: number | null) {
+    this.threadManager.focusedThreadId = v;
+  }
+  private get containers() {
+    return this.threadManager.containers;
+  }
+  private get shiftAllContainers() {
+    return this.threadManager.shiftAllContainers;
+  }
+
   private createThread(originMessage: string): TaskThread {
-    const id = this.nextThreadId++;
-    const thread: TaskThread = {
-      id,
-      originMessage,
-      originTimestamp: Date.now(),
-      entries: [],
-      pendingAgents: new Set(),
-      collapsed: false,
-      collapsedEntries: new Set(),
-      focusedAt: Date.now(),
-    };
-    this.threads.set(id, thread);
-    this.focusedThreadId = id;
-    this.updateFooterHint();
-    return thread;
+    return this.threadManager.createThread(originMessage);
   }
-
-  /**
-   * Update the footer right hint to show the focused thread.
-   * Shows "replying to #N" when a thread is focused, or "? /help" otherwise.
-   */
   private updateFooterHint(): void {
-    if (!this.chatView) return;
-    if (this.focusedThreadId != null && this.getThread(this.focusedThreadId)) {
-      this.chatView.setFooterRight(
-        tp.muted(`replying to #${this.focusedThreadId} `),
-      );
-    } else {
-      this.chatView.setFooterRight(this.defaultFooterRight!);
-    }
+    this.threadManager.updateFooterHint();
   }
-
-  /** Find a thread by its numeric ID. */
   private getThread(id: number): TaskThread | undefined {
-    return this.threads.get(id);
+    return this.threadManager.getThread(id);
   }
-
-  /** Build plain-text representation of a thread for clipboard copy. */
   private buildThreadClipboardText(threadId: number): string {
-    const thread = this.threads.get(threadId);
-    if (!thread) return "";
-    const lines: string[] = [];
-    for (const entry of thread.entries) {
-      if (entry.type === "user") {
-        lines.push(`${this.selfName}: ${entry.content}`);
-      } else {
-        const name = entry.teammate || "unknown";
-        if (entry.subject) lines.push(`@${name}: ${entry.subject}`);
-        if (entry.content) lines.push(entry.content);
-      }
-      lines.push("");
-    }
-    return lines.join("\n").trimEnd();
+    return this.threadManager.buildThreadClipboardText(threadId);
   }
-
-  /** Add an entry to a thread. */
   private appendThreadEntry(threadId: number, entry: ThreadEntry): void {
-    const thread = this.threads.get(threadId);
-    if (!thread) return;
-    thread.entries.push(entry);
+    this.threadManager.appendThreadEntry(threadId, entry);
   }
-
-  // ── Thread feed rendering ───────────────────────────────────────
-
-  /** Thread containers keyed by thread ID — each manages its own feed indices. */
-  private containers: Map<number, ThreadContainer> = new Map();
-
-  /**
-   * Shift all container indices and global tracking when lines are inserted.
-   * Passed as the ShiftCallback to container insert methods.
-   */
-  private shiftAllContainers: ShiftCallback = (
-    atIndex: number,
-    delta: number,
-  ) => {
-    for (const container of this.containers.values()) {
-      container.shiftIndices(atIndex, delta);
-    }
-    for (const h of this.pendingHandoffs) {
-      if (h.approveIdx >= atIndex) h.approveIdx += delta;
-      if (h.rejectIdx >= atIndex) h.rejectIdx += delta;
-    }
-  };
-
-  /**
-   * Insert markdown content into a thread's feed range with extra indentation.
-   */
   private threadFeedMarkdown(threadId: number, source: string): void {
-    const container = this.containers.get(threadId);
-    if (!container || !this.chatView) {
-      this.feedMarkdown(source);
-      return;
-    }
-    const t = theme();
-    const width = process.stdout.columns || 80;
-    const lines = renderMarkdown(source, {
-      width: width - 5, // -4 for indent, -1 for scrollbar
-      indent: "    ",
-      theme: {
-        text: { fg: t.textMuted },
-        bold: { fg: t.text, bold: true },
-        italic: { fg: t.textMuted, italic: true },
-        boldItalic: { fg: t.text, bold: true, italic: true },
-        code: { fg: t.accentDim },
-        h1: { fg: t.accent, bold: true },
-        h2: { fg: t.accent, bold: true },
-        h3: { fg: t.accent },
-        codeBlockChrome: { fg: t.textDim },
-        codeBlock: { fg: t.success },
-        blockquote: { fg: t.textMuted, italic: true },
-        listMarker: { fg: t.accent },
-        tableBorder: { fg: t.textDim },
-        tableHeader: { fg: t.text, bold: true },
-        hr: { fg: t.textDim },
-        link: { fg: t.accent, underline: true },
-        linkUrl: { fg: t.textMuted },
-        strikethrough: { fg: t.textMuted, strikethrough: true },
-        checkbox: { fg: t.accent },
-      },
-    });
-    for (const line of lines) {
-      const styledSpan = line.map((seg) => ({
-        text: seg.text,
-        style: seg.style,
-      })) as StyledSpan;
-      (styledSpan as any).__brand = "StyledSpan";
-      container.insertLine(this.chatView, styledSpan, this.shiftAllContainers);
-    }
+    this.threadManager.threadFeedMarkdown(threadId, source);
   }
-
-  /** Render the thread dispatch line as part of the user message block. */
   private renderThreadHeader(thread: TaskThread, targetNames: string[]): void {
-    if (!this.chatView) return;
-    const t = theme();
-    const bg = this._userBg;
-    const headerIdx = this.chatView.feedLineCount;
-
-    const displayNames = targetNames.map((n) =>
-      n === this.selfName ? this.adapterName : n,
-    );
-    const namesText = displayNames.map((n) => `@${n}`).join(", ");
-
-    // Render as a user-styled line (dark bg) so it looks like part of the user's message
-    this.feedUserLine(
-      concat(
-        pen.fg(t.textDim).bg(bg)(`#${thread.id}  → `),
-        pen.fg(t.accent).bg(bg)(namesText),
-      ),
-    );
-
-    // Create container for this thread
-    const container = new ThreadContainer(thread.id, headerIdx, targetNames);
-    this.containers.set(thread.id, container);
+    this.threadManager.renderThreadHeader(thread, targetNames);
   }
-
-  /** Update the thread header to reflect current collapse state. */
   private updateThreadHeader(threadId: number): void {
-    const container = this.containers.get(threadId);
-    const thread = this.getThread(threadId);
-    if (!container || !thread || !this.chatView) return;
-    const t = theme();
-    const bg = this._userBg;
-    const displayNames = container.targetNames.map((n) =>
-      n === this.selfName ? this.adapterName : n,
-    );
-    const namesText = displayNames.map((n) => `@${n}`).join(", ");
-    const arrow = thread.collapsed ? "▶ " : "";
-
-    // Update as user-styled line (dark bg)
-    const termW = (process.stdout.columns || 80) - 1;
-    const content = concat(
-      pen.fg(t.textDim).bg(bg)(`${arrow}#${threadId}  → `),
-      pen.fg(t.accent).bg(bg)(namesText),
-    );
-    let len = 0;
-    for (const seg of content) len += seg.text.length;
-    const pad = Math.max(0, termW - len);
-    const padded = concat(content, pen.fg(bg).bg(bg)(" ".repeat(pad)));
-    this.chatView.updateFeedLine(container.headerIdx, padded);
+    this.threadManager.updateThreadHeader(threadId);
   }
-
-  /**
-   * Render a user reply message inside a thread container, including a dispatch line.
-   * Used when a user sends a reply to an existing thread (vs. creating a new thread).
-   */
   private renderThreadReply(
     threadId: number,
     displayText: string,
     targetNames: string[],
   ): void {
-    if (!this.chatView) return;
-    const container = this.containers.get(threadId);
-    if (!container) return;
-    const t = theme();
-    const bg = this._userBg;
-    const termW = (process.stdout.columns || 80) - 1;
-
-    // Blank line separator before the reply block
-    container.insertLine(this.chatView, "", this.shiftAllContainers);
-
-    // Render user message lines inside the thread (user-styled, indented)
-    // All content indented 4 spaces (container body level) with bg color
-    const indent = "    ";
-    const label = `${indent}${this.selfName}: `;
-    const wrapW = termW - indent.length;
-    const lines = displayText.split("\n");
-    const first = lines.shift() ?? "";
-    const firstWrapW = termW - label.length;
-    const firstWrapped = this.wrapLine(first, firstWrapW);
-    const seg0 = firstWrapped.shift() ?? "";
-    const pad0 = Math.max(0, termW - label.length - seg0.length);
-    container.insertLine(
-      this.chatView,
-      concat(
-        pen.fg(t.accent).bg(bg)(label),
-        pen.fg(t.text).bg(bg)(seg0 + " ".repeat(pad0)),
-      ),
-      this.shiftAllContainers,
-    );
-    for (const wl of firstWrapped) {
-      const pad = Math.max(0, termW - indent.length - wl.length);
-      container.insertLine(
-        this.chatView,
-        concat(
-          pen.fg(t.text).bg(bg)(indent),
-          pen.fg(t.text).bg(bg)(wl + " ".repeat(pad)),
-        ),
-        this.shiftAllContainers,
-      );
-    }
-    for (const line of lines) {
-      const wrapped = this.wrapLine(line, wrapW);
-      for (const wl of wrapped) {
-        const pad = Math.max(0, termW - indent.length - wl.length);
-        container.insertLine(
-          this.chatView,
-          concat(
-            pen.fg(t.text).bg(bg)(indent),
-            pen.fg(t.text).bg(bg)(wl + " ".repeat(pad)),
-          ),
-          this.shiftAllContainers,
-        );
-      }
-    }
-
-    // Render dispatch line inside the thread (user-styled, like the original header)
-    const displayNames = targetNames.map((n) =>
-      n === this.selfName ? this.adapterName : n,
-    );
-    const namesText = displayNames.map((n) => `@${n}`).join(", ");
-    const dispatchContent = concat(
-      pen.fg(t.textDim).bg(bg)(`${indent}→ `),
-      pen.fg(t.accent).bg(bg)(namesText),
-    );
-    let dispLen = 0;
-    for (const seg of dispatchContent) dispLen += seg.text.length;
-    const dispPad = Math.max(0, termW - dispLen);
-    container.insertLine(
-      this.chatView,
-      concat(dispatchContent, pen.fg(bg).bg(bg)(" ".repeat(dispPad))),
-      this.shiftAllContainers,
-    );
-
-    // Blank line between dispatch and working placeholders
-    container.insertLine(this.chatView, "", this.shiftAllContainers);
-
-    // Clear insert override so placeholders use normal insert point
-    container.clearInsertAt();
+    this.threadManager.renderThreadReply(threadId, displayText, targetNames);
   }
-
-  /** Render a working placeholder for an agent in a thread. */
   private renderWorkingPlaceholder(threadId: number, teammate: string): void {
-    if (!this.chatView) return;
-    const container = this.containers.get(threadId);
-    if (!container) return;
-    const t = theme();
-    const displayName =
-      teammate === this.selfName ? this.adapterName : teammate;
-    container.addPlaceholder(
-      this.chatView,
-      teammate,
-      this.makeSpan(
-        { text: `  @${displayName}: `, style: { fg: t.accent } },
-        { text: "working on task...", style: { fg: t.textDim } },
-      ),
-      this.shiftAllContainers,
-    );
+    this.threadManager.renderWorkingPlaceholder(threadId, teammate);
   }
-
-  /** Toggle collapse/expand for an entire thread. */
   private toggleThreadCollapse(threadId: number): void {
-    const thread = this.getThread(threadId);
-    const container = this.containers.get(threadId);
-    if (!thread || !container || !this.chatView) return;
-
-    thread.collapsed = !thread.collapsed;
-    container.toggleCollapse(this.chatView, thread.collapsed);
-
-    // Update header arrow
-    this.updateThreadHeader(threadId);
-    this.refreshView();
+    this.threadManager.toggleThreadCollapse(threadId);
   }
-
-  /** Toggle collapse/expand for an individual reply within a thread. */
   private toggleReplyCollapse(threadId: number, replyKey: string): void {
-    const container = this.containers.get(threadId);
-    if (!container || !this.chatView) return;
-    container.toggleReplyCollapse(this.chatView, replyKey);
-    // Update the action text to show [show] or [hide] based on new state
-    const item = container.items.find((i) => i.key === replyKey);
-    if (item?.displayName) {
-      const t = theme();
-      const label = item.collapsed ? "[show]" : "[hide]";
-      const collapseId = `reply-collapse-${replyKey}`;
-      const actions = [
-        {
-          id: collapseId,
-          normalStyle: this.makeSpan(
-            { text: `  @${item.displayName}: `, style: { fg: t.accent } },
-            { text: item.subject || "completed", style: { fg: t.text } },
-            { text: `  ${label}`, style: { fg: t.textDim } },
-          ),
-          hoverStyle: this.makeSpan(
-            { text: `  @${item.displayName}: `, style: { fg: t.accent } },
-            { text: item.subject || "completed", style: { fg: t.text } },
-            { text: `  ${label}`, style: { fg: t.accent } },
-          ),
-        },
-        {
-          id: item.copyActionId || `copy-${replyKey}`,
-          normalStyle: this.makeSpan({
-            text: " [copy]",
-            style: { fg: t.textDim },
-          }),
-          hoverStyle: this.makeSpan({
-            text: " [copy]",
-            style: { fg: t.accent },
-          }),
-        },
-      ];
-      this.chatView.updateActionList(item.subjectLineIndex, actions);
-    }
-    this.refreshView();
+    this.threadManager.toggleReplyCollapse(threadId, replyKey);
   }
 
   // ── Animated status tracker (delegated to StatusTracker) ────────
@@ -916,6 +471,15 @@ class TeammatesREPL {
 
   constructor(adapterName: string) {
     this.adapterName = adapterName;
+    this.onboardFlow = new OnboardFlow({
+      feedLine: (text?) => this.feedLine(text),
+      feedMarkdown: (source) => this.feedMarkdown(source),
+      refreshView: () => this.refreshView(),
+      askInline: (prompt) => this.askInline(prompt),
+      get adapterName() {
+        return adapterName;
+      },
+    });
   }
 
   /**
@@ -1485,595 +1049,67 @@ class TeammatesREPL {
       if (entry.type === "agent" && entry.migration) {
         this.pendingMigrationSyncs--;
         if (this.pendingMigrationSyncs <= 0) {
+          this.chatView.setProgress(null);
           try {
             await syncRecallIndex(this.teammatesDir);
-            this.feedLine(
-              tp.success("  ✔  v0.6.0 migration complete — indexes rebuilt"),
-            );
-            this.refreshView();
           } catch {
             /* re-index failed — non-fatal, next startup will retry */
           }
           // Persist version LAST — only after all migration tasks finish
           this.commitVersionUpdate();
+          this.feedLine(tp.success(`  ✔  Upgraded to v${PKG_VERSION}`));
+          this.refreshView();
         }
       }
     }
   }
 
-  // ─── Onboarding ───────────────────────────────────────────────────
+  // ─── Onboarding (delegated to OnboardFlow) ─────────────────────────
+  private onboardFlow!: OnboardFlow;
 
-  /**
-   * Interactive prompt for team onboarding after user profile is set up.
-   * .teammates/ already exists at this point. Returns false if user chose to exit.
-   */
-  private async promptTeamOnboarding(
-    adapter: AgentAdapter,
-    teammatesDir: string,
-  ): Promise<boolean> {
-    const cwd = process.cwd();
-    const termWidth = process.stdout.columns || 100;
-
-    console.log();
-    console.log(chalk.gray("─".repeat(termWidth)));
-    console.log();
-    console.log(chalk.white("  Set up teammates for this project?\n"));
-    console.log(
-      chalk.cyan("  1") +
-        chalk.gray(") ") +
-        chalk.white("Pick teammates") +
-        chalk.gray(" — choose from persona templates"),
-    );
-    console.log(
-      chalk.cyan("  2") +
-        chalk.gray(") ") +
-        chalk.white("Auto-generate") +
-        chalk.gray(
-          " — let your agent analyze the codebase and create teammates",
-        ),
-    );
-    console.log(
-      chalk.cyan("  3") +
-        chalk.gray(") ") +
-        chalk.white("Import team") +
-        chalk.gray(" — copy teammates from another project"),
-    );
-    console.log(
-      chalk.cyan("  4") +
-        chalk.gray(") ") +
-        chalk.white("Solo mode") +
-        chalk.gray(" — use your agent without teammates"),
-    );
-    console.log(chalk.cyan("  5") + chalk.gray(") ") + chalk.white("Exit"));
-    console.log();
-
-    const choice = await this.askChoice("Pick an option (1/2/3/4/5): ", [
-      "1",
-      "2",
-      "3",
-      "4",
-      "5",
-    ]);
-
-    if (choice === "5") {
-      console.log(chalk.gray("  Goodbye."));
-      return false;
-    }
-
-    if (choice === "4") {
-      console.log(
-        chalk.gray("  Running in solo mode — all tasks go to your agent."),
-      );
-      console.log(chalk.gray("  Run /init later to set up teammates."));
-      console.log();
-      return true;
-    }
-
-    if (choice === "3") {
-      await this.runImport(cwd);
-      return true;
-    }
-
-    if (choice === "2") {
-      // Auto-generate via agent
-      await this.runOnboardingAgent(adapter, cwd);
-      return true;
-    }
-
-    // choice === "1": Pick from persona templates
-    await this.runPersonaOnboarding(teammatesDir);
-    return true;
+  private needsUserSetup(teammatesDir: string): boolean {
+    return this.onboardFlow.needsUserSetup(teammatesDir);
   }
-
-  /**
-   * Persona-based onboarding: show a list of bundled personas, let the user
-   * pick which ones to create, optionally rename them, and scaffold the folders.
-   */
-  private async runPersonaOnboarding(teammatesDir: string): Promise<void> {
-    const personas = await loadPersonas();
-    if (personas.length === 0) {
-      console.log(chalk.yellow("  No persona templates found."));
-      return;
-    }
-
-    console.log();
-    console.log(chalk.white("  Available personas:\n"));
-
-    // Display personas grouped by tier
-    let currentTier = 0;
-    for (let i = 0; i < personas.length; i++) {
-      const p = personas[i];
-      if (p.tier !== currentTier) {
-        currentTier = p.tier;
-        const label = currentTier === 1 ? "Core" : "Specialized";
-        console.log(chalk.gray(`  ── ${label} ──`));
-      }
-      const num = String(i + 1).padStart(2, " ");
-      console.log(
-        chalk.cyan(`  ${num}`) +
-          chalk.gray(") ") +
-          chalk.white(p.persona) +
-          chalk.gray(` (${p.alias})`) +
-          chalk.gray(` — ${p.description}`),
-      );
-    }
-
-    console.log();
-    console.log(chalk.gray("  Enter numbers separated by commas, e.g. 1,3,5"));
-    console.log();
-
-    const input = await this.askInput("Personas: ");
-    if (!input) {
-      console.log(chalk.gray("  No personas selected."));
-      return;
-    }
-
-    // Parse comma-separated numbers
-    const indices = input
-      .split(",")
-      .map((s) => parseInt(s.trim(), 10) - 1)
-      .filter((i) => i >= 0 && i < personas.length);
-
-    const unique = [...new Set(indices)];
-    if (unique.length === 0) {
-      console.log(chalk.yellow("  No valid selections."));
-      return;
-    }
-
-    console.log();
-
-    // Copy framework files first
-    await copyTemplateFiles(teammatesDir);
-
-    const created: string[] = [];
-    for (const idx of unique) {
-      const p = personas[idx];
-      const nameInput = await this.askInput(
-        `Name for ${p.persona} [${p.alias}]: `,
-      );
-      const name = nameInput || p.alias;
-      const folderName = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-
-      await scaffoldFromPersona(teammatesDir, folderName, p);
-      created.push(folderName);
-      console.log(
-        chalk.green("  ✔  ") +
-          chalk.white(`@${folderName}`) +
-          chalk.gray(` — ${p.persona}`),
-      );
-    }
-
-    console.log();
-    console.log(
-      chalk.green(
-        `  ✔  Created ${created.length} teammate${created.length > 1 ? "s" : ""}: `,
-      ) + chalk.white(created.map((n) => `@${n}`).join(", ")),
-    );
-    console.log(
-      chalk.gray(
-        "  Tip: Your agent will adapt ownership and capabilities to this codebase on first task.",
-      ),
-    );
-    console.log();
+  private readUserAlias(teammatesDir: string): string | null {
+    return this.onboardFlow.readUserAlias(teammatesDir);
   }
-
-  /**
-   * In-TUI persona picker for /init pick. Uses feedLine + askInline instead
-   * of console.log + askInput.
-   */
+  private registerUserAvatar(teammatesDir: string, alias: string): void {
+    this.onboardFlow.registerUserAvatar(teammatesDir, alias, this.orchestrator);
+    this.userAlias = alias;
+  }
+  private printLogo(infoLines: string[]): void {
+    this.onboardFlow.printLogo(infoLines);
+  }
+  private printAgentOutput(rawOutput: string | undefined): void {
+    this.onboardFlow.printAgentOutput(rawOutput);
+  }
+  private async runUserSetup(teammatesDir: string): Promise<void> {
+    return this.onboardFlow.runUserSetup(teammatesDir);
+  }
   private async runPersonaOnboardingInline(
     teammatesDir: string,
   ): Promise<void> {
-    const personas = await loadPersonas();
-    if (personas.length === 0) {
-      this.feedLine(tp.warning("  No persona templates found."));
-      this.refreshView();
-      return;
-    }
-
-    // Display personas in the feed
-    this.feedLine(tp.text("  Available personas:\n"));
-
-    let currentTier = 0;
-    for (let i = 0; i < personas.length; i++) {
-      const p = personas[i];
-      if (p.tier !== currentTier) {
-        currentTier = p.tier;
-        const label = currentTier === 1 ? "Core" : "Specialized";
-        this.feedLine(tp.muted(`  ── ${label} ──`));
-      }
-      const num = String(i + 1).padStart(2, " ");
-      this.feedLine(
-        concat(
-          tp.text(`  ${num}) ${p.persona} `),
-          tp.muted(`(${p.alias}) — ${p.description}`),
-        ),
-      );
-    }
-
-    this.feedLine(
-      tp.muted("\n  Enter numbers separated by commas, e.g. 1,3,5"),
-    );
-    this.refreshView();
-
-    const input = await this.askInline("Personas: ");
-    if (!input) {
-      this.feedLine(tp.muted("  No personas selected."));
-      this.refreshView();
-      return;
-    }
-
-    const indices = input
-      .split(",")
-      .map((s) => parseInt(s.trim(), 10) - 1)
-      .filter((i) => i >= 0 && i < personas.length);
-
-    const unique = [...new Set(indices)];
-    if (unique.length === 0) {
-      this.feedLine(tp.warning("  No valid selections."));
-      this.refreshView();
-      return;
-    }
-
-    await copyTemplateFiles(teammatesDir);
-
-    const created: string[] = [];
-    for (const idx of unique) {
-      const p = personas[idx];
-      const nameInput = await this.askInline(
-        `Name for ${p.persona} [${p.alias}]: `,
-      );
-      const name = nameInput || p.alias;
-      const folderName = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-
-      await scaffoldFromPersona(teammatesDir, folderName, p);
-      created.push(folderName);
-      this.feedLine(
-        concat(tp.success(`  ✔  @${folderName}`), tp.muted(` — ${p.persona}`)),
-      );
-    }
-
-    this.feedLine(
-      concat(
-        tp.success(
-          `\n  ✔  Created ${created.length} teammate${created.length > 1 ? "s" : ""}: `,
-        ),
-        tp.text(created.map((n) => `@${n}`).join(", ")),
-      ),
-    );
-    this.refreshView();
+    return this.onboardFlow.runPersonaOnboardingInline(teammatesDir);
   }
-
-  /**
-   * Run the onboarding agent to analyze the codebase and create teammates.
-   * Used by both promptOnboarding (pre-orchestrator) and cmdInit (post-orchestrator).
-   */
   private async runOnboardingAgent(
     adapter: AgentAdapter,
     projectDir: string,
   ): Promise<void> {
-    console.log();
-    console.log(
-      chalk.blue("  Starting onboarding...") +
-        chalk.gray(
-          " Your agent will analyze your codebase and create .teammates/",
-        ),
+    return this.onboardFlow.runOnboardingAgent(
+      adapter,
+      projectDir,
+      this.adapterName,
+      (raw) => this.printAgentOutput(raw),
     );
-    console.log();
-
-    // Copy framework files from bundled template
-    const teammatesDir = join(projectDir, ".teammates");
-    const copied = await copyTemplateFiles(teammatesDir);
-    if (copied.length > 0) {
-      console.log(
-        chalk.green("  ✔ ") +
-          chalk.gray(` Copied template files: ${copied.join(", ")}`),
-      );
-      console.log();
-    }
-
-    const onboardingPrompt = await getOnboardingPrompt(projectDir);
-    const tempConfig = {
-      name: this.adapterName,
-      type: "ai" as const,
-      role: "Onboarding agent",
-      soul: "",
-      wisdom: "",
-      dailyLogs: [] as { date: string; content: string }[],
-      weeklyLogs: [] as { week: string; content: string }[],
-      ownership: { primary: [] as string[], secondary: [] as string[] },
-      routingKeywords: [] as string[],
-      cwd: projectDir,
-    };
-
-    const sessionId = await adapter.startSession(tempConfig);
-    const spinner = ora({
-      text: chalk.gray("Analyzing your codebase..."),
-      spinner: "dots",
-    }).start();
-
-    try {
-      const result = await adapter.executeTask(
-        sessionId,
-        tempConfig,
-        onboardingPrompt,
-      );
-      spinner.stop();
-      this.printAgentOutput(result.rawOutput);
-
-      if (result.success) {
-        console.log(chalk.green("  ✔  Onboarding complete!"));
-      } else {
-        console.log(
-          chalk.yellow(
-            `  ⚠ Onboarding finished with issues: ${result.summary}`,
-          ),
-        );
-      }
-    } catch (err: any) {
-      spinner.fail(chalk.red(`Onboarding failed: ${err.message}`));
-    }
-
-    if (adapter.destroySession) {
-      await adapter.destroySession(sessionId);
-    }
-
-    // Verify .teammates/ now has content
-    try {
-      const entries = await readdir(teammatesDir);
-      if (!entries.some((e) => !e.startsWith("."))) {
-        console.log(
-          chalk.yellow("  ⚠ .teammates/ was created but appears empty."),
-        );
-        console.log(
-          chalk.gray(
-            "  You may need to run the onboarding agent again or set up manually.",
-          ),
-        );
-      }
-    } catch {
-      /* dir might not exist if onboarding failed badly */
-    }
-    console.log();
   }
 
-  /**
-   * Import teammates from another project's .teammates/ directory.
-   * Prompts for a path, copies teammate folders + framework files,
-   * then optionally runs the agent to adapt ownership for this codebase.
-   */
-  private async runImport(projectDir: string): Promise<void> {
-    console.log();
-    console.log(
-      chalk.white("  Enter the path to another project") +
-        chalk.gray(" (the project root or its .teammates/ directory):"),
-    );
-    console.log();
-
-    const rawPath = await this.askInput("Path: ");
-    if (!rawPath) {
-      console.log(chalk.yellow("  No path provided. Aborting import."));
-      return;
-    }
-
-    // Resolve the source — accept either project root or .teammates/ directly
-    const resolved = resolve(rawPath);
-    let sourceDir: string;
-    try {
-      const s = await stat(join(resolved, ".teammates"));
-      if (s.isDirectory()) {
-        sourceDir = join(resolved, ".teammates");
-      } else {
-        sourceDir = resolved;
-      }
-    } catch {
-      sourceDir = resolved;
-    }
-
-    const teammatesDir = join(projectDir, ".teammates");
-    console.log();
-
-    try {
-      const { teammates, skipped, files } = await importTeammates(
-        sourceDir,
-        teammatesDir,
-      );
-
-      const allTeammates = [...teammates, ...skipped];
-
-      if (allTeammates.length === 0) {
-        console.log(
-          chalk.yellow("  No teammates found at ") + chalk.white(sourceDir),
-        );
-        console.log(
-          chalk.gray(
-            "  The directory should contain teammate folders (each with a SOUL.md).",
-          ),
-        );
-        return;
-      }
-
-      if (teammates.length > 0) {
-        console.log(
-          chalk.green("  ✔ ") +
-            chalk.white(
-              ` Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: `,
-            ) +
-            chalk.cyan(teammates.join(", ")),
-        );
-        console.log(chalk.gray(`    (${files.length} files copied)`));
-      }
-      if (skipped.length > 0) {
-        console.log(
-          chalk.gray(
-            `  ${skipped.length} already present: ${skipped.join(", ")} (will re-adapt)`,
-          ),
-        );
-      }
-      console.log();
-
-      // Copy framework files so the agent has TEMPLATE.md etc. available
-      await copyTemplateFiles(teammatesDir);
-
-      // Ask if user wants the agent to adapt teammates to this codebase
-      console.log(chalk.white("  Adapt teammates to this codebase?"));
-      console.log(
-        chalk.gray(
-          "  The agent will scan this project, evaluate which teammates are needed,",
-        ),
-      );
-      console.log(
-        chalk.gray(
-          "  adapt their files, and create any new teammates the project needs.",
-        ),
-      );
-      console.log(chalk.gray("  You can also do this later with /init."));
-      console.log();
-
-      const adapt = await this.askChoice("Adapt now? (y/n): ", ["y", "n"]);
-
-      if (adapt === "y") {
-        await this.runAdaptationAgent(
-          this.adapter,
-          projectDir,
-          allTeammates,
-          sourceDir,
-        );
-      } else {
-        console.log(
-          chalk.gray("  Skipped adaptation. Run /init to adapt later."),
-        );
-      }
-    } catch (err: any) {
-      console.log(chalk.red(`  Import failed: ${err.message}`));
-    }
-    console.log();
-  }
-
-  /**
-   * Run the agent to adapt imported teammates to the current codebase.
-   * Uses a single comprehensive session that scans the project, evaluates
-   * which teammates to keep/drop/create, adapts kept teammates (with
-   * Previous Projects sections), and creates any new teammates needed.
-   */
-  private async runAdaptationAgent(
+  private async promptTeamOnboarding(
     adapter: AgentAdapter,
-    projectDir: string,
-    teammateNames: string[],
-    sourceProjectPath: string,
-  ): Promise<void> {
-    const teammatesDir = join(projectDir, ".teammates");
-    console.log();
-    console.log(
-      chalk.blue("  Starting adaptation...") +
-        chalk.gray(" Your agent will scan this project and adapt the team"),
+    teammatesDir: string,
+  ): Promise<boolean> {
+    return this.onboardFlow.promptTeamOnboarding(adapter, teammatesDir, (raw) =>
+      this.printAgentOutput(raw),
     );
-    console.log();
-
-    const prompt = await buildImportAdaptationPrompt(
-      teammatesDir,
-      teammateNames,
-      sourceProjectPath,
-    );
-    const tempConfig = {
-      name: this.adapterName,
-      type: "ai" as const,
-      role: "Adaptation agent",
-      soul: "",
-      wisdom: "",
-      dailyLogs: [] as { date: string; content: string }[],
-      weeklyLogs: [] as { week: string; content: string }[],
-      ownership: { primary: [] as string[], secondary: [] as string[] },
-      routingKeywords: [] as string[],
-      cwd: projectDir,
-    };
-
-    const sessionId = await adapter.startSession(tempConfig);
-    const spinner = ora({
-      text: chalk.gray("Scanning the project and adapting teammates..."),
-      spinner: "dots",
-    }).start();
-
-    try {
-      const result = await adapter.executeTask(sessionId, tempConfig, prompt);
-      spinner.stop();
-      this.printAgentOutput(result.rawOutput);
-
-      if (result.success) {
-        console.log(chalk.green("  ✔  Team adaptation complete!"));
-      } else {
-        console.log(
-          chalk.yellow(
-            `  ⚠ Adaptation finished with issues: ${result.summary}`,
-          ),
-        );
-      }
-    } catch (err: any) {
-      spinner.fail(chalk.red(`Adaptation failed: ${err.message}`));
-    }
-
-    if (adapter.destroySession) {
-      await adapter.destroySession(sessionId);
-    }
-
-    console.log();
-  }
-
-  /**
-   * Simple blocking prompt — reads one line from stdin and validates.
-   */
-  private askChoice(prompt: string, valid: string[]): Promise<string> {
-    return new Promise((resolve) => {
-      const rl = createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-      const ask = () => {
-        rl.question(chalk.cyan("  ") + prompt, (answer) => {
-          const trimmed = answer.trim();
-          if (valid.includes(trimmed)) {
-            rl.close();
-            resolve(trimmed);
-          } else {
-            ask();
-          }
-        });
-      };
-      ask();
-    });
-  }
-
-  private askInput(prompt: string): Promise<string> {
-    return new Promise((resolve) => {
-      const rl = createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-      rl.question(chalk.cyan("  ") + prompt, (answer) => {
-        rl.close();
-        resolve(answer.trim());
-      });
-    });
   }
 
   /**
@@ -2083,14 +1119,11 @@ class TeammatesREPL {
   private askInline(prompt: string): Promise<string> {
     return new Promise((resolve) => {
       if (!this.chatView) {
-        // Fallback if no ChatView (shouldn't happen during /configure)
-        return this.askInput(prompt).then(resolve);
+        return this.onboardFlow.askInput(prompt).then(resolve);
       }
-      // Show the prompt in the feed so it's visible
       this.feedLine(tp.accent(`  ${prompt}`));
       this.chatView.setFooter(tp.accent(`  ${prompt}`));
       this._pendingAsk = (answer: string) => {
-        // Restore footer
         if (this.chatView && this.defaultFooter) {
           this.chatView.setFooter(this.defaultFooter);
         }
@@ -2099,458 +1132,6 @@ class TeammatesREPL {
       };
       this.refreshView();
     });
-  }
-
-  /**
-   * Check whether USER.md needs to be created or is still template placeholders.
-   */
-  private needsUserSetup(teammatesDir: string): boolean {
-    const userMdPath = join(teammatesDir, "USER.md");
-    try {
-      const content = readFileSync(userMdPath, "utf-8");
-      // Template placeholders contain "<Your name>" — treat as not set up
-      return !content.trim() || content.toLowerCase().includes("<your name>");
-    } catch {
-      // File doesn't exist
-      return true;
-    }
-  }
-
-  /**
-   * Pre-TUI user profile setup. Runs in the console before the ChatView is created.
-   * Offers GitHub-based or manual profile creation.
-   */
-  private async runUserSetup(teammatesDir: string): Promise<void> {
-    const termWidth = process.stdout.columns || 100;
-
-    console.log();
-    console.log(chalk.gray("─".repeat(termWidth)));
-    console.log();
-    console.log(chalk.white("  Set up your profile\n"));
-    console.log(
-      chalk.cyan("  1") +
-        chalk.gray(") ") +
-        chalk.white("Use GitHub account") +
-        chalk.gray(" — import your name and username from GitHub"),
-    );
-    console.log(
-      chalk.cyan("  2") +
-        chalk.gray(") ") +
-        chalk.white("Manual setup") +
-        chalk.gray(" — enter your details manually"),
-    );
-    console.log(
-      chalk.cyan("  3") +
-        chalk.gray(") ") +
-        chalk.white("Skip") +
-        chalk.gray(" — set up later with /user"),
-    );
-    console.log();
-
-    const choice = await this.askChoice("Pick an option (1/2/3): ", [
-      "1",
-      "2",
-      "3",
-    ]);
-
-    if (choice === "3") {
-      console.log(
-        chalk.gray("  Skipped — run /user to set up your profile later."),
-      );
-      console.log();
-      return;
-    }
-
-    if (choice === "1") {
-      await this.setupGitHubProfile(teammatesDir);
-    } else {
-      await this.setupManualProfile(teammatesDir);
-    }
-  }
-
-  /**
-   * GitHub-based profile setup. Ensures gh is installed and authenticated,
-   * then fetches user info from the GitHub API to create the profile.
-   */
-  private async setupGitHubProfile(teammatesDir: string): Promise<void> {
-    console.log();
-
-    // Step 1: Check if gh is installed
-    let ghInstalled = false;
-    try {
-      execSync("gh --version", { stdio: "pipe" });
-      ghInstalled = true;
-    } catch {
-      // not installed
-    }
-
-    if (!ghInstalled) {
-      console.log(chalk.yellow("  GitHub CLI is not installed.\n"));
-
-      const plat = process.platform;
-      console.log(chalk.white("  Run this in another terminal:"));
-      if (plat === "win32") {
-        console.log(chalk.cyan("    winget install --id GitHub.cli"));
-      } else if (plat === "darwin") {
-        console.log(chalk.cyan("    brew install gh"));
-      } else {
-        console.log(chalk.cyan("    sudo apt install gh"));
-        console.log(chalk.gray("    (or see https://cli.github.com)"));
-      }
-      console.log();
-
-      const answer = await this.askChoice(
-        "Press Enter when done, or s to skip: ",
-        ["", "s", "S"],
-      );
-      if (answer.toLowerCase() === "s") {
-        console.log(chalk.gray("  Falling back to manual setup.\n"));
-        return this.setupManualProfile(teammatesDir);
-      }
-
-      // Re-check
-      try {
-        execSync("gh --version", { stdio: "pipe" });
-        ghInstalled = true;
-        console.log(chalk.green("  ✔  GitHub CLI installed"));
-      } catch {
-        console.log(
-          chalk.yellow(
-            "  GitHub CLI still not found. You may need to restart your terminal.",
-          ),
-        );
-        console.log(chalk.gray("  Falling back to manual setup.\n"));
-        return this.setupManualProfile(teammatesDir);
-      }
-    } else {
-      console.log(chalk.green("  ✔  GitHub CLI installed"));
-    }
-
-    // Step 2: Check auth
-    let authed = false;
-    try {
-      execSync("gh auth status", { stdio: "pipe" });
-      authed = true;
-    } catch {
-      // not authenticated
-    }
-
-    if (!authed) {
-      console.log();
-      console.log(chalk.gray("  Authenticating with GitHub...\n"));
-
-      const result = spawnSync(
-        "gh",
-        ["auth", "login", "--web", "--git-protocol", "https"],
-        {
-          stdio: "inherit",
-          shell: true,
-        },
-      );
-
-      if (result.status !== 0) {
-        console.log(chalk.yellow("  Authentication failed or was cancelled."));
-        console.log(chalk.gray("  Falling back to manual setup.\n"));
-        return this.setupManualProfile(teammatesDir);
-      }
-
-      // Verify
-      try {
-        execSync("gh auth status", { stdio: "pipe" });
-        authed = true;
-      } catch {
-        console.log(chalk.yellow("  Authentication could not be verified."));
-        console.log(chalk.gray("  Falling back to manual setup.\n"));
-        return this.setupManualProfile(teammatesDir);
-      }
-    }
-
-    console.log(chalk.green("  ✔  GitHub authenticated"));
-
-    // Step 3: Fetch user info from GitHub API
-    let login = "";
-    let name = "";
-    try {
-      const json = execSync("gh api user", {
-        stdio: "pipe",
-        encoding: "utf-8",
-      });
-      const user = JSON.parse(json);
-      login = (user.login || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
-      name = user.name || user.login || "";
-    } catch {
-      console.log(chalk.yellow("  Could not fetch GitHub user info."));
-      console.log(chalk.gray("  Falling back to manual setup.\n"));
-      return this.setupManualProfile(teammatesDir);
-    }
-
-    if (!login) {
-      console.log(chalk.yellow("  No GitHub username found."));
-      console.log(chalk.gray("  Falling back to manual setup.\n"));
-      return this.setupManualProfile(teammatesDir);
-    }
-
-    console.log(
-      chalk.green(`  ✔  Authenticated as `) +
-        chalk.cyan(`@${login}`) +
-        (name && name !== login ? chalk.gray(` (${name})`) : ""),
-    );
-    console.log();
-
-    // Ask for remaining fields since GitHub doesn't provide them
-    const role = await this.askInput(
-      "Your role (optional, press Enter to skip): ",
-    );
-    const experience = await this.askInput(
-      "Relevant experience (e.g., 10 years Go, new to React): ",
-    );
-    const preferences = await this.askInput(
-      "How you like to work (e.g., terse responses): ",
-    );
-    // Auto-detect timezone
-    const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const timezone = await this.askInput(
-      `Primary timezone${detectedTz ? ` [${detectedTz}]` : ""}: `,
-    );
-
-    const answers: Record<string, string> = {
-      alias: login,
-      name: name || login,
-      role: role || "",
-      experience: experience || "",
-      preferences: preferences || "",
-      timezone: timezone || detectedTz || "",
-    };
-
-    this.writeUserProfile(teammatesDir, login, answers);
-    this.createUserAvatar(teammatesDir, login, answers);
-
-    console.log(
-      chalk.green("  ✔  ") + chalk.gray(`Profile created — avatar @${login}`),
-    );
-    console.log();
-  }
-
-  /**
-   * Manual (console-based) profile setup. Collects fields via askInput().
-   */
-  private async setupManualProfile(teammatesDir: string): Promise<void> {
-    console.log();
-    console.log(
-      chalk.gray("  (alias is required, press Enter to skip others)\n"),
-    );
-
-    const aliasRaw = await this.askInput("Your alias (e.g., alex): ");
-    const alias = aliasRaw
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]/g, "")
-      .trim();
-    if (!alias) {
-      console.log(
-        chalk.yellow("  Alias is required. Run /user to try again.\n"),
-      );
-      return;
-    }
-
-    const name = await this.askInput("Your name: ");
-    const role = await this.askInput(
-      "Your role (e.g., senior backend engineer): ",
-    );
-    const experience = await this.askInput(
-      "Relevant experience (e.g., 10 years Go, new to React): ",
-    );
-    const preferences = await this.askInput(
-      "How you like to work (e.g., terse responses): ",
-    );
-    // Auto-detect timezone
-    const detectedTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const timezone = await this.askInput(
-      `Primary timezone${detectedTz ? ` [${detectedTz}]` : ""}: `,
-    );
-
-    const answers: Record<string, string> = {
-      alias,
-      name,
-      role,
-      experience,
-      preferences,
-      timezone: timezone || detectedTz || "",
-    };
-
-    this.writeUserProfile(teammatesDir, alias, answers);
-    this.createUserAvatar(teammatesDir, alias, answers);
-
-    console.log();
-    console.log(
-      chalk.green("  ✔  ") + chalk.gray(`Profile created — avatar @${alias}`),
-    );
-    console.log(chalk.gray("  Update anytime with /user"));
-    console.log();
-  }
-
-  /**
-   * Write USER.md from collected answers.
-   */
-  private writeUserProfile(
-    teammatesDir: string,
-    alias: string,
-    answers: Record<string, string>,
-  ): void {
-    const userMdPath = join(teammatesDir, "USER.md");
-    const lines = ["# User\n"];
-    lines.push(`- **Alias:** ${alias}`);
-    lines.push(`- **Name:** ${answers.name || "_not provided_"}`);
-    lines.push(`- **Role:** ${answers.role || "_not provided_"}`);
-    lines.push(`- **Experience:** ${answers.experience || "_not provided_"}`);
-    lines.push(`- **Preferences:** ${answers.preferences || "_not provided_"}`);
-    lines.push(
-      `- **Primary Timezone:** ${answers.timezone || "_not provided_"}`,
-    );
-    writeFileSync(userMdPath, `${lines.join("\n")}\n`, "utf-8");
-  }
-
-  /**
-   * Create the user's avatar folder with SOUL.md and WISDOM.md.
-   * The avatar is a teammate folder with type: human.
-   */
-  private createUserAvatar(
-    teammatesDir: string,
-    alias: string,
-    answers: Record<string, string>,
-  ): void {
-    const avatarDir = join(teammatesDir, alias);
-    const memoryDir = join(avatarDir, "memory");
-    mkdirSync(avatarDir, { recursive: true });
-    mkdirSync(memoryDir, { recursive: true });
-
-    const name = answers.name || alias;
-    const role = answers.role || "I'm a human working on this project";
-    const experience = answers.experience || "";
-    const preferences = answers.preferences || "";
-    const timezone = answers.timezone || "";
-
-    // Write SOUL.md
-    const soulLines = [
-      `# ${name}`,
-      "",
-      "## Identity",
-      "",
-      `**Type:** human`,
-      `**Alias:** ${alias}`,
-      `**Role:** ${role}`,
-    ];
-    if (experience) soulLines.push(`**Experience:** ${experience}`);
-    if (preferences) soulLines.push(`**Preferences:** ${preferences}`);
-    if (timezone) soulLines.push(`**Primary Timezone:** ${timezone}`);
-    soulLines.push("");
-
-    const soulPath = join(avatarDir, "SOUL.md");
-    writeFileSync(soulPath, soulLines.join("\n"), "utf-8");
-
-    // Write empty WISDOM.md
-    const wisdomPath = join(avatarDir, "WISDOM.md");
-    writeFileSync(
-      wisdomPath,
-      `# ${name} — Wisdom\n\nDistilled from work history. Updated during compaction.\n`,
-      "utf-8",
-    );
-
-    // Avatar registration happens later in start() after the orchestrator is initialized.
-    // During pre-TUI setup, the orchestrator doesn't exist yet.
-  }
-
-  /**
-   * Read USER.md and extract the alias field.
-   * Returns null if USER.md doesn't exist or has no alias.
-   */
-  private readUserAlias(teammatesDir: string): string | null {
-    try {
-      const content = readFileSync(join(teammatesDir, "USER.md"), "utf-8");
-      const match = content.match(/\*\*Alias:\*\*\s*(\S+)/);
-      return match ? match[1].toLowerCase().replace(/[^a-z0-9_-]/g, "") : null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Register the user's avatar as a teammate in the orchestrator.
-   * Sets presence to "online" since the local user is always online.
-   * Replaces the old coding agent entry.
-   */
-  private registerUserAvatar(teammatesDir: string, alias: string): void {
-    const registry = this.orchestrator.getRegistry();
-    const avatarDir = join(teammatesDir, alias);
-
-    // Read the avatar's SOUL.md if it exists
-    let soul = "";
-    let role = "I'm a human working on this project";
-    try {
-      soul = readFileSync(join(avatarDir, "SOUL.md"), "utf-8");
-      const roleMatch = soul.match(/\*\*Role:\*\*\s*(.+)/);
-      if (roleMatch) role = roleMatch[1].trim();
-    } catch {
-      /* avatar folder may not exist yet */
-    }
-
-    let wisdom = "";
-    try {
-      wisdom = readFileSync(join(avatarDir, "WISDOM.md"), "utf-8");
-    } catch {
-      /* ok */
-    }
-
-    registry.register({
-      name: alias,
-      type: "human",
-      role,
-      soul,
-      wisdom,
-      dailyLogs: [],
-      weeklyLogs: [],
-      ownership: { primary: [], secondary: [] },
-      routingKeywords: [],
-    });
-
-    // Set presence to online (local user is always online)
-    this.orchestrator
-      .getAllStatuses()
-      .set(alias, { state: "idle", presence: "online" });
-
-    // Update the adapter name so tasks route to the avatar
-    this.userAlias = alias;
-  }
-
-  // ─── Display helpers ──────────────────────────────────────────────
-
-  /**
-   * Render the box logo with up to 4 info lines on the right side.
-   */
-  private printLogo(infoLines: string[]): void {
-    const [top, bot] = buildTitle("teammates");
-    console.log(`  ${chalk.cyan(top)}`);
-    console.log(`  ${chalk.cyan(bot)}`);
-    if (infoLines.length > 0) {
-      console.log();
-      for (const line of infoLines) {
-        console.log(`  ${line}`);
-      }
-    }
-  }
-
-  /**
-   * Print agent raw output, stripping the trailing JSON protocol block.
-   */
-  private printAgentOutput(rawOutput: string | undefined): void {
-    const raw = rawOutput ?? "";
-    if (!raw) return;
-    const cleaned = raw
-      .replace(/```json\s*\n\s*\{[\s\S]*?\}\s*\n\s*```\s*$/, "")
-      .trim();
-    if (cleaned) {
-      this.feedMarkdown(cleaned);
-    }
-    this.feedLine();
   }
 
   // ─── Wordwheel (delegated to Wordwheel) ───────────────────────────
@@ -2695,7 +1276,6 @@ class TeammatesREPL {
       kickDrain: () => this.kickDrain(),
       hasPendingHandoffs: () => this.handoffManager.pendingHandoffs.length > 0,
     });
-
     // Create PromptInput — consolonia-based replacement for readline.
     // Uses raw stdin + InputProcessor for proper escape/paste/mouse parsing.
     // Kept as a fallback for pre-onboarding prompts; the main REPL uses ChatView.
@@ -3093,6 +1673,37 @@ class TeammatesREPL {
     // Closures to bridge private accessors into the view interfaces
     const selfNameFn = () => this.selfName;
     const adapterNameFn = () => this.adapterName;
+
+    // Initialize thread manager now that chatView exists
+    this.threadManager = new ThreadManager(
+      {
+        chatView: this.chatView,
+        feedLine: (text?) => this.feedLine(text),
+        feedUserLine: (spans) => this.feedUserLine(spans),
+        feedMarkdown: (source) => this.feedMarkdown(source),
+        refreshView: () => this.refreshView(),
+        makeSpan: (...segs) => this.makeSpan(...segs),
+        renderHandoffs: (from, handoffs, tid) =>
+          this.renderHandoffs(from, handoffs, tid),
+        doCopy: (content?) => this.doCopy(content),
+        get selfName() {
+          return selfNameFn();
+        },
+        get adapterName() {
+          return adapterNameFn();
+        },
+        get userBg() {
+          return userBgRef();
+        },
+        get defaultFooterRight() {
+          return defaultFooterRightRef();
+        },
+      },
+      this._copyContexts,
+      this.pendingHandoffs,
+    );
+    const userBgRef = () => this._userBg;
+    const defaultFooterRightRef = () => this.defaultFooterRight;
     const userAliasFn = () => this.userAlias;
     const teammateDirFn = () => this.teammatesDir;
     const threadsFn = () => this.threads;
@@ -4521,11 +3132,7 @@ class TeammatesREPL {
     this.pastedTexts.clear();
     this.handoffManager.clear();
     this.retroManager.clear();
-    this.threads.clear();
-    this.nextThreadId = 1;
-    this.focusedThreadId = null;
-    this.containers.clear();
-    this.updateFooterHint();
+    this.threadManager.clear();
     await this.orchestrator.reset();
 
     if (this.chatView) {
@@ -4852,17 +3459,6 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     }
   }
 
-  /** Compare two semver strings. Returns true if `a` is less than `b`. */
-  private static semverLessThan(a: string, b: string): boolean {
-    const pa = a.split(".").map(Number);
-    const pb = b.split(".").map(Number);
-    for (let i = 0; i < 3; i++) {
-      if ((pa[i] ?? 0) < (pb[i] ?? 0)) return true;
-      if ((pa[i] ?? 0) > (pb[i] ?? 0)) return false;
-    }
-    return false;
-  }
-
   private async startupMaintenance(): Promise<void> {
     // Check and update installed CLI version
     const versionUpdate = this.checkVersionUpdate();
@@ -4914,50 +3510,35 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       }
     }
 
-    // 2b. v0.6.0 migration — compress ALL uncompressed daily logs + re-index
-    const needsMigration =
-      versionUpdate &&
-      (versionUpdate.previous === "" ||
-        TeammatesREPL.semverLessThan(versionUpdate.previous, "0.6.0"));
-    if (needsMigration) {
-      this.feedLine(
-        tp.accent("  ℹ  Migrating to v0.6.0 — compressing daily logs..."),
-      );
-      this.refreshView();
+    // 2b. Version migrations — single agent task per teammate from MIGRATIONS.md
+    if (versionUpdate) {
       let migrationCount = 0;
       for (const name of teammates) {
-        try {
-          const uncompressed = await findUncompressedDailies(
-            join(this.teammatesDir, name),
-          );
-          if (uncompressed.length === 0) continue;
-          const prompt = await buildMigrationCompressionPrompt(
-            join(this.teammatesDir, name),
-            name,
-            uncompressed,
-          );
-          if (prompt) {
-            migrationCount++;
-            this.taskQueue.push({
-              type: "agent",
-              teammate: name,
-              task: prompt,
-              system: true,
-              migration: true,
-            });
+        const prompt = buildMigrationPrompt(
+          versionUpdate.previous,
+          name,
+          join(this.teammatesDir, name),
+        );
+        if (prompt) {
+          if (migrationCount === 0) {
+            this.chatView.setProgress(
+              `Upgrading to v${versionUpdate.current}...`,
+            );
           }
-        } catch {
-          /* migration compression failed — non-fatal */
+          migrationCount++;
+          this.taskQueue.push({
+            type: "agent",
+            teammate: name,
+            task: prompt,
+            system: true,
+            migration: true,
+          });
         }
       }
       this.pendingMigrationSyncs = migrationCount;
-      // If no migration tasks were actually queued, commit version now
       if (migrationCount === 0) {
         this.commitVersionUpdate();
       }
-    } else if (versionUpdate) {
-      // No migration needed — commit the version update immediately
-      this.commitVersionUpdate();
     }
 
     this.kickDrain();

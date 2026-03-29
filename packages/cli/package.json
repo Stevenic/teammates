@@ -9,7 +9,8 @@
     "dist",
     "template",
     "personas",
-    "scripts"
+    "scripts",
+    "MIGRATIONS.md"
   ],
   "bin": {
     "teammates": "dist/cli.js"

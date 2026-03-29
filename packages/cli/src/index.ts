@@ -41,6 +41,9 @@ export {
   parseCodexOutput,
   parseRawOutput,
 } from "./log-parser.js";
+export { buildMigrationPrompt, semverLessThan } from "./migrations.js";
+export type { OnboardView } from "./onboard-flow.js";
+export { OnboardFlow } from "./onboard-flow.js";
 export {
   Orchestrator,
   type OrchestratorConfig,
@@ -59,6 +62,8 @@ export type {
   ThreadItemEntry,
 } from "./thread-container.js";
 export { ThreadContainer } from "./thread-container.js";
+export type { ThreadManagerView } from "./thread-manager.js";
+export { ThreadManager } from "./thread-manager.js";
 export type {
   DailyLog,
   HandoffEnvelope,
