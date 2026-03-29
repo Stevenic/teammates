@@ -21,7 +21,11 @@ import { mkdirSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { watchActivityLog, watchDebugLogErrors } from "../activity-watcher.js";
+import {
+  watchActivityLog,
+  watchDebugLog,
+  watchDebugLogErrors,
+} from "../activity-watcher.js";
 import type {
   AgentAdapter,
   InstalledService,
@@ -584,16 +588,30 @@ export class CliProxyAdapter implements AgentAdapter {
     this.activeProcesses.set(teammate.name, { child, done, debugFile });
 
     // Start watching for real-time activity events.
-    // Primary: activity hook log (has tool details like file paths, commands).
-    // Secondary: debug log errors (tool errors aren't in the hook log).
-    // Fallback: legacy debug log parser (when no hook is installed).
+    // Three sources, each with a different purpose:
+    //   1. Activity hook log — richest detail (file paths, commands) from PostToolUse hook.
+    //   2. Debug log (legacy parser) — fallback for tool names when the hook doesn't fire.
+    //   3. Debug log (errors only) — tool errors that only appear in the debug log.
+    // Sources 1 and 2 can overlap; a dedup wrapper prevents duplicate events.
     const stopWatchers: (() => void)[] = [];
     if (onActivity) {
       const now = Date.now();
-      // Always watch the activity hook log — it has the rich detail
-      stopWatchers.push(watchActivityLog(activityFile, now, onActivity));
-      // Also watch debug log for errors (they appear there, not in hook log)
+      // Track whether the activity hook is producing events. If it is,
+      // suppress the legacy debug-log parser to avoid duplicates.
+      let hookFired = false;
+      const hookCallback: typeof onActivity = (events) => {
+        hookFired = true;
+        onActivity(events);
+      };
+      const legacyCallback: typeof onActivity = (events) => {
+        if (!hookFired) onActivity(events);
+      };
+      // Primary: activity hook log (has rich detail like file paths, commands)
+      stopWatchers.push(watchActivityLog(activityFile, now, hookCallback));
       if (debugFile) {
+        // Fallback: legacy debug log parser (fires when hook doesn't)
+        stopWatchers.push(watchDebugLog(debugFile, now, legacyCallback));
+        // Always: debug log errors (tool errors aren't in the hook log)
         stopWatchers.push(watchDebugLogErrors(debugFile, now, onActivity));
       }
     }
