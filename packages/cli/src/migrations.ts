@@ -8,7 +8,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ export function buildMigrationPrompt(
   teammateDir: string,
 ): string | null {
   // MIGRATIONS.md ships with the CLI package — resolve relative to this file
-  const guidePath = join(__dirname, "..", "MIGRATIONS.md");
+  const guidePath = fileURLToPath(new URL("../MIGRATIONS.md", import.meta.url));
   let content: string;
   try {
     content = readFileSync(guidePath, "utf-8");

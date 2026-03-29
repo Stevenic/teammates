@@ -1,5 +1,5 @@
 ---
-version: 0.6.1
+version: 0.7.0
 name: adapter-reorder
 description: Proposed reorder of buildTeammatePrompt() to reduce recall→task token distance
 type: project

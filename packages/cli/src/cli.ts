@@ -367,6 +367,7 @@ class TeammatesREPL {
   private silentAgents: Set<string> = new Set();
   /** Counter for pending migration compression tasks — triggers re-index when it hits 0. */
   private pendingMigrationSyncs = 0;
+  private static readonly MIGRATION_TASK_ID = "__migration__";
   /** Per-agent drain locks — prevents double-draining a single agent. */
   private agentDrainLocks: Map<string, Promise<void>> = new Map();
   /** Stored pasted text keyed by paste number, expanded on Enter. */
@@ -500,14 +501,16 @@ class TeammatesREPL {
     }
   }
 
-  private get activeTasks() {
-    return this.statusTracker.activeTasks;
+  private startMigrationProgress(message: string): void {
+    this.statusTracker.startTask(
+      TeammatesREPL.MIGRATION_TASK_ID,
+      "teammates",
+      message,
+    );
   }
-  private startStatusAnimation(): void {
-    this.statusTracker.start();
-  }
-  private stopStatusAnimation(): void {
-    this.statusTracker.stop();
+
+  private stopMigrationProgress(): void {
+    this.statusTracker.stopTask(TeammatesREPL.MIGRATION_TASK_ID);
   }
 
   /**
@@ -1049,7 +1052,7 @@ class TeammatesREPL {
       if (entry.type === "agent" && entry.migration) {
         this.pendingMigrationSyncs--;
         if (this.pendingMigrationSyncs <= 0) {
-          this.chatView.setProgress(null);
+          this.stopMigrationProgress();
           try {
             await syncRecallIndex(this.teammatesDir);
           } catch {
@@ -1057,8 +1060,6 @@ class TeammatesREPL {
           }
           // Persist version LAST — only after all migration tasks finish
           this.commitVersionUpdate();
-          this.feedLine(tp.success(`  ✔  Upgraded to v${PKG_VERSION}`));
-          this.refreshView();
         }
       }
     }
@@ -2287,36 +2288,25 @@ class TeammatesREPL {
         // invisible — don't track them in the progress bar.
         if (event.assignment.system) break;
 
-        // Track this task and start the animated status bar
-        const key = event.assignment.teammate;
-        this.activeTasks.set(key, {
-          teammate: event.assignment.teammate,
-          task: event.assignment.task,
-          startTime: Date.now(),
-        });
-        this.startStatusAnimation();
+        this.statusTracker.startTask(
+          event.assignment.teammate,
+          event.assignment.teammate,
+          event.assignment.task,
+        );
         break;
       }
 
       case "task_completed": {
-        // System task completions — don't touch activeTasks (was never added)
+        // System task completions — don't touch tasks (was never added)
         if (event.result.system) break;
 
-        // Remove from active tasks and stop spinner.
-        // Result display is deferred to drainAgentQueue() so the defensive
-        // retry can update rawOutput before anything is shown to the user.
-        this.activeTasks.delete(event.result.teammate);
-
-        // Stop animation if no more active tasks
-        if (this.activeTasks.size === 0) {
-          this.stopStatusAnimation();
-        }
+        // Remove from active tasks. StatusTracker auto-stops when empty.
+        this.statusTracker.stopTask(event.result.teammate);
         break;
       }
 
       case "error": {
-        this.activeTasks.delete(event.teammate);
-        if (this.activeTasks.size === 0) this.stopStatusAnimation();
+        this.statusTracker.stopTask(event.teammate);
         if (!this.chatView) this.input.deactivateAndErase();
         const displayErr =
           event.teammate === this.selfName ? this.adapterName : event.teammate;
@@ -2652,8 +2642,9 @@ class TeammatesREPL {
       );
 
       // Report what happened
-      const elapsed = this.activeTasks.get(resolvedName)?.startTime
-        ? `${((Date.now() - this.activeTasks.get(resolvedName)!.startTime) / 1000).toFixed(0)}s`
+      const taskEntry = this.statusTracker.getTask(resolvedName);
+      const elapsed = taskEntry
+        ? `${((Date.now() - taskEntry.startTime) / 1000).toFixed(0)}s`
         : "unknown";
       this.feedLine(
         concat(
@@ -2674,9 +2665,8 @@ class TeammatesREPL {
 
       // Clean up the active task state — the drainAgentQueue loop will see
       // the agent as inactive and the queue entry was already removed
-      this.activeTasks.delete(resolvedName);
+      this.statusTracker.stopTask(resolvedName);
       this.agentActive.delete(resolvedName);
-      if (this.activeTasks.size === 0) this.stopStatusAnimation();
 
       // Queue the resumed task
       this.taskQueue.push({
@@ -2902,8 +2892,7 @@ class TeammatesREPL {
         // Write error debug entry to session file
         this.writeDebugEntry(entry.teammate, entry.task, null, startTime, err);
         // Handle spawn failures, network errors, etc. gracefully
-        this.activeTasks.delete(agent);
-        if (this.activeTasks.size === 0) this.stopStatusAnimation();
+        this.statusTracker.stopTask(agent);
         const msg = err?.message ?? String(err);
         const displayAgent = agent === this.selfName ? this.adapterName : agent;
         this.feedLine(tp.error(`  ✖  @${displayAgent}: ${msg}`));
@@ -3246,8 +3235,7 @@ class TeammatesREPL {
     const teammateDir = join(this.teammatesDir, name);
 
     if (!silent && this.chatView) {
-      this.chatView.setProgress(`Compacting ${name}...`);
-      this.refreshView();
+      this.statusTracker.showNotification(tp.muted(`Compacting ${name}...`));
     }
     let spinner: Ora | null = null;
     if (!silent && !this.chatView) {
@@ -3299,13 +3287,12 @@ class TeammatesREPL {
           this.feedLine(tp.success(`  ✔  ${name}: ${parts.join(", ")}`));
       }
 
-      if (!silent && this.chatView) this.chatView.setProgress(null);
-
       // Sync recall index for this teammate (bundled library call)
       try {
         if (!silent && this.chatView) {
-          this.chatView.setProgress(`Syncing ${name} index...`);
-          this.refreshView();
+          this.statusTracker.showNotification(
+            tp.muted(`Syncing ${name} index...`),
+          );
         }
         let syncSpinner: Ora | null = null;
         if (!silent && !this.chatView) {
@@ -3316,9 +3303,8 @@ class TeammatesREPL {
         }
         await syncRecallIndex(this.teammatesDir, name);
         if (syncSpinner) syncSpinner.succeed(`${name}: index synced`);
-        if (this.chatView) {
-          if (!silent) this.chatView.setProgress(null);
-          if (!silent) this.feedLine(tp.success(`  ✔  ${name}: index synced`));
+        if (this.chatView && !silent) {
+          this.feedLine(tp.success(`  ✔  ${name}: index synced`));
         }
       } catch {
         /* sync failed — non-fatal */
@@ -3343,7 +3329,6 @@ class TeammatesREPL {
       const msg = err instanceof Error ? err.message : String(err);
       if (spinner) spinner.fail(`${name}: ${msg}`);
       if (this.chatView) {
-        if (!silent) this.chatView.setProgress(null);
         // Errors always show in feed
         this.feedLine(tp.error(`  ✖  ${name}: ${msg}`));
       }
@@ -3485,32 +3470,9 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       .filter((n) => n !== this.selfName && n !== this.adapterName);
     if (teammates.length === 0) return;
 
-    // 1. Run compaction for all teammates (auto-compact + episodic + sync + wisdom)
-    //    Progress bar shows status; feed only shows lines when actual work is done
-    for (const name of teammates) {
-      await this.runCompact(name, true);
-    }
-
-    // 2. Compress previous day's log for each teammate (queued as system tasks)
-    for (const name of teammates) {
-      try {
-        const compression = await buildDailyCompressionPrompt(
-          join(this.teammatesDir, name),
-        );
-        if (compression) {
-          this.taskQueue.push({
-            type: "agent",
-            teammate: name,
-            task: compression.prompt,
-            system: true,
-          });
-        }
-      } catch {
-        /* compression check failed — non-fatal */
-      }
-    }
-
-    // 2b. Version migrations — single agent task per teammate from MIGRATIONS.md
+    // 1. Version migrations — must run BEFORE compaction so the migration
+    //    agent can scrub system-task noise from daily logs before compaction
+    //    bakes them into weekly summaries.
     if (versionUpdate) {
       let migrationCount = 0;
       for (const name of teammates) {
@@ -3521,7 +3483,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
         );
         if (prompt) {
           if (migrationCount === 0) {
-            this.chatView.setProgress(
+            this.startMigrationProgress(
               `Upgrading to v${versionUpdate.current}...`,
             );
           }
@@ -3538,6 +3500,35 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       this.pendingMigrationSyncs = migrationCount;
       if (migrationCount === 0) {
         this.commitVersionUpdate();
+      }
+    }
+
+    // 2. Compaction + compression — skip when a migration is pending so the
+    //    migration agent can scrub noise first. Compaction will run next startup.
+    if (!versionUpdate) {
+      // 2a. Run compaction for all teammates (auto-compact + episodic + sync + wisdom)
+      //     Progress bar shows status; feed only shows lines when actual work is done
+      for (const name of teammates) {
+        await this.runCompact(name, true);
+      }
+
+      // 2b. Compress previous day's log for each teammate (queued as system tasks)
+      for (const name of teammates) {
+        try {
+          const compression = await buildDailyCompressionPrompt(
+            join(this.teammatesDir, name),
+          );
+          if (compression) {
+            this.taskQueue.push({
+              type: "agent",
+              teammate: name,
+              task: compression.prompt,
+              system: true,
+            });
+          }
+        } catch {
+          /* compression check failed — non-fatal */
+        }
       }
     }
 
@@ -3628,14 +3619,8 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     // Detect major/minor version change (not just patch)
     const [prevMajor, prevMinor] = previous.split(".").map(Number);
     const [curMajor, curMinor] = current.split(".").map(Number);
-    const isMajorMinor =
+    const _isMajorMinor =
       previous !== "" && (prevMajor !== curMajor || prevMinor !== curMinor);
-
-    if (isMajorMinor) {
-      this.feedLine(tp.accent(`  ✔  Updated from v${previous} → v${current}`));
-      this.feedLine();
-      this.refreshView();
-    }
   }
 
   private async cmdCopy(): Promise<void> {
@@ -3681,27 +3666,16 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       const child = execCb(cmd, () => {});
       child.stdin?.write(text);
       child.stdin?.end();
-      // Show brief "Copied" message in the progress area
       if (this.chatView) {
-        this.chatView.setProgress(
+        this.statusTracker.showNotification(
           concat(tp.success("✔  "), tp.muted("Copied to clipboard")),
         );
-        this.refreshView();
-        setTimeout(() => {
-          this.chatView.setProgress(null);
-          this.refreshView();
-        }, 1500);
       }
     } catch {
       if (this.chatView) {
-        this.chatView.setProgress(
+        this.statusTracker.showNotification(
           concat(tp.error("✖  "), tp.muted("Failed to copy")),
         );
-        this.refreshView();
-        setTimeout(() => {
-          this.chatView.setProgress(null);
-          this.refreshView();
-        }, 1500);
       }
     }
   }

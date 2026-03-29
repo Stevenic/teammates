@@ -120,7 +120,7 @@ export class ThreadManager {
         lines.push(`${this.view.selfName}: ${entry.content}`);
       } else {
         const name = entry.teammate || "unknown";
-        if (entry.subject) lines.push(`@${name}: ${entry.subject}`);
+        if (entry.subject) lines.push(`${name}: ${entry.subject}`);
         if (entry.content) lines.push(entry.content);
       }
       lines.push("");
@@ -197,12 +197,12 @@ export class ThreadManager {
     const displayNames = targetNames.map((n) =>
       n === this.view.selfName ? this.view.adapterName : n,
     );
-    const namesText = displayNames.map((n) => `@${n}`).join(", ");
+    const namesText = displayNames.join(", ");
 
     // Render as a user-styled line (dark bg) so it looks like part of the user's message
     this.view.feedUserLine(
       concat(
-        pen.fg(t.textDim).bg(bg)(`#${thread.id}  → `),
+        pen.fg(t.textDim).bg(bg)(`#${thread.id} → `),
         pen.fg(t.accent).bg(bg)(namesText),
       ),
     );
@@ -222,13 +222,13 @@ export class ThreadManager {
     const displayNames = container.targetNames.map((n) =>
       n === this.view.selfName ? this.view.adapterName : n,
     );
-    const namesText = displayNames.map((n) => `@${n}`).join(", ");
+    const namesText = displayNames.join(", ");
     const arrow = thread.collapsed ? "▶ " : "";
 
     // Update as user-styled line (dark bg)
     const termW = (process.stdout.columns || 80) - 1;
     const content = concat(
-      pen.fg(t.textDim).bg(bg)(`${arrow}#${threadId}  → `),
+      pen.fg(t.textDim).bg(bg)(`${arrow}#${threadId} → `),
       pen.fg(t.accent).bg(bg)(namesText),
     );
     let len = 0;
@@ -258,8 +258,8 @@ export class ThreadManager {
     container.insertLine(this.view.chatView, "", this.shiftAllContainers);
 
     // Render user message lines inside the thread (user-styled, indented)
-    // All content indented 4 spaces (container body level) with bg color
-    const indent = "    ";
+    // All content indented 2 spaces with bg color
+    const indent = "  ";
     const label = `${indent}${this.view.selfName}: `;
     const wrapW = termW - indent.length;
     const lines = displayText.split("\n");
@@ -306,7 +306,7 @@ export class ThreadManager {
     const displayNames = targetNames.map((n) =>
       n === this.view.selfName ? this.view.adapterName : n,
     );
-    const namesText = displayNames.map((n) => `@${n}`).join(", ");
+    const namesText = displayNames.join(", ");
     const dispatchContent = concat(
       pen.fg(t.textDim).bg(bg)(`${indent}→ `),
       pen.fg(t.accent).bg(bg)(namesText),
@@ -339,7 +339,7 @@ export class ThreadManager {
       this.view.chatView,
       teammate,
       this.view.makeSpan(
-        { text: `  @${displayName}: `, style: { fg: t.accent } },
+        { text: `  ${displayName}: `, style: { fg: t.accent } },
         { text: "working on task...", style: { fg: t.textDim } },
       ),
       this.shiftAllContainers,
@@ -375,12 +375,12 @@ export class ThreadManager {
         {
           id: collapseId,
           normalStyle: this.view.makeSpan(
-            { text: `  @${item.displayName}: `, style: { fg: t.accent } },
+            { text: `  ${item.displayName}: `, style: { fg: t.accent } },
             { text: item.subject || "completed", style: { fg: t.text } },
             { text: `  ${label}`, style: { fg: t.textDim } },
           ),
           hoverStyle: this.view.makeSpan(
-            { text: `  @${item.displayName}: `, style: { fg: t.accent } },
+            { text: `  ${item.displayName}: `, style: { fg: t.accent } },
             { text: item.subject || "completed", style: { fg: t.text } },
             { text: `  ${label}`, style: { fg: t.accent } },
           ),
@@ -434,27 +434,30 @@ export class ThreadManager {
     const ts = Date.now();
     const collapseId = `reply-collapse-${replyKey}`;
     const copyId = `copy-${result.teammate}-${ts}`;
-
-    // Store copy context for [copy] action
-    if (cleaned) {
-      this._copyContexts.set(copyId, cleaned);
-    }
-
-    // Insert subject line as action list with inline [hide] [copy]
     const displayName =
       result.teammate === this.view.selfName
         ? this.view.adapterName
         : result.teammate;
+
+    // Store copy context for [copy] action (include teammate: subject header)
+    if (cleaned) {
+      this._copyContexts.set(
+        copyId,
+        `${displayName}: ${subject}\n\n${cleaned}`,
+      );
+    }
+
+    // Insert subject line as action list with inline [hide] [copy]
     const subjectActions = [
       {
         id: collapseId,
         normalStyle: this.view.makeSpan(
-          { text: `  @${displayName}: `, style: { fg: t.accent } },
+          { text: `  ${displayName}: `, style: { fg: t.accent } },
           { text: subject, style: { fg: t.text } },
           { text: "  [hide]", style: { fg: t.textDim } },
         ),
         hoverStyle: this.view.makeSpan(
-          { text: `  @${displayName}: `, style: { fg: t.accent } },
+          { text: `  ${displayName}: `, style: { fg: t.accent } },
           { text: subject, style: { fg: t.text } },
           { text: "  [hide]", style: { fg: t.accent } },
         ),

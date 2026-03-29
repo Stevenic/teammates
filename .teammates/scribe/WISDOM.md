@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-29 (evening)
+Last compacted: 2026-03-29
 
 ---
 
@@ -20,9 +20,6 @@ Scribe's workflow for new features: (1) design the behavior in a spec doc, (2) h
 
 ### Cross-file consistency is non-negotiable
 When updating a concept (memory tiers, context window, onboarding flow), audit ALL files that reference it. The same information lives in PROTOCOL.md (live + template), ARCHITECTURE.md, EPISODIC-COMPACTION.md, teammates-memory.md, CLI README, ONBOARDING.md, and sometimes cookbook.md. Missing one creates drift.
-
-### Context window has a token budget
-The CLI injects context with a 32k budget: daily logs get up to 24k, recall gets at least 8k plus any unused daily budget. Weekly summaries are NOT directly injected — they're searchable via recall only. Session state is provided as a file path, not injected content.
 
 ### Retro proposals need a decision gate
 Retro proposals don't self-apply. They were proposed 3 times across 2 days before getting approved. When running a retro, explicitly ask the user to approve or reject each proposal in the same session.
