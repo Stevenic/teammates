@@ -332,8 +332,8 @@ class TeammatesREPL {
     // Set insert position to right after the subject line
     container.setInsertAt(headerIdx + 1);
 
-    // Track body start for individual collapse
-    const bodyStartIdx = container.getInsertPoint();
+    // Track body start for individual collapse (peek — don't consume a position)
+    const bodyStartIdx = container.peekInsertPoint();
 
     if (cleaned) {
       this.threadFeedMarkdown(threadId, cleaned);
@@ -355,8 +355,8 @@ class TeammatesREPL {
       );
     }
 
-    // Track body end for individual collapse
-    const bodyEndIdx = container.getInsertPoint();
+    // Track body end for individual collapse (peek — don't consume a position)
+    const bodyEndIdx = container.peekInsertPoint();
     container.trackReplyBody(
       replyKey,
       headerIdx,
@@ -794,8 +794,11 @@ class TeammatesREPL {
     // Blank line separator before the reply block
     container.insertLine(this.chatView, "", this.shiftAllContainers);
 
-    // Render user message lines inside the thread (user-styled, indented 2 spaces)
-    const label = `  ${this.selfName}: `;
+    // Render user message lines inside the thread (user-styled, indented)
+    // All content indented 4 spaces (container body level) with bg color
+    const indent = "    ";
+    const label = `${indent}${this.selfName}: `;
+    const wrapW = termW - indent.length;
     const lines = displayText.split("\n");
     const first = lines.shift() ?? "";
     const firstWrapW = termW - label.length;
@@ -811,20 +814,26 @@ class TeammatesREPL {
       this.shiftAllContainers,
     );
     for (const wl of firstWrapped) {
-      const pad = Math.max(0, termW - wl.length);
+      const pad = Math.max(0, termW - indent.length - wl.length);
       container.insertLine(
         this.chatView,
-        concat(pen.fg(t.text).bg(bg)(wl + " ".repeat(pad))),
+        concat(
+          pen.fg(t.text).bg(bg)(indent),
+          pen.fg(t.text).bg(bg)(wl + " ".repeat(pad)),
+        ),
         this.shiftAllContainers,
       );
     }
     for (const line of lines) {
-      const wrapped = this.wrapLine(line, termW);
+      const wrapped = this.wrapLine(line, wrapW);
       for (const wl of wrapped) {
-        const pad = Math.max(0, termW - wl.length);
+        const pad = Math.max(0, termW - indent.length - wl.length);
         container.insertLine(
           this.chatView,
-          concat(pen.fg(t.text).bg(bg)(wl + " ".repeat(pad))),
+          concat(
+            pen.fg(t.text).bg(bg)(indent),
+            pen.fg(t.text).bg(bg)(wl + " ".repeat(pad)),
+          ),
           this.shiftAllContainers,
         );
       }
@@ -836,7 +845,7 @@ class TeammatesREPL {
     );
     const namesText = displayNames.map((n) => `@${n}`).join(", ");
     const dispatchContent = concat(
-      pen.fg(t.textDim).bg(bg)(`  → `),
+      pen.fg(t.textDim).bg(bg)(`${indent}→ `),
       pen.fg(t.accent).bg(bg)(namesText),
     );
     let dispLen = 0;
@@ -4115,6 +4124,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       } else if (id.startsWith("thread-reply-")) {
         const tid = parseInt(id.slice("thread-reply-".length), 10);
         this.focusedThreadId = tid;
+        this.chatView.inputValue = `#${tid} `;
         this.updateFooterHint();
         this.refreshView();
       } else if (id.startsWith("thread-copy-")) {

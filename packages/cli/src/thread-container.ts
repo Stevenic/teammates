@@ -95,6 +95,21 @@ export class ThreadContainer {
     if (this._insertAt != null) {
       return this._insertAt++;
     }
+    return this._computeInsertPoint();
+  }
+
+  /**
+   * Read the current insert point WITHOUT auto-advancing _insertAt.
+   * Use this for tracking body ranges without consuming a position.
+   */
+  peekInsertPoint(): number {
+    if (this._insertAt != null) {
+      return this._insertAt;
+    }
+    return this._computeInsertPoint();
+  }
+
+  private _computeInsertPoint(): number {
     let insertPoint = this.endIdx;
     // Insert before thread-level actions ([reply] [copy thread]) if present
     if (this.replyActionIdx != null && this.replyActionIdx < insertPoint) {
