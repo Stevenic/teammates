@@ -1,5 +1,14 @@
 // Public API for @teammates/cli
 
+export { ensureActivityHook } from "./activity-hook.js";
+export {
+  formatActivityTime,
+  parseActivityLog,
+  parseClaudeActivity,
+  watchActivityLog,
+  watchDebugLog,
+  watchDebugLogErrors,
+} from "./activity-watcher.js";
 export type {
   AgentAdapter,
   InstalledService,
@@ -65,6 +74,7 @@ export { ThreadContainer } from "./thread-container.js";
 export type { ThreadManagerView } from "./thread-manager.js";
 export { ThreadManager } from "./thread-manager.js";
 export type {
+  ActivityEvent,
   DailyLog,
   HandoffEnvelope,
   InterruptState,

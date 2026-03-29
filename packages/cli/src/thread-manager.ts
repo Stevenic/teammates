@@ -329,7 +329,7 @@ export class ThreadManager {
     container.clearInsertAt();
   }
 
-  /** Render a working placeholder for an agent in a thread. */
+  /** Render a working placeholder for an agent in a thread with [show activity] [cancel] verbs. */
   renderWorkingPlaceholder(threadId: number, teammate: string): void {
     if (!this.view.chatView) return;
     const container = this.containers.get(threadId);
@@ -337,13 +337,37 @@ export class ThreadManager {
     const t = theme();
     const displayName =
       teammate === this.view.selfName ? this.view.adapterName : teammate;
+    const activityId = `activity-${teammate}-${threadId}`;
+    const cancelId = `cancel-${teammate}-${threadId}`;
     container.addPlaceholder(
       this.view.chatView,
       teammate,
-      this.view.makeSpan(
-        { text: `  ${displayName}: `, style: { fg: t.accent } },
-        { text: "working on task...", style: { fg: t.textDim } },
-      ),
+      [
+        {
+          id: activityId,
+          normalStyle: this.view.makeSpan(
+            { text: `  ${displayName}: `, style: { fg: t.accent } },
+            { text: "working on task...", style: { fg: t.textDim } },
+            { text: "  [show activity]", style: { fg: t.textDim } },
+          ),
+          hoverStyle: this.view.makeSpan(
+            { text: `  ${displayName}: `, style: { fg: t.accent } },
+            { text: "working on task...", style: { fg: t.textDim } },
+            { text: "  [show activity]", style: { fg: t.accent } },
+          ),
+        },
+        {
+          id: cancelId,
+          normalStyle: this.view.makeSpan({
+            text: " [cancel]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.view.makeSpan({
+            text: " [cancel]",
+            style: { fg: t.accent },
+          }),
+        },
+      ],
       this.shiftAllContainers,
     );
   }

@@ -37,4 +37,4 @@ When a new package is added to the monorepo (e.g., Hands/MCP server), it needs: 
 Handoff files, memory files, and other teammate metadata (`.teammates/_handoffs/`, `.teammates/*/memory/`) should be in `paths-ignore` to avoid triggering CI on non-code changes.
 
 **CI audit level: high is the bar.**
-Audit level was tightened from `critical` to `high` after Beacon resolved all transitive vulns (vectra→openai→axios). Don't regress to `critical` unless there's an unfixable transitive vuln blocking CI.
+Audit level was tightened from `critical` to `high` after Beacon resolved all transitive vulns (vectra->openai->axios). Don't regress to `critical` unless there's an unfixable transitive vuln blocking CI.

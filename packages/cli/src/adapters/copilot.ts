@@ -29,7 +29,7 @@ import {
   queryRecallContext,
 } from "../adapter.js";
 import { autoCompactForBudget } from "../compact.js";
-import type { TaskResult, TeammateConfig } from "../types.js";
+import type { ActivityEvent, TaskResult, TeammateConfig } from "../types.js";
 import { parseResult } from "./cli-proxy.js";
 
 // ─── Options ─────────────────────────────────────────────────────────
@@ -109,7 +109,11 @@ export class CopilotAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean; system?: boolean },
+    options?: {
+      raw?: boolean;
+      system?: boolean;
+      onActivity?: (events: ActivityEvent[]) => void;
+    },
   ): Promise<TaskResult> {
     await this.ensureClient(teammate.cwd);
 

@@ -29,5 +29,13 @@
       "Bash(node -e \"const p = require\\(''C:/source/teammates/node_modules/vscode-jsonrpc/package.json''\\); console.log\\(p.version, p.exports ? ''has exports'' : ''no exports''\\)\")",
       "Bash(node:*)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "command": "node \"C:/source/teammates/packages/cli/scripts/activity-hook.mjs\""
+      }
+    ]
   }
 }

@@ -21,6 +21,7 @@ import { mkdirSync } from "node:fs";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { watchActivityLog, watchDebugLogErrors } from "../activity-watcher.js";
 import type {
   AgentAdapter,
   InstalledService,
@@ -33,6 +34,7 @@ import {
 } from "../adapter.js";
 import { autoCompactForBudget } from "../compact.js";
 import type {
+  ActivityEvent,
   HandoffEnvelope,
   SandboxLevel,
   TaskResult,
@@ -239,7 +241,11 @@ export class CliProxyAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean; system?: boolean },
+    options?: {
+      raw?: boolean;
+      system?: boolean;
+      onActivity?: (events: ActivityEvent[]) => void;
+    },
   ): Promise<TaskResult> {
     // If raw mode is set, skip all prompt wrapping — send prompt as-is
     // Used for defensive retries where the full prompt template is counterproductive
@@ -323,7 +329,12 @@ export class CliProxyAdapter implements AgentAdapter {
     this.pendingTempFiles.add(promptFile);
 
     try {
-      const spawn = await this.spawnAndProxy(teammate, promptFile, fullPrompt);
+      const spawn = await this.spawnAndProxy(
+        teammate,
+        promptFile,
+        fullPrompt,
+        options?.onActivity,
+      );
       const output = this.preset.parseOutput
         ? this.preset.parseOutput(spawn.output)
         : spawn.output;
@@ -492,6 +503,7 @@ export class CliProxyAdapter implements AgentAdapter {
     teammate: TeammateConfig,
     promptFile: string,
     fullPrompt: string,
+    onActivity?: (events: ActivityEvent[]) => void,
   ): Promise<SpawnResult> {
     // Create a deferred promise so killAgent() can await the same result
     let resolveOuter!: (result: SpawnResult) => void;
@@ -503,14 +515,10 @@ export class CliProxyAdapter implements AgentAdapter {
 
     // Always generate a debug log file for presets that support it (e.g. Claude's --debug-file).
     // Written to .teammates/.tmp/debug/ so startup maintenance can clean old logs.
+    const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
     let debugFile: string | undefined;
     if (this.preset.supportsDebugFile) {
-      const debugDir = join(
-        teammate.cwd ?? process.cwd(),
-        ".teammates",
-        ".tmp",
-        "debug",
-      );
+      const debugDir = join(tmpBase, "debug");
       try {
         mkdirSync(debugDir, { recursive: true });
       } catch {
@@ -518,6 +526,19 @@ export class CliProxyAdapter implements AgentAdapter {
       }
       debugFile = join(debugDir, `agent-${teammate.name}-${Date.now()}.log`);
     }
+
+    // Activity hook log — receives tool details from our PostToolUse hook.
+    // The hook writes to this file when TEAMMATES_ACTIVITY_LOG env var is set.
+    const activityDir = join(tmpBase, "activity");
+    try {
+      mkdirSync(activityDir, { recursive: true });
+    } catch {
+      /* best effort */
+    }
+    const activityFile = join(
+      activityDir,
+      `${teammate.name}-${Date.now()}.log`,
+    );
 
     const args = [
       ...this.preset.buildArgs(
@@ -533,6 +554,9 @@ export class CliProxyAdapter implements AgentAdapter {
     const timeout = this.options.timeout ?? 600_000;
     const interactive = this.preset.interactive ?? false;
     const useStdin = this.preset.stdinPrompt ?? false;
+
+    // Tell the activity hook where to write tool details
+    env.TEAMMATES_ACTIVITY_LOG = activityFile;
 
     // Suppress Node.js ExperimentalWarning (e.g. SQLite) in agent
     // subprocesses so it doesn't leak into the terminal UI.
@@ -558,6 +582,21 @@ export class CliProxyAdapter implements AgentAdapter {
 
     // Register the active process for killAgent() access
     this.activeProcesses.set(teammate.name, { child, done, debugFile });
+
+    // Start watching for real-time activity events.
+    // Primary: activity hook log (has tool details like file paths, commands).
+    // Secondary: debug log errors (tool errors aren't in the hook log).
+    // Fallback: legacy debug log parser (when no hook is installed).
+    const stopWatchers: (() => void)[] = [];
+    if (onActivity) {
+      const now = Date.now();
+      // Always watch the activity hook log — it has the rich detail
+      stopWatchers.push(watchActivityLog(activityFile, now, onActivity));
+      // Also watch debug log for errors (they appear there, not in hook log)
+      if (debugFile) {
+        stopWatchers.push(watchDebugLogErrors(debugFile, now, onActivity));
+      }
+    }
 
     // Pipe prompt via stdin if the preset requires it
     if (useStdin && child.stdin) {
@@ -611,6 +650,7 @@ export class CliProxyAdapter implements AgentAdapter {
       if (onUserInput) {
         process.stdin.removeListener("data", onUserInput);
       }
+      for (const stop of stopWatchers) stop();
       this.activeProcesses.delete(teammate.name);
     };
 

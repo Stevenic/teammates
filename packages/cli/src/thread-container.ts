@@ -178,11 +178,12 @@ export class ThreadContainer {
 
   /**
    * Add a working placeholder for a teammate at the end of the thread range.
+   * Renders as an action list with [show activity] and [cancel] verbs.
    */
   addPlaceholder(
     view: ThreadFeedView,
     teammate: string,
-    styledLine: StyledSpan,
+    actions: FeedActionItem[],
     onShift: ShiftCallback,
   ): void {
     // Insert before thread-level actions ([reply] [copy thread]) if present,
@@ -192,7 +193,7 @@ export class ThreadContainer {
     if (this.replyActionIdx != null && this.replyActionIdx < insertAt) {
       insertAt = this.replyActionIdx;
     }
-    view.insertStyledToFeed(insertAt, styledLine);
+    view.insertActionList(insertAt, actions);
     const oldEnd = this.endIdx;
     onShift(insertAt, 1);
     if (this.endIdx === oldEnd) this.endIdx++;
@@ -215,6 +216,11 @@ export class ThreadContainer {
   /** Check if a working placeholder exists for a teammate. */
   hasPlaceholder(teammate: string): boolean {
     return this.placeholders.has(teammate);
+  }
+
+  /** Get the feed line index of a teammate's working placeholder, or undefined. */
+  getPlaceholderIndex(teammate: string): number | undefined {
+    return this.placeholders.get(teammate);
   }
 
   /** Number of active (visible) working placeholders. */

@@ -118,6 +118,8 @@ export interface TaskAssignment {
   raw?: boolean;
   /** When true, this is a system-initiated task — suppress progress bar */
   system?: boolean;
+  /** Callback fired during execution with real-time activity events from the agent. */
+  onActivity?: (events: ActivityEvent[]) => void;
 }
 
 /** Orchestrator event for logging/hooks */
@@ -199,6 +201,18 @@ export interface ThreadEntry {
   subject?: string;
   /** When this entry was created. */
   timestamp: number;
+}
+
+/** A single activity event from an agent's debug log (e.g. tool call, error). */
+export interface ActivityEvent {
+  /** Elapsed time since task start in milliseconds. */
+  elapsedMs: number;
+  /** Tool name or action type (e.g. "Read", "Write", "Bash", "Grep"). */
+  tool: string;
+  /** Brief detail — file path, search query, command snippet. */
+  detail?: string;
+  /** Whether this event is an error. */
+  isError?: boolean;
 }
 
 /** A registered slash command. */

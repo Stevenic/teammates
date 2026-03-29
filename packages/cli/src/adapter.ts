@@ -35,7 +35,11 @@ export interface AgentAdapter {
     sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean; system?: boolean },
+    options?: {
+      raw?: boolean;
+      system?: boolean;
+      onActivity?: (events: import("./types.js").ActivityEvent[]) => void;
+    },
   ): Promise<TaskResult>;
 
   /**

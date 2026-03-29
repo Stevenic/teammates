@@ -59,3 +59,6 @@ When a single file exceeds ~3k lines, agents struggle to hold full context and m
 
 ### Spec UI before coding UI
 Visual/interactive features (thread view, feed layout) need a spec with exact rendering examples before any code is written. Without one, feedback becomes serial ("move this, change that") and rounds multiply. The thread view post-mortem confirmed: spec-after-code cost 18 rounds; spec-first features land in 1-3.
+
+### Slash commands must not collide with host tools
+When naming CLI slash commands, check for conflicts with the host coding agent's built-in commands. `/compact` was removed because it collides with Claude Code's context compaction. Always audit against Claude, Codex, and Copilot built-ins before naming a command.

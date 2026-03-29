@@ -33,6 +33,8 @@ import {
 } from "@teammates/consolonia";
 import chalk from "chalk";
 import ora, { type Ora } from "ora";
+import { ensureActivityHook } from "./activity-hook.js";
+import { formatActivityTime } from "./activity-watcher.js";
 import type { AgentAdapter } from "./adapter.js";
 import { DAILY_LOG_BUDGET_TOKENS, syncRecallIndex } from "./adapter.js";
 import { AnimatedBanner, type ServiceInfo } from "./banner.js";
@@ -81,6 +83,7 @@ import { colorToHex, theme, tp } from "./theme.js";
 import type { ThreadContainer } from "./thread-container.js";
 import { ThreadManager } from "./thread-manager.js";
 import type {
+  ActivityEvent,
   HandoffEnvelope,
   OrchestratorEvent,
   QueueEntry,
@@ -385,6 +388,16 @@ class TeammatesREPL {
   private lastDebugFiles: Map<string, string> = new Map();
   /** Last task prompt per teammate — for /debug analysis. */
   private lastTaskPrompts: Map<string, string> = new Map();
+  /** Buffered activity events per teammate (cleared when task completes). */
+  private _activityBuffers: Map<string, ActivityEvent[]> = new Map();
+  /** Whether the activity feed is toggled on for a given teammate. */
+  private _activityShown: Map<string, boolean> = new Map();
+  /** Feed line indices for activity lines per teammate (for hiding on toggle off). */
+  private _activityLineIndices: Map<string, number[]> = new Map();
+  /** Thread IDs associated with activity per teammate. */
+  private _activityThreadIds: Map<string, number> = new Map();
+  /** Trailing blank line index per teammate (inserted after activity block). */
+  private _activityBlankIdx: Map<string, number> = new Map();
 
   private handoffManager!: HandoffManager;
   private retroManager!: RetroManager;
@@ -423,7 +436,20 @@ class TeammatesREPL {
     return this.threadManager.containers;
   }
   private get shiftAllContainers() {
-    return this.threadManager.shiftAllContainers;
+    const base = this.threadManager.shiftAllContainers;
+    return (atIndex: number, delta: number) => {
+      base(atIndex, delta);
+      // Also shift activity line indices so cleanup hides the correct lines
+      for (const [_tm, indices] of this._activityLineIndices) {
+        for (let i = 0; i < indices.length; i++) {
+          if (indices[i] >= atIndex) indices[i] += delta;
+        }
+      }
+      // Shift trailing blank line indices
+      for (const [tm, idx] of this._activityBlankIdx) {
+        if (idx >= atIndex) this._activityBlankIdx.set(tm, idx + delta);
+      }
+    };
   }
 
   private createThread(originMessage: string): TaskThread {
@@ -1594,6 +1620,20 @@ class TeammatesREPL {
         const key = id.slice("reply-collapse-".length);
         const tid = parseInt(key.split("-")[0], 10);
         this.toggleReplyCollapse(tid, key);
+      } else if (id.startsWith("activity-")) {
+        // activity-<teammate>-<threadId>
+        const rest = id.slice("activity-".length);
+        const lastDash = rest.lastIndexOf("-");
+        const actTeammate = rest.slice(0, lastDash);
+        const actTid = parseInt(rest.slice(lastDash + 1), 10);
+        this.toggleActivity(actTeammate, actTid);
+      } else if (id.startsWith("cancel-")) {
+        // cancel-<teammate>-<threadId>
+        const rest = id.slice("cancel-".length);
+        const lastDash = rest.lastIndexOf("-");
+        const cancelTeammate = rest.slice(0, lastDash);
+        const cancelTid = parseInt(rest.slice(lastDash + 1), 10);
+        this.cancelTask(cancelTeammate, cancelTid);
       } else if (id.startsWith("copy-cmd:")) {
         this.doCopy(id.slice("copy-cmd:".length));
       } else if (id.startsWith("copy-")) {
@@ -2741,6 +2781,222 @@ class TeammatesREPL {
     return parts.join("\n");
   }
 
+  // ── Activity tracking ─────────────────────────────────────────────
+
+  /** Handle incoming activity events from an agent's debug log watcher. */
+  private handleActivityEvents(
+    teammate: string,
+    events: ActivityEvent[],
+  ): void {
+    const buf = this._activityBuffers.get(teammate);
+    if (!buf) return;
+    buf.push(...events);
+
+    // If activity view is toggled on, insert new lines into the feed
+    if (this._activityShown.get(teammate) && this.chatView) {
+      this.insertActivityLines(teammate, events);
+      this.refreshView();
+    }
+  }
+
+  /** Toggle the activity view for a teammate on/off. */
+  private toggleActivity(teammate: string, threadId: number): void {
+    const shown = this._activityShown.get(teammate) ?? false;
+    if (shown) {
+      // Hide all activity lines + trailing blank
+      const indices = this._activityLineIndices.get(teammate) ?? [];
+      for (const idx of indices) {
+        this.chatView?.setFeedLineHidden(idx, true);
+      }
+      const blankIdx = this._activityBlankIdx.get(teammate);
+      if (blankIdx != null) this.chatView?.setFeedLineHidden(blankIdx, true);
+      this._activityShown.set(teammate, false);
+      // Update the placeholder action text
+      this.updatePlaceholderVerb(teammate, threadId, "[show activity]");
+    } else {
+      // Show existing activity lines (or insert them if first time)
+      const indices = this._activityLineIndices.get(teammate) ?? [];
+      if (indices.length > 0) {
+        // Already inserted — just unhide
+        for (const idx of indices) {
+          this.chatView?.setFeedLineHidden(idx, false);
+        }
+        const blankIdx = this._activityBlankIdx.get(teammate);
+        if (blankIdx != null) this.chatView?.setFeedLineHidden(blankIdx, false);
+      } else {
+        // First time — insert "Activity" header + blank line, then buffered events
+        this.insertActivityHeader(teammate);
+        const buf = this._activityBuffers.get(teammate) ?? [];
+        if (buf.length > 0) {
+          this.insertActivityLines(teammate, buf);
+        }
+      }
+      this._activityShown.set(teammate, true);
+      this.updatePlaceholderVerb(teammate, threadId, "[hide activity]");
+    }
+    this.refreshView();
+  }
+
+  /** Insert the "Activity" header line below the placeholder (first time showing). */
+  private insertActivityHeader(teammate: string): void {
+    const threadId = this._activityThreadIds.get(teammate);
+    if (threadId == null) return;
+    const container = this.containers.get(threadId);
+    if (!container || !this.chatView) return;
+
+    const t = theme();
+    const indices = this._activityLineIndices.get(teammate) ?? [];
+    const placeholderIdx = container.getPlaceholderIndex(teammate);
+    if (placeholderIdx == null) return;
+
+    // Insert "Activity" header in accent color
+    const insertAt = placeholderIdx + 1 + indices.length;
+    const headerLine = this.makeSpan({
+      text: "    Activity",
+      style: { fg: t.accent },
+    });
+    this.chatView.insertStyledToFeed(insertAt, headerLine);
+    this.shiftAllContainers(insertAt, 1);
+    indices.push(insertAt);
+    this._activityLineIndices.set(teammate, indices);
+
+    // Insert trailing blank line after activity block
+    const blankAt = insertAt + 1;
+    this.chatView.insertStyledToFeed(
+      blankAt,
+      this.makeSpan({ text: "", style: {} }),
+    );
+    this.shiftAllContainers(blankAt, 1);
+    this._activityBlankIdx.set(teammate, blankAt);
+  }
+
+  /** Insert activity event lines into the thread container below the placeholder. */
+  private insertActivityLines(teammate: string, events: ActivityEvent[]): void {
+    const threadId = this._activityThreadIds.get(teammate);
+    if (threadId == null) return;
+    const container = this.containers.get(threadId);
+    if (!container || !this.chatView) return;
+
+    const t = theme();
+    const indices = this._activityLineIndices.get(teammate) ?? [];
+    const placeholderIdx = container.getPlaceholderIndex(teammate);
+    if (placeholderIdx == null) return;
+
+    for (const ev of events) {
+      const time = formatActivityTime(ev.elapsedMs);
+      const toolText = ev.isError ? `${ev.tool} ERROR` : ev.tool;
+      const detail = ev.detail ? ` ${ev.detail}` : "";
+      const fg = ev.isError ? t.error : t.textDim;
+
+      // Insert right after the placeholder line (and after any existing activity lines)
+      const insertAt = placeholderIdx + 1 + indices.length;
+      const line = this.makeSpan(
+        { text: `    ${time} `, style: { fg: t.textDim } },
+        { text: toolText, style: { fg } },
+        { text: detail, style: { fg: t.textDim } },
+      );
+      this.chatView.insertStyledToFeed(insertAt, line);
+      // Shift all containers and activity indices (wrapper handles activity)
+      this.shiftAllContainers(insertAt, 1);
+      // The newly inserted line is at insertAt — record it AFTER shift
+      // (shiftAllContainers already shifted existing indices >= insertAt)
+      indices.push(insertAt);
+    }
+    this._activityLineIndices.set(teammate, indices);
+  }
+
+  /** Hide all activity lines and clean up activity state for a teammate. */
+  private cleanupActivityLines(teammate: string): void {
+    const indices = this._activityLineIndices.get(teammate) ?? [];
+    if (indices.length > 0 && this.chatView) {
+      for (const idx of indices) {
+        this.chatView.setFeedLineHidden(idx, true);
+      }
+    }
+    // Also hide the trailing blank line
+    const blankIdx = this._activityBlankIdx.get(teammate);
+    if (blankIdx != null && this.chatView) {
+      this.chatView.setFeedLineHidden(blankIdx, true);
+    }
+    this._activityBuffers.delete(teammate);
+    this._activityShown.delete(teammate);
+    this._activityLineIndices.delete(teammate);
+    this._activityThreadIds.delete(teammate);
+    this._activityBlankIdx.delete(teammate);
+  }
+
+  /** Update the [show activity]/[hide activity] verb text on a working placeholder. */
+  private updatePlaceholderVerb(
+    teammate: string,
+    threadId: number,
+    label: string,
+  ): void {
+    const container = this.containers.get(threadId);
+    if (!container || !this.chatView) return;
+    const placeholderIdx = container.getPlaceholderIndex(teammate);
+    if (placeholderIdx == null) return;
+
+    const t = theme();
+    const displayName =
+      teammate === this.selfName ? this.adapterName : teammate;
+    const activityId = `activity-${teammate}-${threadId}`;
+    const cancelId = `cancel-${teammate}-${threadId}`;
+    this.chatView.updateActionList(placeholderIdx, [
+      {
+        id: activityId,
+        normalStyle: this.makeSpan(
+          { text: `  ${displayName}: `, style: { fg: t.accent } },
+          { text: "working on task...", style: { fg: t.textDim } },
+          { text: `  ${label}`, style: { fg: t.textDim } },
+        ),
+        hoverStyle: this.makeSpan(
+          { text: `  ${displayName}: `, style: { fg: t.accent } },
+          { text: "working on task...", style: { fg: t.textDim } },
+          { text: `  ${label}`, style: { fg: t.accent } },
+        ),
+      },
+      {
+        id: cancelId,
+        normalStyle: this.makeSpan({
+          text: " [cancel]",
+          style: { fg: t.textDim },
+        }),
+        hoverStyle: this.makeSpan({
+          text: " [cancel]",
+          style: { fg: t.accent },
+        }),
+      },
+    ]);
+  }
+
+  /** Cancel a running task by killing the agent process. */
+  private async cancelTask(teammate: string, _threadId: number): Promise<void> {
+    const adapter = this.orchestrator.getAdapter();
+    if (!adapter.killAgent) {
+      this.feedLine(
+        tp.warning("  Agent adapter does not support cancellation"),
+      );
+      return;
+    }
+
+    const result = await adapter.killAgent(teammate);
+    if (!result) {
+      this.feedLine(tp.warning(`  No running task found for ${teammate}`));
+      return;
+    }
+
+    // Hide activity lines and clean up state
+    this.cleanupActivityLines(teammate);
+
+    // Show cancellation notification
+    const displayName =
+      teammate === this.selfName ? this.adapterName : teammate;
+    this.statusTracker.showNotification(
+      tp.warning(`✖ ${displayName}: task cancelled`),
+    );
+    this.refreshView();
+  }
+
   /** Drain user tasks for a single agent — runs in parallel with other agents.
    *  System tasks are handled separately by runSystemTask(). */
   private async drainAgentQueue(agent: string): Promise<void> {
@@ -2783,10 +3039,19 @@ class TeammatesREPL {
               snapshot,
             );
           }
+          // Set up activity tracking for this task
+          const teammate = entry.teammate;
+          const tid = entry.threadId;
+          this._activityBuffers.set(teammate, []);
+          this._activityShown.set(teammate, false);
+          this._activityLineIndices.set(teammate, []);
+          if (tid != null) this._activityThreadIds.set(teammate, tid);
+
           let result = await this.orchestrator.assign({
             teammate: entry.teammate,
             task: entry.task,
             extraContext: extraContext || undefined,
+            onActivity: (events) => this.handleActivityEvents(teammate, events),
           });
 
           // Defensive retry: if the agent produced no text output but exited
@@ -2833,6 +3098,9 @@ class TeammatesREPL {
 
             this.silentAgents.delete(entry.teammate);
           }
+
+          // Hide and clean up activity lines before displaying the result
+          this.cleanupActivityLines(entry.teammate);
 
           // Display the (possibly retried) result to the user
           this.displayTaskResult(result, entry.type, entry.threadId);
@@ -3449,6 +3717,9 @@ Issues that can't be resolved unilaterally — they need input from other teamma
     // Check and update installed CLI version
     const versionUpdate = this.checkVersionUpdate();
 
+    // Ensure the PostToolUse activity hook is installed for agent tracking
+    ensureActivityHook(dirname(this.teammatesDir));
+
     const tmpDir = join(this.teammatesDir, ".tmp");
 
     // Clean up debug log files older than 1 day
@@ -3457,6 +3728,14 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       await this.cleanOldTempFiles(debugDir, 24 * 60 * 60 * 1000);
     } catch {
       /* debug dir may not exist yet — non-fatal */
+    }
+
+    // Clean up activity log files older than 1 day
+    const activityDir = join(tmpDir, "activity");
+    try {
+      await this.cleanOldTempFiles(activityDir, 24 * 60 * 60 * 1000);
+    } catch {
+      /* activity dir may not exist yet — non-fatal */
     }
 
     // Clean up other .tmp files older than 1 week
