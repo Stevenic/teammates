@@ -32,6 +32,7 @@ export {
   buildMigrationCompressionPrompt,
   findUncompressedDailies,
 } from "./compact.js";
+export { HandoffManager } from "./handoff-manager.js";
 export type { LogEntry } from "./log-parser.js";
 export {
   buildConversationLog,
@@ -48,6 +49,9 @@ export {
 export type { Persona } from "./personas.js";
 export { loadPersonas, scaffoldFromPersona } from "./personas.js";
 export { Registry } from "./registry.js";
+export { RetroManager } from "./retro-manager.js";
+export { detectServices } from "./service-config.js";
+export { StatusTracker } from "./status-tracker.js";
 export { tp } from "./theme.js";
 export type {
   ShiftCallback,
@@ -72,3 +76,4 @@ export type {
   TeammateType,
   ThreadEntry,
 } from "./types.js";
+export { Wordwheel } from "./wordwheel.js";

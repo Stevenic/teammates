@@ -18,7 +18,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { mkdir, readdir, rm, stat, unlink } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
 import {
@@ -26,7 +26,6 @@ import {
   ChatView,
   type Color,
   concat,
-  type DropdownItem,
   esc,
   pen,
   renderMarkdown,
@@ -37,11 +36,7 @@ import chalk from "chalk";
 import ora, { type Ora } from "ora";
 import type { AgentAdapter } from "./adapter.js";
 import { DAILY_LOG_BUDGET_TOKENS, syncRecallIndex } from "./adapter.js";
-import {
-  AnimatedBanner,
-  type ServiceInfo,
-  type ServiceStatus,
-} from "./banner.js";
+import { AnimatedBanner, type ServiceInfo } from "./banner.js";
 import {
   type CliArgs,
   findTeammatesDir,
@@ -56,7 +51,6 @@ import {
   buildThreadContext,
   cleanResponseBody,
   compressConversationEntries,
-  findAtMention,
   findSummarizationSplit,
   formatConversationEntry,
   isImagePath,
@@ -74,6 +68,7 @@ import {
 } from "./compact.js";
 import { PromptInput } from "./console/prompt-input.js";
 import { buildTitle } from "./console/startup.js";
+import { HandoffManager } from "./handoff-manager.js";
 import { buildConversationLog } from "./log-parser.js";
 import {
   buildImportAdaptationPrompt,
@@ -83,6 +78,9 @@ import {
 } from "./onboard.js";
 import { Orchestrator } from "./orchestrator.js";
 import { loadPersonas, scaffoldFromPersona } from "./personas.js";
+import { RetroManager } from "./retro-manager.js";
+import { cmdConfigure, detectServices } from "./service-config.js";
+import { StatusTracker } from "./status-tracker.js";
 import { colorToHex, theme, tp } from "./theme.js";
 import { type ShiftCallback, ThreadContainer } from "./thread-container.js";
 import type {
@@ -94,6 +92,7 @@ import type {
   TaskThread,
   ThreadEntry,
 } from "./types.js";
+import { Wordwheel } from "./wordwheel.js";
 
 // ─── Parsed CLI arguments ────────────────────────────────────────────
 
@@ -523,8 +522,7 @@ class TeammatesREPL {
   /** Stored pasted text keyed by paste number, expanded on Enter. */
   private pastedTexts: Map<number, string> = new Map();
   private pasteCounter = 0;
-  private wordwheelItems: DropdownItem[] = [];
-  private wordwheelIndex = -1; // -1 = no selection, 0+ = highlighted row
+  private wordwheel!: Wordwheel;
   private escPending = false; // true after first ESC, waiting for second
   private escTimer: ReturnType<typeof setTimeout> | null = null;
   private ctrlcPending = false; // true after first Ctrl+C, waiting for second
@@ -532,39 +530,13 @@ class TeammatesREPL {
   private lastCleanedOutput = ""; // last teammate output for clipboard copy
   /** Maps copy action IDs to the cleaned output text for that response. */
   private _copyContexts: Map<string, string> = new Map();
-  private autoApproveHandoffs = false;
   /** Last debug log file path per teammate — for /debug analysis. */
   private lastDebugFiles: Map<string, string> = new Map();
   /** Last task prompt per teammate — for /debug analysis. */
   private lastTaskPrompts: Map<string, string> = new Map();
 
-  /** Pending handoffs awaiting user approval. */
-  private pendingHandoffs: {
-    id: string;
-    envelope: HandoffEnvelope;
-    approveIdx: number;
-    rejectIdx: number;
-    threadId?: number;
-  }[] = [];
-  /** Pending retro proposals awaiting user approval. */
-  private pendingRetroProposals: {
-    id: string;
-    teammate: string;
-    index: number;
-    title: string;
-    section: string;
-    before: string;
-    after: string;
-    why: string;
-    actionIdx: number;
-  }[] = [];
-  /** Pending cross-folder violations awaiting user decision. */
-  private pendingViolations: {
-    id: string;
-    teammate: string;
-    files: string[];
-    actionIdx: number;
-  }[] = [];
+  private handoffManager!: HandoffManager;
+  private retroManager!: RetroManager;
 
   /** Maps reply action IDs to their context (teammate + message). */
   private _replyContexts: Map<
@@ -939,28 +911,8 @@ class TeammatesREPL {
     this.refreshView();
   }
 
-  // ── Animated status tracker ─────────────────────────────────────
-  private activeTasks: Map<
-    string,
-    { teammate: string; task: string; startTime: number }
-  > = new Map();
-  private statusTimer: ReturnType<typeof setInterval> | null = null;
-  private statusFrame = 0;
-  private statusRotateIndex = 0;
-  private statusRotateTimer: ReturnType<typeof setInterval> | null = null;
-
-  private static readonly SPINNER = [
-    "⠋",
-    "⠙",
-    "⠹",
-    "⠸",
-    "⠼",
-    "⠴",
-    "⠦",
-    "⠧",
-    "⠇",
-    "⠏",
-  ];
+  // ── Animated status tracker (delegated to StatusTracker) ────────
+  private statusTracker!: StatusTracker;
 
   constructor(adapterName: string) {
     this.adapterName = adapterName;
@@ -984,129 +936,14 @@ class TeammatesREPL {
     }
   }
 
-  /** Start or update the animated status tracker above the prompt. */
+  private get activeTasks() {
+    return this.statusTracker.activeTasks;
+  }
   private startStatusAnimation(): void {
-    if (this.statusTimer) return; // already running
-
-    this.statusFrame = 0;
-    this.statusRotateIndex = 0;
-    this.renderStatusFrame();
-
-    // Animate spinner at ~200ms (fast enough for visual smoothness,
-    // slow enough to avoid saturating the render loop under load)
-    this.statusTimer = setInterval(() => {
-      this.statusFrame++;
-      this.renderStatusFrame();
-    }, 200);
-
-    // Rotate through teammates every 3 seconds
-    this.statusRotateTimer = setInterval(() => {
-      if (this.activeTasks.size > 1) {
-        this.statusRotateIndex =
-          (this.statusRotateIndex + 1) % this.activeTasks.size;
-      }
-    }, 3000);
+    this.statusTracker.start();
   }
-
-  /** Stop the status animation and clear the status line. */
   private stopStatusAnimation(): void {
-    if (this.statusTimer) {
-      clearInterval(this.statusTimer);
-      this.statusTimer = null;
-    }
-    if (this.statusRotateTimer) {
-      clearInterval(this.statusRotateTimer);
-      this.statusRotateTimer = null;
-    }
-    if (this.chatView) {
-      this.chatView.setProgress(null);
-      this.app.refresh();
-    } else {
-      this.input.setStatus(null);
-    }
-  }
-
-  /**
-   * Truncate a path for display, collapsing middle segments if too long.
-   * E.g. C:\source\some\deep\project → C:\source\...\project
-   */
-  private static truncatePath(fullPath: string, maxLen = 30): string {
-    if (fullPath.length <= maxLen) return fullPath;
-    const parts = fullPath.split(sep);
-    if (parts.length <= 2) return fullPath;
-    const last = parts[parts.length - 1];
-    // Keep adding segments from the front until we'd exceed maxLen
-    let front = parts[0];
-    for (let i = 1; i < parts.length - 1; i++) {
-      const candidate = `${front + sep + parts[i] + sep}...${sep}${last}`;
-      if (candidate.length > maxLen) break;
-      front += sep + parts[i];
-    }
-    return `${front + sep}...${sep}${last}`;
-  }
-
-  /** Format elapsed seconds as (Ns), (Nm Ns), or (Nh Nm Ns). */
-  private static formatElapsed(totalSeconds: number): string {
-    const s = totalSeconds % 60;
-    const m = Math.floor(totalSeconds / 60) % 60;
-    const h = Math.floor(totalSeconds / 3600);
-    if (h > 0) return `(${h}h ${m}m ${s}s)`;
-    if (m > 0) return `(${m}m ${s}s)`;
-    return `(${s}s)`;
-  }
-
-  /** Render one frame of the status animation. */
-  private renderStatusFrame(): void {
-    if (this.activeTasks.size === 0) return;
-
-    const entries = Array.from(this.activeTasks.values());
-    const total = entries.length;
-    const idx = this.statusRotateIndex % total;
-    const { teammate, task, startTime } = entries[idx];
-    const displayName =
-      teammate === this.selfName ? this.adapterName : teammate;
-
-    const spinChar =
-      TeammatesREPL.SPINNER[this.statusFrame % TeammatesREPL.SPINNER.length];
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    const elapsedStr = TeammatesREPL.formatElapsed(elapsed);
-
-    // Build the tag: (1/3 - 2m 5s) when multiple, (2m 5s) when single
-    const tag =
-      total > 1
-        ? `(${idx + 1}/${total} - ${elapsedStr.slice(1, -1)})`
-        : elapsedStr;
-
-    // Target 80 chars total: "<spinner> <name>... <task> <tag>"
-    const prefix = `${spinChar} ${displayName}... `;
-    const suffix = ` ${tag}`;
-    const maxTask = 80 - prefix.length - suffix.length;
-    const cleanTask = task.replace(/[\r\n]+/g, " ").trim();
-    const taskText =
-      maxTask <= 3
-        ? ""
-        : cleanTask.length > maxTask
-          ? `${cleanTask.slice(0, maxTask - 1)}…`
-          : cleanTask;
-
-    if (this.chatView) {
-      this.chatView.setProgress(
-        concat(
-          tp.accent(`${spinChar} ${displayName}... `),
-          tp.muted(`${taskText}${suffix}`),
-        ),
-      );
-      this.app.scheduleRefresh();
-    } else {
-      const spinColor =
-        this.statusFrame % 8 === 0 ? chalk.blue : chalk.blueBright;
-      const line =
-        `  ${spinColor(spinChar)} ` +
-        chalk.bold(displayName) +
-        chalk.gray(`... ${taskText}`) +
-        chalk.gray(suffix);
-      this.input.setStatus(line);
-    }
+    this.statusTracker.stop();
   }
 
   /**
@@ -1335,658 +1172,57 @@ class TeammatesREPL {
     return lines.length > 0 ? lines : [""];
   }
 
+  // ── Handoff + violation management (delegated to HandoffManager) ──
   private renderHandoffs(
-    _from: string,
+    from: string,
     handoffs: HandoffEnvelope[],
     threadId?: number,
   ): void {
-    const t = theme();
-    const names = this.orchestrator.listTeammates();
-    const avail = (process.stdout.columns || 80) - 4; // -4 for "  │ " + " │"
-    const boxW = Math.max(40, Math.round(avail * 0.6));
-    const innerW = boxW - 4; // space inside │ _ content _ │
-
-    for (let i = 0; i < handoffs.length; i++) {
-      const h = handoffs[i];
-      const isValid = names.includes(h.to);
-      const handoffId = `handoff-${Date.now()}-${i}`;
-      const chrome = isValid ? t.accentDim : t.error;
-
-      // Top border with label
-      this.feedLine();
-      const label = ` handoff → @${h.to} `;
-      const topFill = Math.max(0, boxW - 2 - label.length);
-      this.feedLine(
-        this.makeSpan({
-          text: `  ┌${label}${"─".repeat(topFill)}┐`,
-          style: { fg: chrome },
-        }),
-      );
-
-      // Task body — word-wrap each paragraph line
-      for (const rawLine of h.task.split("\n")) {
-        const wrapped =
-          rawLine.length === 0 ? [""] : this.wordWrap(rawLine, innerW);
-        for (const wl of wrapped) {
-          const pad = Math.max(0, innerW - wl.length);
-          this.feedLine(
-            this.makeSpan(
-              { text: "  │ ", style: { fg: chrome } },
-              { text: wl + " ".repeat(pad), style: { fg: t.textMuted } },
-              { text: " │", style: { fg: chrome } },
-            ),
-          );
-        }
-      }
-
-      // Bottom border
-      this.feedLine(
-        this.makeSpan({
-          text: `  └${"─".repeat(Math.max(0, boxW - 2))}┘`,
-          style: { fg: chrome },
-        }),
-      );
-
-      if (!isValid) {
-        this.feedLine(tp.error(`  ✖  Unknown teammate: @${h.to}`));
-      } else if (this.autoApproveHandoffs) {
-        this.taskQueue.push({
-          type: "agent",
-          teammate: h.to,
-          task: h.task,
-          threadId,
-        });
-        if (threadId != null) {
-          const thread = this.getThread(threadId);
-          if (thread) thread.pendingAgents.add(h.to);
-        }
-        this.feedLine(tp.muted("  automatically approved"));
-        this.kickDrain();
-      } else if (this.chatView) {
-        const actionIdx = this.chatView.feedLineCount;
-        this.chatView.appendActionList([
-          {
-            id: `approve-${handoffId}`,
-            normalStyle: this.makeSpan({
-              text: "  [approve]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.makeSpan({
-              text: "  [approve]",
-              style: { fg: t.accent },
-            }),
-          },
-          {
-            id: `reject-${handoffId}`,
-            normalStyle: this.makeSpan({
-              text: " [reject]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.makeSpan({
-              text: " [reject]",
-              style: { fg: t.accent },
-            }),
-          },
-        ]);
-        this.pendingHandoffs.push({
-          id: handoffId,
-          envelope: h,
-          approveIdx: actionIdx,
-          rejectIdx: actionIdx,
-          threadId,
-        });
-      }
-    }
-
-    // Show global approval options as dropdown when there are pending handoffs
-    this.showHandoffDropdown();
-    this.refreshView();
+    this.handoffManager.renderHandoffs(from, handoffs, threadId);
   }
-
-  /** Show/hide the handoff approval dropdown based on pending handoffs. */
   private showHandoffDropdown(): void {
-    if (!this.chatView) return;
-    if (this.pendingHandoffs.length > 0) {
-      const items: {
-        label: string;
-        description: string;
-        completion: string;
-      }[] = [];
-      if (this.pendingHandoffs.length === 1) {
-        items.push({
-          label: "approve",
-          description: `approve handoff to @${this.pendingHandoffs[0].envelope.to}`,
-          completion: "/approve",
-        });
-      } else {
-        items.push({
-          label: "approve",
-          description: `approve ${this.pendingHandoffs.length} handoffs`,
-          completion: "/approve",
-        });
-      }
-      items.push({
-        label: "always approve",
-        description: "auto-approve future handoffs",
-        completion: "/always-approve",
-      });
-      if (this.pendingHandoffs.length === 1) {
-        items.push({
-          label: "reject",
-          description: `reject handoff to @${this.pendingHandoffs[0].envelope.to}`,
-          completion: "/reject",
-        });
-      } else {
-        items.push({
-          label: "reject",
-          description: `reject ${this.pendingHandoffs.length} handoffs`,
-          completion: "/reject",
-        });
-      }
-      this.chatView.showDropdown(items);
-    } else {
-      this.chatView.hideDropdown();
-    }
-    this.refreshView();
+    this.handoffManager.showHandoffDropdown();
   }
-
-  /** Handle handoff approve/reject actions. */
   private handleHandoffAction(actionId: string): void {
-    const approveMatch = actionId.match(/^approve-(.+)$/);
-    if (approveMatch) {
-      const hId = approveMatch[1];
-      const idx = this.pendingHandoffs.findIndex((h) => h.id === hId);
-      if (idx >= 0 && this.chatView) {
-        const h = this.pendingHandoffs.splice(idx, 1)[0];
-        this.taskQueue.push({
-          type: "agent",
-          teammate: h.envelope.to,
-          task: h.envelope.task,
-          threadId: h.threadId,
-        });
-        if (h.threadId != null) {
-          const thread = this.getThread(h.threadId);
-          if (thread) thread.pendingAgents.add(h.envelope.to);
-        }
-        this.chatView.updateFeedLine(
-          h.approveIdx,
-          this.makeSpan({ text: "  approved", style: { fg: theme().success } }),
-        );
-        this.kickDrain();
-        this.showHandoffDropdown();
-      }
-      return;
-    }
-
-    const rejectMatch = actionId.match(/^reject-(.+)$/);
-    if (rejectMatch) {
-      const hId = rejectMatch[1];
-      const idx = this.pendingHandoffs.findIndex((h) => h.id === hId);
-      if (idx >= 0 && this.chatView) {
-        const h = this.pendingHandoffs.splice(idx, 1)[0];
-        this.chatView.updateFeedLine(
-          h.approveIdx,
-          this.makeSpan({ text: "  rejected", style: { fg: theme().error } }),
-        );
-        this.showHandoffDropdown();
-      }
-      return;
-    }
+    this.handoffManager.handleHandoffAction(actionId);
   }
-
-  /**
-   * Audit a task result for cross-folder writes.
-   * AI teammates must not write to another teammate's folder.
-   * Returns violating file paths (relative), or empty array if clean.
-   */
   private auditCrossFolderWrites(
     teammate: string,
     changedFiles: string[],
   ): string[] {
-    // Normalize .teammates/ prefix for comparison
-    const tmPrefix = ".teammates/";
-    const ownPrefix = `${tmPrefix}${teammate}/`;
-
-    return changedFiles.filter((f) => {
-      const normalized = f.replace(/\\/g, "/");
-      // Only care about files inside .teammates/
-      if (!normalized.startsWith(tmPrefix)) return false;
-      // Own folder is fine
-      if (normalized.startsWith(ownPrefix)) return false;
-      // Shared folders (_prefix) are fine
-      const subPath = normalized.slice(tmPrefix.length);
-      if (subPath.startsWith("_")) return false;
-      // Ephemeral folders (.prefix) are fine
-      if (subPath.startsWith(".")) return false;
-      // Root-level shared files (USER.md, settings.json, CROSS-TEAM.md, etc.)
-      if (!subPath.includes("/")) return false;
-      // Everything else is a violation
-      return true;
-    });
+    return this.handoffManager.auditCrossFolderWrites(teammate, changedFiles);
   }
-
-  /**
-   * Show cross-folder violation warning with [revert] / [allow] actions.
-   */
   private showViolationWarning(teammate: string, violations: string[]): void {
-    const t = theme();
-    this.feedLine(
-      tp.warning(`  ⚠  @${teammate} wrote to another teammate's folder:`),
-    );
-    for (const f of violations) {
-      this.feedLine(tp.muted(`     ${f}`));
-    }
-
-    if (this.chatView) {
-      const violationId = `violation-${Date.now()}`;
-      const actionIdx = this.chatView.feedLineCount;
-      this.chatView.appendActionList([
-        {
-          id: `revert-${violationId}`,
-          normalStyle: this.makeSpan({
-            text: "  [revert]",
-            style: { fg: t.error },
-          }),
-          hoverStyle: this.makeSpan({
-            text: "  [revert]",
-            style: { fg: t.accent },
-          }),
-        },
-        {
-          id: `allow-${violationId}`,
-          normalStyle: this.makeSpan({
-            text: " [allow]",
-            style: { fg: t.textDim },
-          }),
-          hoverStyle: this.makeSpan({
-            text: " [allow]",
-            style: { fg: t.accent },
-          }),
-        },
-      ]);
-      this.pendingViolations.push({
-        id: violationId,
-        teammate,
-        files: violations,
-        actionIdx,
-      });
-    }
+    this.handoffManager.showViolationWarning(teammate, violations);
   }
-
-  /**
-   * Handle revert/allow actions for cross-folder violations.
-   */
   private handleViolationAction(actionId: string): void {
-    const revertMatch = actionId.match(/^revert-(violation-.+)$/);
-    if (revertMatch) {
-      const vId = revertMatch[1];
-      const idx = this.pendingViolations.findIndex((v) => v.id === vId);
-      if (idx >= 0 && this.chatView) {
-        const v = this.pendingViolations.splice(idx, 1)[0];
-        // Revert violating files via git checkout
-        for (const f of v.files) {
-          try {
-            execSync(`git checkout -- "${f}"`, {
-              cwd: resolve(this.teammatesDir, ".."),
-              stdio: "pipe",
-            });
-          } catch {
-            // File might be untracked — try git rm
-            try {
-              execSync(`git rm -f "${f}"`, {
-                cwd: resolve(this.teammatesDir, ".."),
-                stdio: "pipe",
-              });
-            } catch {
-              // Best effort — file may already be clean
-            }
-          }
-        }
-        this.chatView.updateFeedLine(
-          v.actionIdx,
-          this.makeSpan({
-            text: `  reverted ${v.files.length} file(s)`,
-            style: { fg: theme().success },
-          }),
-        );
-        this.refreshView();
-      }
-      return;
-    }
-
-    const allowMatch = actionId.match(/^allow-(violation-.+)$/);
-    if (allowMatch) {
-      const vId = allowMatch[1];
-      const idx = this.pendingViolations.findIndex((v) => v.id === vId);
-      if (idx >= 0 && this.chatView) {
-        const v = this.pendingViolations.splice(idx, 1)[0];
-        this.chatView.updateFeedLine(
-          v.actionIdx,
-          this.makeSpan({
-            text: "  allowed",
-            style: { fg: theme().textDim },
-          }),
-        );
-        this.refreshView();
-      }
-      return;
-    }
+    this.handoffManager.handleViolationAction(actionId);
   }
-
-  /** Handle bulk handoff actions. */
   private handleBulkHandoff(action: string): void {
-    if (!this.chatView) return;
-    const t = theme();
-    const isApprove = action === "Approve all" || action === "Always approve";
-
-    if (action === "Always approve") {
-      this.autoApproveHandoffs = true;
-    }
-
-    for (const h of this.pendingHandoffs) {
-      if (isApprove) {
-        this.taskQueue.push({
-          type: "agent",
-          teammate: h.envelope.to,
-          task: h.envelope.task,
-          threadId: h.threadId,
-        });
-        if (h.threadId != null) {
-          const thread = this.getThread(h.threadId);
-          if (thread) thread.pendingAgents.add(h.envelope.to);
-        }
-        const label =
-          action === "Always approve"
-            ? "  automatically approved"
-            : "  approved";
-        this.chatView.updateFeedLine(
-          h.approveIdx,
-          this.makeSpan({ text: label, style: { fg: t.success } }),
-        );
-      } else {
-        this.chatView.updateFeedLine(
-          h.approveIdx,
-          this.makeSpan({ text: "  rejected", style: { fg: t.error } }),
-        );
-      }
-    }
-    this.pendingHandoffs = [];
-    if (isApprove) this.kickDrain();
-    this.showHandoffDropdown();
+    this.handoffManager.handleBulkHandoff(action);
+  }
+  private get pendingHandoffs() {
+    return this.handoffManager.pendingHandoffs;
+  }
+  private get autoApproveHandoffs() {
+    return this.handoffManager.autoApproveHandoffs;
   }
 
-  // ─── Retro Phase 2: proposal approval ─────────────────────────
-
-  /** Parse retro proposals from agent output and render approval UI. */
+  // ── Retro management (delegated to RetroManager) ────────────────
   private handleRetroResult(result: TaskResult): void {
-    const raw = result.rawOutput ?? "";
-    const proposals = this.parseRetroProposals(raw);
-    if (proposals.length === 0) return;
-
-    const t = theme();
-    const teammate = result.teammate;
-    const retroId = `retro-${Date.now()}`;
-
-    this.feedLine();
-    this.feedLine(
-      concat(
-        tp.accent(
-          `  ${proposals.length} SOUL.md proposal${proposals.length > 1 ? "s" : ""}`,
-        ),
-        tp.muted(" — approve or reject each:"),
-      ),
-    );
-
-    for (let i = 0; i < proposals.length; i++) {
-      const p = proposals[i];
-      const pId = `${retroId}-${i}`;
-
-      this.feedLine();
-      this.feedLine(tp.text(`  Proposal ${i + 1}: ${p.title}`));
-      this.feedLine(tp.muted(`    Section: ${p.section}`));
-      if (p.before === "(new entry)") {
-        this.feedLine(tp.muted("    Before: (new entry)"));
-      } else {
-        this.feedLine(tp.muted(`    Before: ${p.before}`));
-      }
-      this.feedLine(concat(tp.muted("    After: "), tp.text(p.after)));
-      this.feedLine(tp.muted(`    Why: ${p.why}`));
-
-      if (this.chatView) {
-        const actionIdx = this.chatView.feedLineCount;
-        this.chatView.appendActionList([
-          {
-            id: `retro-approve-${pId}`,
-            normalStyle: this.makeSpan({
-              text: "    [approve]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.makeSpan({
-              text: "    [approve]",
-              style: { fg: t.accent },
-            }),
-          },
-          {
-            id: `retro-reject-${pId}`,
-            normalStyle: this.makeSpan({
-              text: " [reject]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.makeSpan({
-              text: " [reject]",
-              style: { fg: t.accent },
-            }),
-          },
-        ]);
-        this.pendingRetroProposals.push({
-          id: pId,
-          teammate,
-          index: i + 1,
-          title: p.title,
-          section: p.section,
-          before: p.before,
-          after: p.after,
-          why: p.why,
-          actionIdx,
-        });
-      }
-    }
-
-    this.feedLine();
-    this.showRetroDropdown();
-    this.refreshView();
+    this.retroManager.handleRetroResult(result);
   }
-
-  /** Parse Proposal N blocks from retro output. */
-  private parseRetroProposals(text: string): {
-    title: string;
-    section: string;
-    before: string;
-    after: string;
-    why: string;
-  }[] {
-    const proposals: {
-      title: string;
-      section: string;
-      before: string;
-      after: string;
-      why: string;
-    }[] = [];
-    // Match **Proposal N: title** blocks
-    const proposalPattern = /\*\*Proposal\s+\d+[:.]\s*(.+?)\*\*/gi;
-    let match: RegExpExecArray | null;
-    const positions: { title: string; start: number }[] = [];
-    while ((match = proposalPattern.exec(text)) !== null) {
-      positions.push({ title: match[1].trim(), start: match.index });
-    }
-
-    for (let i = 0; i < positions.length; i++) {
-      const end =
-        i + 1 < positions.length ? positions[i + 1].start : text.length;
-      const block = text.slice(positions[i].start, end);
-
-      const section = this.extractField(block, "Section") || "Unknown";
-      const before = this.extractField(block, "Before") || "(new entry)";
-      const after = this.extractField(block, "After") || "";
-      const why = this.extractField(block, "Why") || "";
-
-      if (after) {
-        proposals.push({
-          title: positions[i].title,
-          section,
-          before,
-          after,
-          why,
-        });
-      }
-    }
-    return proposals;
-  }
-
-  /** Extract a **Field:** value from a proposal block. */
-  private extractField(block: string, field: string): string {
-    // Match "- **Field:** value" or "**Field:** value" across potential line breaks
-    const pattern = new RegExp(
-      `\\*\\*${field}:\\*\\*\\s*(.+?)(?=\\n\\s*[-*]\\s*\\*\\*|\\n\\s*\\n|$)`,
-      "is",
-    );
-    const m = block.match(pattern);
-    if (!m) return "";
-    // Clean up: remove backticks and trim
-    return m[1].trim().replace(/^`+|`+$/g, "");
-  }
-
-  /** Show/hide the retro approval dropdown based on pending proposals. */
   private showRetroDropdown(): void {
-    if (!this.chatView) return;
-    if (
-      this.pendingRetroProposals.length > 0 &&
-      this.pendingHandoffs.length === 0
-    ) {
-      const n = this.pendingRetroProposals.length;
-      const items: {
-        label: string;
-        description: string;
-        completion: string;
-      }[] = [];
-      items.push({
-        label: "approve all",
-        description: `approve ${n} SOUL.md proposal${n > 1 ? "s" : ""}`,
-        completion: "/approve-retro",
-      });
-      items.push({
-        label: "reject all",
-        description: `reject ${n} SOUL.md proposal${n > 1 ? "s" : ""}`,
-        completion: "/reject-retro",
-      });
-      this.chatView.showDropdown(items);
-    } else if (this.pendingHandoffs.length === 0) {
-      this.chatView.hideDropdown();
-    }
-    this.refreshView();
+    this.retroManager.showRetroDropdown();
   }
-
-  /** Handle retro approve/reject actions (individual clicks). */
   private handleRetroAction(actionId: string): void {
-    const approveMatch = actionId.match(/^retro-approve-(.+)$/);
-    if (approveMatch) {
-      const pId = approveMatch[1];
-      const idx = this.pendingRetroProposals.findIndex((p) => p.id === pId);
-      if (idx >= 0 && this.chatView) {
-        const p = this.pendingRetroProposals.splice(idx, 1)[0];
-        this.chatView.updateFeedLine(
-          p.actionIdx,
-          this.makeSpan({
-            text: "    approved",
-            style: { fg: theme().success },
-          }),
-        );
-        this.queueRetroApply(p.teammate, [p]);
-        this.showRetroDropdown();
-      }
-      return;
-    }
-    const rejectMatch = actionId.match(/^retro-reject-(.+)$/);
-    if (rejectMatch) {
-      const pId = rejectMatch[1];
-      const idx = this.pendingRetroProposals.findIndex((p) => p.id === pId);
-      if (idx >= 0 && this.chatView) {
-        const p = this.pendingRetroProposals.splice(idx, 1)[0];
-        this.chatView.updateFeedLine(
-          p.actionIdx,
-          this.makeSpan({ text: "    rejected", style: { fg: theme().error } }),
-        );
-        this.showRetroDropdown();
-      }
-      return;
-    }
+    this.retroManager.handleRetroAction(actionId);
   }
-
-  /** Handle bulk retro approve/reject. */
   private handleBulkRetro(action: string): void {
-    if (!this.chatView) return;
-    const t = theme();
-    const isApprove = action === "Approve all";
-    const grouped = new Map<string, typeof this.pendingRetroProposals>();
-
-    for (const p of this.pendingRetroProposals) {
-      if (isApprove) {
-        this.chatView.updateFeedLine(
-          p.actionIdx,
-          this.makeSpan({ text: "    approved", style: { fg: t.success } }),
-        );
-        const list = grouped.get(p.teammate) || [];
-        list.push(p);
-        grouped.set(p.teammate, list);
-      } else {
-        this.chatView.updateFeedLine(
-          p.actionIdx,
-          this.makeSpan({ text: "    rejected", style: { fg: t.error } }),
-        );
-      }
-    }
-
-    if (isApprove) {
-      for (const [teammate, proposals] of grouped) {
-        this.queueRetroApply(teammate, proposals);
-      }
-    }
-
-    this.pendingRetroProposals = [];
-    this.showRetroDropdown();
+    this.retroManager.handleBulkRetro(action);
   }
-
-  /** Queue a follow-up task for the teammate to apply approved SOUL.md changes. */
-  private queueRetroApply(
-    teammate: string,
-    proposals: typeof this.pendingRetroProposals,
-  ): void {
-    const changes = proposals
-      .map(
-        (p) =>
-          `- **Proposal ${p.index}: ${p.title}**\n  - Section: ${p.section}\n  - Before: ${p.before}\n  - After: ${p.after}`,
-      )
-      .join("\n\n");
-
-    const applyPrompt = `The user approved the following SOUL.md changes from your retrospective. Apply them now.
-
-**Edit your SOUL.md file** (\`.teammates/${teammate}/SOUL.md\`) to incorporate these changes:
-
-${changes}
-
-After editing SOUL.md, record a brief summary of the retro outcome in your daily log: which proposals were approved and what changed.
-
-Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily log.`;
-
-    this.taskQueue.push({ type: "agent", teammate, task: applyPrompt });
-    this.feedLine(
-      concat(
-        tp.muted("  Queued SOUL.md update for "),
-        tp.accent(`@${teammate}`),
-      ),
-    );
-    this.refreshView();
-    this.kickDrain();
+  private get pendingRetroProposals() {
+    return this.retroManager.pendingRetroProposals;
   }
 
   /** Refresh the ChatView app if active. */
@@ -3317,414 +2553,33 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.feedLine();
   }
 
-  // ─── Wordwheel ─────────────────────────────────────────────────────
-
-  private getUniqueCommands(): SlashCommand[] {
-    const seen = new Set<string>();
-    const result: SlashCommand[] = [];
-    for (const [, cmd] of this.commands) {
-      if (seen.has(cmd.name)) continue;
-      seen.add(cmd.name);
-      result.push(cmd);
-    }
-    return result;
+  // ─── Wordwheel (delegated to Wordwheel) ───────────────────────────
+  private get wordwheelItems() {
+    return this.wordwheel.items;
   }
-
+  private set wordwheelItems(v) {
+    this.wordwheel.items = v;
+  }
+  private get wordwheelIndex() {
+    return this.wordwheel.index;
+  }
+  private set wordwheelIndex(v) {
+    this.wordwheel.index = v;
+  }
   private clearWordwheel(): void {
-    if (this.chatView) {
-      this.chatView.hideDropdown();
-      // Don't refreshView here — caller will either showDropdown + refresh,
-      // or the next App render pass will pick up the cleared state.
-    } else {
-      this.input.clearDropdown();
-    }
+    this.wordwheel.clear();
   }
-
-  private writeWordwheel(lines: string[]): void {
-    if (this.chatView) {
-      // Lines are pre-formatted for PromptInput — convert to DropdownItems
-      // This path is used for static usage hints; wordwheel items use showDropdown directly
-      this.chatView.showDropdown(
-        lines.map((l) => ({
-          label: stripAnsi(l).trim(),
-          description: "",
-          completion: "",
-        })),
-      );
-      this.refreshView();
-    } else {
-      this.input.setDropdown(lines);
-    }
-  }
-
-  /**
-   * Which argument positions are teammate-name completable per command.
-   * Key = command name, value = set of 0-based arg positions that take a teammate.
-   */
-  private static readonly TEAMMATE_ARG_POSITIONS: Record<string, Set<number>> =
-    {
-      assign: new Set([0]),
-      handoff: new Set([0, 1]),
-      compact: new Set([0]),
-      debug: new Set([0]),
-      retro: new Set([0]),
-      interrupt: new Set([0]),
-      int: new Set([0]),
-    };
-
-  /** Build param-completion items for the current line, if any. */
-  private getParamItems(
-    cmdName: string,
-    argsBefore: string,
-    partial: string,
-  ): DropdownItem[] {
-    // Script subcommand + name completion for /script
-    if (cmdName === "script") {
-      const completedArgs = argsBefore.trim()
-        ? argsBefore.trim().split(/\s+/).length
-        : 0;
-      const lower = partial.toLowerCase();
-
-      if (completedArgs === 0) {
-        // First arg — suggest subcommands
-        const subs = [
-          { name: "list", desc: "List saved scripts" },
-          { name: "run", desc: "Run an existing script" },
-        ];
-        return subs
-          .filter((s) => s.name.startsWith(lower))
-          .map((s) => ({
-            label: s.name,
-            description: s.desc,
-            completion: `/script ${s.name} `,
-          }));
-      }
-
-      if (completedArgs === 1 && argsBefore.trim() === "run") {
-        // Second arg after "run" — suggest script filenames
-        const scriptsDir = join(this.teammatesDir, this.selfName, "scripts");
-        let files: string[] = [];
-        try {
-          files = readdirSync(scriptsDir).filter((f) => !f.startsWith("."));
-        } catch {
-          // directory doesn't exist yet
-        }
-        return files
-          .filter((f) => f.toLowerCase().startsWith(lower))
-          .map((f) => ({
-            label: f,
-            description: "saved script",
-            completion: `/script run ${f}`,
-          }));
-      }
-
-      return [];
-    }
-
-    // Service name completion for /configure
-    if (cmdName === "configure" || cmdName === "config") {
-      const completedArgs = argsBefore.trim()
-        ? argsBefore.trim().split(/\s+/).length
-        : 0;
-      if (completedArgs > 0) return [];
-      const lower = partial.toLowerCase();
-      return TeammatesREPL.CONFIGURABLE_SERVICES.filter((s) =>
-        s.startsWith(lower),
-      ).map((s) => ({
-        label: s,
-        description: `configure ${s}`,
-        completion: `/${cmdName} ${s} `,
-      }));
-    }
-
-    const positions = TeammatesREPL.TEAMMATE_ARG_POSITIONS[cmdName];
-    if (!positions) return [];
-
-    // Count how many complete args precede the current partial
-    const completedArgs = argsBefore.trim()
-      ? argsBefore.trim().split(/\s+/).length
-      : 0;
-    if (!positions.has(completedArgs)) return [];
-
-    const teammates = this.orchestrator.listTeammates();
-    const lower = partial.toLowerCase();
-    const items: DropdownItem[] = [];
-
-    // Add "everyone" option at the top (only for first arg position)
-    if (completedArgs === 0 && "everyone".startsWith(lower)) {
-      const linePrefix = `/${cmdName} ${argsBefore ? argsBefore : ""}`;
-      items.push({
-        label: "everyone",
-        description: "all teammates",
-        completion: `${linePrefix}everyone `,
-      });
-    }
-
-    for (const name of teammates) {
-      if (!name.toLowerCase().startsWith(lower)) continue;
-      const t = this.orchestrator.getRegistry().get(name);
-      const linePrefix = `/${cmdName} ${argsBefore ? argsBefore : ""}`;
-      items.push({
-        label: name,
-        description: t?.role ?? "",
-        completion: `${linePrefix + name} `,
-      });
-    }
-    return items;
-  }
-
-  /**
-   * Return dim placeholder hint text for the current input value.
-   * e.g. typing "/log" shows " <teammate>", typing "/log b" shows nothing.
-   */
   private getCommandHint(value: string): string | null {
-    const trimmed = value.trimStart();
-    if (!trimmed.startsWith("/")) return null;
-
-    // Extract command name and what's been typed after it
-    const spaceIdx = trimmed.indexOf(" ");
-    const cmdName =
-      spaceIdx < 0 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
-    const cmd = this.commands.get(cmdName);
-    if (!cmd) return null;
-
-    // Extract placeholder tokens from usage (e.g. "/log [teammate]" → ["[teammate]"])
-    const usageParts = cmd.usage.split(/\s+/).slice(1); // drop the "/command" part
-    if (usageParts.length === 0) return null;
-
-    // Count how many args the user has typed after the command
-    const afterCmd = spaceIdx < 0 ? "" : trimmed.slice(spaceIdx + 1);
-    const typedArgs = afterCmd
-      .trim()
-      .split(/\s+/)
-      .filter((s) => s.length > 0);
-
-    // Show remaining placeholders
-    const remaining = usageParts.slice(typedArgs.length);
-    if (remaining.length === 0) return null;
-
-    // Add a leading space if the value doesn't already end with one
-    const pad = value.endsWith(" ") ? "" : " ";
-    return pad + remaining.join(" ");
+    return this.wordwheel.getCommandHint(value);
   }
-
-  /**
-   * Find the @mention token the cursor is currently inside, if any.
-   * Returns { before, partial, atPos } or null.
-   */
-  private findAtMention(
-    line: string,
-    cursor: number,
-  ): { before: string; partial: string; atPos: number } | null {
-    return findAtMention(line, cursor);
-  }
-
-  /** Build @mention teammate completion items. */
-  private getAtMentionItems(
-    line: string,
-    before: string,
-    partial: string,
-    atPos: number,
-  ): DropdownItem[] {
-    const teammates = this.orchestrator.listTeammates();
-    const lower = partial.toLowerCase();
-    const after = line.slice(atPos + 1 + partial.length);
-    const items: DropdownItem[] = [];
-
-    // @everyone alias
-    if ("everyone".startsWith(lower)) {
-      items.push({
-        label: "@everyone",
-        description: "Send to all teammates",
-        completion: `${before}@everyone ${after.replace(/^\s+/, "")}`,
-      });
-    }
-
-    for (const name of teammates) {
-      // For user avatar, display and match using the adapter name alias
-      const display = name === this.userAlias ? this.adapterName : name;
-      if (display.toLowerCase().startsWith(lower)) {
-        const t = this.orchestrator.getRegistry().get(name);
-        items.push({
-          label: `@${display}`,
-          description: t?.role ?? "",
-          completion: `${before}@${display} ${after.replace(/^\s+/, "")}`,
-        });
-      }
-    }
-    return items;
-  }
-
-  /** Recompute matches and draw the wordwheel. */
   private updateWordwheel(): void {
-    this.clearWordwheel();
-    const line: string = this.chatView
-      ? this.chatView.inputValue
-      : this.input.line;
-    const cursor: number = this.chatView
-      ? this.chatView.inputValue.length
-      : this.input.cursor;
-
-    // ── @mention anywhere in the line ──────────────────────────────
-    const mention = this.findAtMention(line, cursor);
-    if (mention) {
-      this.wordwheelItems = this.getAtMentionItems(
-        line,
-        mention.before,
-        mention.partial,
-        mention.atPos,
-      );
-      if (this.wordwheelItems.length > 0) {
-        if (this.wordwheelIndex >= this.wordwheelItems.length) {
-          this.wordwheelIndex = this.wordwheelItems.length - 1;
-        }
-        this.renderItems();
-        return;
-      }
-    }
-
-    // ── #thread completion ────────────────────────────────────────
-    const hashMatch = line.match(/^#(\d*)$/);
-    if (hashMatch && this.threads.size > 0) {
-      const partial = hashMatch[1];
-      const items: DropdownItem[] = [];
-      for (const [id, thread] of this.threads) {
-        const idStr = String(id);
-        if (partial && !idStr.startsWith(partial)) continue;
-        const origin =
-          thread.originMessage.length > 50
-            ? `${thread.originMessage.slice(0, 47)}…`
-            : thread.originMessage;
-        items.push({
-          label: `#${id}`,
-          description: origin,
-          completion: `#${id} `,
-        });
-      }
-      if (items.length > 0) {
-        this.wordwheelItems = items;
-        if (this.wordwheelIndex >= items.length) {
-          this.wordwheelIndex = items.length - 1;
-        }
-        this.renderItems();
-        return;
-      }
-    }
-
-    // ── /command completion ─────────────────────────────────────────
-    if (!line.startsWith("/") || line.length < 2) {
-      this.wordwheelItems = [];
-      this.wordwheelIndex = -1;
-      return;
-    }
-
-    const spaceIdx = line.indexOf(" ");
-
-    if (spaceIdx > 0) {
-      // Command is known — check for param completions
-      const cmdName = line.slice(1, spaceIdx);
-      const cmd = this.commands.get(cmdName);
-      if (!cmd) {
-        this.wordwheelItems = [];
-        this.wordwheelIndex = -1;
-        return;
-      }
-
-      const afterCmd = line.slice(spaceIdx + 1);
-      // Split into completed args + current partial token
-      const lastSpace = afterCmd.lastIndexOf(" ");
-      const argsBefore = lastSpace >= 0 ? afterCmd.slice(0, lastSpace + 1) : "";
-      const partial = lastSpace >= 0 ? afterCmd.slice(lastSpace + 1) : afterCmd;
-
-      this.wordwheelItems = this.getParamItems(cmdName, argsBefore, partial);
-
-      if (this.wordwheelItems.length > 0) {
-        if (this.wordwheelIndex >= this.wordwheelItems.length) {
-          this.wordwheelIndex = this.wordwheelItems.length - 1;
-        }
-        this.renderItems();
-      } else {
-        // No param completions — hide dropdown
-        this.wordwheelItems = [];
-        this.wordwheelIndex = -1;
-      }
-      return;
-    }
-
-    // Partial command — find matching commands
-    const partial = line.slice(1).toLowerCase();
-    this.wordwheelItems = this.getUniqueCommands()
-      .filter(
-        (c) =>
-          c.name.startsWith(partial) ||
-          c.aliases.some((a) => a.startsWith(partial)),
-      )
-      .map((c) => {
-        const hasParams = /^\/\S+\s+.+$/.test(c.usage);
-        return {
-          label: `/${c.name}`,
-          description: c.description,
-          completion: hasParams ? `/${c.name} ` : `/${c.name}`,
-        };
-      });
-
-    if (this.wordwheelItems.length === 0) {
-      this.wordwheelIndex = -1;
-      return;
-    }
-
-    if (this.wordwheelIndex >= this.wordwheelItems.length) {
-      this.wordwheelIndex = this.wordwheelItems.length - 1;
-    }
-
-    this.renderItems();
+    this.wordwheel.update();
   }
-
-  /** Render the current wordwheelItems list with selection highlight. */
   private renderItems(): void {
-    if (this.chatView) {
-      this.chatView.showDropdown(this.wordwheelItems);
-      // Sync selection index
-      if (this.wordwheelIndex >= 0) {
-        while (this.chatView.dropdownIndex < this.wordwheelIndex)
-          this.chatView.dropdownDown();
-        while (this.chatView.dropdownIndex > this.wordwheelIndex)
-          this.chatView.dropdownUp();
-      }
-      this.refreshView();
-    } else {
-      this.writeWordwheel(
-        this.wordwheelItems.map((item, i) => {
-          const prefix = i === this.wordwheelIndex ? chalk.cyan("▸ ") : "  ";
-          const label = item.label.padEnd(14);
-          if (i === this.wordwheelIndex) {
-            return (
-              prefix +
-              chalk.cyanBright.bold(label) +
-              " " +
-              chalk.white(item.description)
-            );
-          }
-          return `${prefix + chalk.cyan(label)} ${chalk.gray(item.description)}`;
-        }),
-      );
-    }
+    this.wordwheel.render();
   }
-
-  /** Accept the currently highlighted item into the input line. */
   private acceptWordwheelSelection(): void {
-    const item = this.wordwheelItems[this.wordwheelIndex];
-    if (!item) return;
-    this.clearWordwheel();
-    if (this.chatView) {
-      this.chatView.inputValue = item.completion;
-    } else {
-      this.input.setLine(item.completion);
-    }
-    this.wordwheelItems = [];
-    this.wordwheelIndex = -1;
-    // Re-render for next param or usage hint
-    this.updateWordwheel();
+    this.wordwheel.acceptSelection();
   }
 
   // ─── Lifecycle ────────────────────────────────────────────────────
@@ -3818,6 +2673,29 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     // Register commands
     this.registerCommands();
 
+    // Initialize extracted modules — they reference properties set above
+    this.handoffManager = new HandoffManager({
+      chatView: this.chatView,
+      feedLine: (text?) => this.feedLine(text),
+      refreshView: () => this.refreshView(),
+      makeSpan: (...segs) => this.makeSpan(...segs),
+      wordWrap: (text, maxW) => this.wordWrap(text, maxW),
+      listTeammates: () => this.orchestrator.listTeammates(),
+      getThread: (id) => this.getThread(id),
+      taskQueue: this.taskQueue,
+      kickDrain: () => this.kickDrain(),
+      teammatesDir: this.teammatesDir,
+    });
+    this.retroManager = new RetroManager({
+      chatView: this.chatView,
+      feedLine: (text?) => this.feedLine(text),
+      refreshView: () => this.refreshView(),
+      makeSpan: (...segs) => this.makeSpan(...segs),
+      taskQueue: this.taskQueue,
+      kickDrain: () => this.kickDrain(),
+      hasPendingHandoffs: () => this.handoffManager.pendingHandoffs.length > 0,
+    });
+
     // Create PromptInput — consolonia-based replacement for readline.
     // Uses raw stdin + InputProcessor for proper escape/paste/mouse parsing.
     // Kept as a fallback for pre-onboarding prompts; the main REPL uses ChatView.
@@ -3871,7 +2749,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     // ── Detect service statuses ────────────────────────────────────────
 
-    this.serviceStatuses = this.detectServices();
+    this.serviceStatuses = detectServices();
 
     // ── Build animated banner for ChatView ─────────────────────────────
 
@@ -3990,7 +2868,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         tp.muted("  "),
         tp.text(this.adapterName),
         tp.muted("  "),
-        tp.dim(TeammatesREPL.truncatePath(dirname(this.teammatesDir))),
+        tp.dim(StatusTracker.truncatePath(dirname(this.teammatesDir))),
       ),
       footerRight: tp.muted("? /help "),
       footerStyle: { fg: t.textDim },
@@ -4001,7 +2879,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       tp.muted("  "),
       tp.text(this.adapterName),
       tp.muted("  "),
-      tp.dim(TeammatesREPL.truncatePath(dirname(this.teammatesDir))),
+      tp.dim(StatusTracker.truncatePath(dirname(this.teammatesDir))),
     );
     this.defaultFooterRight = tp.muted("? /help ");
 
@@ -4194,6 +3072,54 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       root: this.chatView,
       alternateScreen: true,
       mouse: true,
+    });
+
+    // Initialize view-dependent modules now that chatView + app exist
+    this.statusTracker = new StatusTracker({
+      chatView: this.chatView,
+      app: this.app,
+      input: this.input,
+      get selfName() {
+        return selfNameFn();
+      },
+      get adapterName() {
+        return adapterNameFn();
+      },
+    });
+    // Re-bind handoff/retro managers with the real chatView
+    (this.handoffManager as any).view.chatView = this.chatView;
+    (this.retroManager as any).view.chatView = this.chatView;
+
+    // Closures to bridge private accessors into the view interfaces
+    const selfNameFn = () => this.selfName;
+    const adapterNameFn = () => this.adapterName;
+    const userAliasFn = () => this.userAlias;
+    const teammateDirFn = () => this.teammatesDir;
+    const threadsFn = () => this.threads;
+
+    this.wordwheel = new Wordwheel({
+      chatView: this.chatView,
+      input: this.input,
+      commands: this.commands,
+      listTeammates: () => this.orchestrator.listTeammates(),
+      getTeammateRole: (name) =>
+        this.orchestrator.getRegistry().get(name)?.role ?? "",
+      get selfName() {
+        return selfNameFn();
+      },
+      get adapterName() {
+        return adapterNameFn();
+      },
+      get userAlias() {
+        return userAliasFn();
+      },
+      get teammatesDir() {
+        return teammateDirFn();
+      },
+      get threads() {
+        return threadsFn();
+      },
+      refreshView: () => this.refreshView(),
     });
 
     // Run the app — this takes over the terminal.
@@ -4570,211 +3496,17 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.refreshView();
   }
 
-  // ─── Service detection ────────────────────────────────────────────
+  // ─── Service detection/config (delegated to service-config.ts) ────
 
-  private detectGitHub(): ServiceStatus {
-    try {
-      execSync("gh --version", { stdio: "pipe" });
-    } catch {
-      return "missing";
-    }
-    try {
-      execSync("gh auth status", { stdio: "pipe" });
-      return "configured";
-    } catch {
-      return "not-configured";
-    }
-  }
-
-  private detectServices(): ServiceInfo[] {
-    return [
-      { name: "recall", status: "bundled" },
-      { name: "GitHub", status: this.detectGitHub() },
-    ];
-  }
-
-  // ─── /configure command ─────────────────────────────────────────
-
-  private static readonly CONFIGURABLE_SERVICES = ["github"];
-
-  private async cmdConfigure(argsStr: string): Promise<void> {
-    const serviceName = argsStr.trim().toLowerCase();
-
-    if (!serviceName) {
-      // Show status table
-      this.feedLine();
-      this.feedLine(tp.bold("  Services:"));
-      for (const svc of this.serviceStatuses) {
-        const ok = svc.status === "bundled" || svc.status === "configured";
-        const icon = ok ? "● " : svc.status === "not-configured" ? "◐ " : "○ ";
-        const color = ok ? tp.success : tp.warning;
-        const label =
-          svc.status === "bundled"
-            ? "bundled"
-            : svc.status === "configured"
-              ? "configured"
-              : svc.status === "not-configured"
-                ? "not configured"
-                : "missing";
-        this.feedLine(
-          concat(
-            tp.text("    "),
-            color(icon),
-            color(svc.name.padEnd(12)),
-            tp.muted(label),
-          ),
-        );
-      }
-      this.feedLine();
-      this.feedLine(tp.muted("  Use /configure [service] to set up a service"));
-      this.feedLine();
-      this.refreshView();
-      return;
-    }
-
-    if (serviceName === "github") {
-      await this.configureGitHub();
-    } else {
-      this.feedLine(tp.warning(`  Unknown service: ${serviceName}`));
-      this.feedLine(
-        tp.muted(
-          `  Available: ${TeammatesREPL.CONFIGURABLE_SERVICES.join(", ")}`,
-        ),
-      );
-      this.refreshView();
-    }
-  }
-
-  private async configureGitHub(): Promise<void> {
-    // Step 1: Check if gh is installed
-    let ghInstalled = false;
-    try {
-      execSync("gh --version", { stdio: "pipe" });
-      ghInstalled = true;
-    } catch {
-      // not installed
-    }
-
-    if (!ghInstalled) {
-      this.feedLine();
-      this.feedLine(tp.warning("  GitHub CLI is not installed."));
-      this.feedLine();
-
-      const plat = process.platform;
-      this.feedLine(tp.text("  Run this in another terminal:"));
-      if (plat === "win32") {
-        this.feedCommand("winget install --id GitHub.cli");
-      } else if (plat === "darwin") {
-        this.feedCommand("brew install gh");
-      } else {
-        this.feedCommand("sudo apt install gh");
-        this.feedLine(tp.muted("    (or see https://cli.github.com)"));
-      }
-
-      this.feedLine();
-      const answer = await this.askInline(
-        "Press Enter when done (or n to skip)",
-      );
-      if (answer.toLowerCase() === "n") {
-        this.feedLine(tp.muted("  Skipped. Run /configure github when ready."));
-        this.refreshView();
-        return;
-      }
-
-      // Re-check
-      try {
-        execSync("gh --version", { stdio: "pipe" });
-        ghInstalled = true;
-        this.feedLine(tp.success("  ✓ GitHub CLI installed"));
-      } catch {
-        this.feedLine(
-          tp.error(
-            "  GitHub CLI still not found. You may need to restart your terminal.",
-          ),
-        );
-        this.refreshView();
-        return;
-      }
-    } else {
-      this.feedLine();
-      this.feedLine(tp.success("  ✓ GitHub CLI installed"));
-    }
-
-    // Step 2: Check auth
-    let authed = false;
-    try {
-      execSync("gh auth status", { stdio: "pipe" });
-      authed = true;
-    } catch {
-      // not authenticated
-    }
-
-    if (!authed) {
-      this.feedLine();
-      this.feedLine(tp.text("  Run this in another terminal to authenticate:"));
-      this.feedCommand("gh auth login --web --git-protocol https");
-      this.feedLine();
-      this.feedLine(
-        tp.muted("  This will open your browser for GitHub OAuth."),
-      );
-      this.feedLine();
-
-      const answer = await this.askInline(
-        "Press Enter when done (or n to skip)",
-      );
-      if (answer.toLowerCase() === "n") {
-        this.feedLine(tp.muted("  Skipped. Run /configure github when ready."));
-        this.refreshView();
-        this.updateServiceStatus("GitHub", "not-configured");
-        return;
-      }
-
-      // Verify
-      try {
-        execSync("gh auth status", { stdio: "pipe" });
-        authed = true;
-      } catch {
-        this.feedLine(
-          tp.error(
-            "  Authentication could not be verified. Try again with /configure github",
-          ),
-        );
-        this.refreshView();
-        this.updateServiceStatus("GitHub", "not-configured");
-        return;
-      }
-    }
-
-    // Get username for confirmation
-    let username = "";
-    try {
-      username = execSync("gh api user --jq .login", {
-        stdio: "pipe",
-        encoding: "utf-8",
-      }).trim();
-    } catch {
-      // non-critical
-    }
-
-    this.feedLine(
-      tp.success(
-        `  ✓ GitHub configured${username ? ` — authenticated as @${username}` : ""}`,
-      ),
-    );
-    this.feedLine();
-    this.refreshView();
-    this.updateServiceStatus("GitHub", "configured");
-  }
-
-  private updateServiceStatus(name: string, status: ServiceStatus): void {
-    const svc = this.serviceStatuses.find((s) => s.name === name);
-    if (svc) {
-      svc.status = status;
-      if (this.banner) {
-        this.banner.updateServices(this.serviceStatuses);
-        this.refreshView();
-      }
-    }
+  private get serviceView() {
+    return {
+      chatView: this.chatView,
+      feedLine: (text?: string | StyledSpan) => this.feedLine(text),
+      feedCommand: (command: string) => this.feedCommand(command),
+      refreshView: () => this.refreshView(),
+      askInline: (prompt: string) => this.askInline(prompt),
+      banner: this.banner,
+    };
   }
 
   private registerCommands(): void {
@@ -4885,7 +3617,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         aliases: ["config"],
         usage: "/configure [service]",
         description: "Configure external services (github)",
-        run: (args) => this.cmdConfigure(args),
+        run: (args) =>
+          cmdConfigure(args, this.serviceStatuses, this.serviceView),
       },
       {
         name: "exit",
@@ -5786,7 +4519,8 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     this.taskQueue.length = 0;
     this.agentActive.clear();
     this.pastedTexts.clear();
-    this.pendingRetroProposals = [];
+    this.handoffManager.clear();
+    this.retroManager.clear();
     this.threads.clear();
     this.nextThreadId = 1;
     this.focusedThreadId = null;
