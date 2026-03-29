@@ -293,7 +293,8 @@ class TeammatesREPL {
       this._copyContexts.set(copyId, cleaned);
     }
 
-    // Insert subject line as action list with inline [show/hide] [copy]
+    // Insert subject line as action list with inline [hide] [copy]
+    // (starts as [hide] since body is visible; toggles to [show] when collapsed)
     const displayName =
       result.teammate === this.selfName ? this.adapterName : result.teammate;
     const subjectActions = [
@@ -302,12 +303,12 @@ class TeammatesREPL {
         normalStyle: this.makeSpan(
           { text: `  @${displayName}: `, style: { fg: t.accent } },
           { text: subject, style: { fg: t.text } },
-          { text: "  [show/hide]", style: { fg: t.textDim } },
+          { text: "  [hide]", style: { fg: t.textDim } },
         ),
         hoverStyle: this.makeSpan(
           { text: `  @${displayName}: `, style: { fg: t.accent } },
           { text: subject, style: { fg: t.text } },
-          { text: "  [show/hide]", style: { fg: t.accent } },
+          { text: "  [hide]", style: { fg: t.accent } },
         ),
       },
       {
@@ -356,7 +357,15 @@ class TeammatesREPL {
 
     // Track body end for individual collapse
     const bodyEndIdx = container.getInsertPoint();
-    container.trackReplyBody(replyKey, headerIdx, bodyStartIdx, bodyEndIdx);
+    container.trackReplyBody(
+      replyKey,
+      headerIdx,
+      bodyStartIdx,
+      bodyEndIdx,
+      displayName,
+      subject,
+      copyId,
+    );
 
     // Render handoffs inside thread
     if (result.handoffs.length > 0) {
@@ -401,6 +410,13 @@ class TeammatesREPL {
         ],
         this.shiftAllContainers,
       );
+
+      // Show/hide thread-level actions based on whether work is still in progress
+      if (container.placeholderCount === 0) {
+        container.showThreadActions(this.chatView);
+      } else {
+        container.hideThreadActions(this.chatView);
+      }
     }
 
     // Update thread header
@@ -759,6 +775,86 @@ class TeammatesREPL {
     this.chatView.updateFeedLine(container.headerIdx, padded);
   }
 
+  /**
+   * Render a user reply message inside a thread container, including a dispatch line.
+   * Used when a user sends a reply to an existing thread (vs. creating a new thread).
+   */
+  private renderThreadReply(
+    threadId: number,
+    displayText: string,
+    targetNames: string[],
+  ): void {
+    if (!this.chatView) return;
+    const container = this.containers.get(threadId);
+    if (!container) return;
+    const t = theme();
+    const bg = this._userBg;
+    const termW = (process.stdout.columns || 80) - 1;
+
+    // Blank line separator before the reply block
+    container.insertLine(this.chatView, "", this.shiftAllContainers);
+
+    // Render user message lines inside the thread (user-styled, indented 2 spaces)
+    const label = `  ${this.selfName}: `;
+    const lines = displayText.split("\n");
+    const first = lines.shift() ?? "";
+    const firstWrapW = termW - label.length;
+    const firstWrapped = this.wrapLine(first, firstWrapW);
+    const seg0 = firstWrapped.shift() ?? "";
+    const pad0 = Math.max(0, termW - label.length - seg0.length);
+    container.insertLine(
+      this.chatView,
+      concat(
+        pen.fg(t.accent).bg(bg)(label),
+        pen.fg(t.text).bg(bg)(seg0 + " ".repeat(pad0)),
+      ),
+      this.shiftAllContainers,
+    );
+    for (const wl of firstWrapped) {
+      const pad = Math.max(0, termW - wl.length);
+      container.insertLine(
+        this.chatView,
+        concat(pen.fg(t.text).bg(bg)(wl + " ".repeat(pad))),
+        this.shiftAllContainers,
+      );
+    }
+    for (const line of lines) {
+      const wrapped = this.wrapLine(line, termW);
+      for (const wl of wrapped) {
+        const pad = Math.max(0, termW - wl.length);
+        container.insertLine(
+          this.chatView,
+          concat(pen.fg(t.text).bg(bg)(wl + " ".repeat(pad))),
+          this.shiftAllContainers,
+        );
+      }
+    }
+
+    // Render dispatch line inside the thread (user-styled, like the original header)
+    const displayNames = targetNames.map((n) =>
+      n === this.selfName ? this.adapterName : n,
+    );
+    const namesText = displayNames.map((n) => `@${n}`).join(", ");
+    const dispatchContent = concat(
+      pen.fg(t.textDim).bg(bg)(`  → `),
+      pen.fg(t.accent).bg(bg)(namesText),
+    );
+    let dispLen = 0;
+    for (const seg of dispatchContent) dispLen += seg.text.length;
+    const dispPad = Math.max(0, termW - dispLen);
+    container.insertLine(
+      this.chatView,
+      concat(dispatchContent, pen.fg(bg).bg(bg)(" ".repeat(dispPad))),
+      this.shiftAllContainers,
+    );
+
+    // Blank line between dispatch and working placeholders
+    container.insertLine(this.chatView, "", this.shiftAllContainers);
+
+    // Clear insert override so placeholders use normal insert point
+    container.clearInsertAt();
+  }
+
   /** Render a working placeholder for an agent in a thread. */
   private renderWorkingPlaceholder(threadId: number, teammate: string): void {
     if (!this.chatView) return;
@@ -797,6 +893,40 @@ class TeammatesREPL {
     const container = this.containers.get(threadId);
     if (!container || !this.chatView) return;
     container.toggleReplyCollapse(this.chatView, replyKey);
+    // Update the action text to show [show] or [hide] based on new state
+    const item = container.items.find((i) => i.key === replyKey);
+    if (item?.displayName) {
+      const t = theme();
+      const label = item.collapsed ? "[show]" : "[hide]";
+      const collapseId = `reply-collapse-${replyKey}`;
+      const actions = [
+        {
+          id: collapseId,
+          normalStyle: this.makeSpan(
+            { text: `  @${item.displayName}: `, style: { fg: t.accent } },
+            { text: item.subject || "completed", style: { fg: t.text } },
+            { text: `  ${label}`, style: { fg: t.textDim } },
+          ),
+          hoverStyle: this.makeSpan(
+            { text: `  @${item.displayName}: `, style: { fg: t.accent } },
+            { text: item.subject || "completed", style: { fg: t.text } },
+            { text: `  ${label}`, style: { fg: t.accent } },
+          ),
+        },
+        {
+          id: item.copyActionId || `copy-${replyKey}`,
+          normalStyle: this.makeSpan({
+            text: " [copy]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.makeSpan({
+            text: " [copy]",
+            style: { fg: t.accent },
+          }),
+        },
+      ];
+      this.chatView.updateActionList(item.subjectLineIndex, actions);
+    }
     this.refreshView();
   }
 
@@ -1859,6 +1989,7 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
     input: string,
     preMentions?: string[],
     threadId?: number,
+    replyDisplayText?: string,
   ): void {
     const allNames = this.orchestrator.listTeammates();
 
@@ -1922,7 +2053,11 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (c && this.chatView) {
           c.insertLine(this.chatView, "", this.shiftAllContainers);
         }
+      } else if (replyDisplayText) {
+        this.renderThreadReply(tid, replyDisplayText, names);
       }
+      const ec = this.containers.get(tid);
+      if (ec && this.chatView) ec.hideThreadActions(this.chatView);
       for (const teammate of names) {
         this.renderWorkingPlaceholder(tid, teammate);
       }
@@ -1968,7 +2103,11 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
         if (c && this.chatView) {
           c.insertLine(this.chatView, "", this.shiftAllContainers);
         }
+      } else if (replyDisplayText) {
+        this.renderThreadReply(tid, replyDisplayText, mentioned);
       }
+      const mc = this.containers.get(tid);
+      if (mc && this.chatView) mc.hideThreadActions(this.chatView);
       for (const teammate of mentioned) {
         this.renderWorkingPlaceholder(tid, teammate);
       }
@@ -2001,7 +2140,11 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
       if (c && this.chatView) {
         c.insertLine(this.chatView, "", this.shiftAllContainers);
       }
+    } else if (replyDisplayText) {
+      this.renderThreadReply(tid, replyDisplayText, [match]);
     }
+    const dc = this.containers.get(tid);
+    if (dc && this.chatView) dc.hideThreadActions(this.chatView);
     this.renderWorkingPlaceholder(tid, match);
     this.refreshView();
     this.taskQueue.push({
@@ -4266,8 +4409,17 @@ Do NOT modify any other teammate's files. Only edit your own SOUL.md and daily l
 
     // Pass pre-resolved mentions so @mentions inside expanded paste text are ignored.
     this.conversationHistory.push({ role: this.selfName, text: taskInput });
-    this.printUserMessage(input);
-    this.queueTask(taskInput, preMentions, targetThreadId);
+    // For threaded replies, render user message inside the thread container
+    // instead of at the feed end — keeps the reply visually connected to the thread.
+    if (targetThreadId == null) {
+      this.printUserMessage(input);
+    }
+    this.queueTask(
+      taskInput,
+      preMentions,
+      targetThreadId,
+      targetThreadId != null ? input : undefined,
+    );
     this.refreshView();
   }
 

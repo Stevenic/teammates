@@ -23,6 +23,7 @@ export interface ThreadFeedView {
   setFeedLinesHidden(startIndex: number, count: number, hidden: boolean): void;
   isFeedLineHidden(index: number): boolean;
   updateFeedLine(index: number, content: StyledLine): void;
+  updateActionList(index: number, actions: FeedActionItem[]): void;
 }
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -42,6 +43,12 @@ export interface ThreadItemEntry {
   bodyEndIndex: number;
   /** Whether the body is currently hidden. */
   collapsed: boolean;
+  /** Display name for the teammate (used to rebuild action text on toggle). */
+  displayName?: string;
+  /** Subject line text (used to rebuild action text on toggle). */
+  subject?: string;
+  /** Copy action ID (used to rebuild action text on toggle). */
+  copyActionId?: string;
 }
 
 // ── ThreadContainer ─────────────────────────────────────────────────
@@ -163,10 +170,17 @@ export class ThreadContainer {
     styledLine: StyledSpan,
     onShift: ShiftCallback,
   ): void {
-    const insertAt = this.endIdx;
+    // Insert before thread-level actions ([reply] [copy thread]) if present,
+    // otherwise at end of range. This ensures reply placeholders appear
+    // within the thread content, not after the thread-level verbs.
+    let insertAt = this.endIdx;
+    if (this.replyActionIdx != null && this.replyActionIdx < insertAt) {
+      insertAt = this.replyActionIdx;
+    }
     view.insertStyledToFeed(insertAt, styledLine);
+    const oldEnd = this.endIdx;
     onShift(insertAt, 1);
-    this.endIdx++;
+    if (this.endIdx === oldEnd) this.endIdx++;
     this.placeholders.set(teammate, insertAt);
   }
 
@@ -188,6 +202,33 @@ export class ThreadContainer {
     return this.placeholders.has(teammate);
   }
 
+  /** Number of active (visible) working placeholders. */
+  get placeholderCount(): number {
+    return this.placeholders.size;
+  }
+
+  // ── Thread-level action visibility ───────────────────────────────
+
+  /**
+   * Hide the thread-level [reply] [copy thread] action line.
+   * Called when working placeholders are added to suppress verbs during work.
+   */
+  hideThreadActions(view: ThreadFeedView): void {
+    if (this.replyActionIdx != null) {
+      view.setFeedLineHidden(this.replyActionIdx, true);
+    }
+  }
+
+  /**
+   * Show the thread-level [reply] [copy thread] action line.
+   * Called when all working placeholders are resolved.
+   */
+  showThreadActions(view: ThreadFeedView): void {
+    if (this.replyActionIdx != null) {
+      view.setFeedLineHidden(this.replyActionIdx, false);
+    }
+  }
+
   // ── Reply body tracking ─────────────────────────────────────────
 
   /**
@@ -198,6 +239,9 @@ export class ThreadContainer {
     subjectIdx: number,
     startIdx: number,
     endIdx: number,
+    displayName?: string,
+    subject?: string,
+    copyActionId?: string,
   ): void {
     this.items.push({
       key,
@@ -205,6 +249,9 @@ export class ThreadContainer {
       bodyStartIndex: startIdx,
       bodyEndIndex: endIdx,
       collapsed: false,
+      displayName,
+      subject,
+      copyActionId,
     });
   }
 

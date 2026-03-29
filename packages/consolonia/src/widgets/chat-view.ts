@@ -490,6 +490,18 @@ export class ChatView extends Control {
     this.invalidate();
   }
 
+  /** Update the action items on an existing action line by index. */
+  updateActionList(index: number, actions: FeedActionItem[]): void {
+    if (index < 0 || index >= this._feedLines.length) return;
+    if (actions.length === 0) return;
+    const combined = this._concatSpans(actions.map((a) => a.normalStyle));
+    this._feedLines[index].lines = [combined];
+    delete this._feedHeightCache[index];
+    this._feedActions.set(index, { items: actions, normalStyle: combined });
+    if (this._hoveredAction === index) this._hoveredAction = -1;
+    this.invalidate();
+  }
+
   // ── Insert API ──────────────────────────────────────────────────
 
   /**
@@ -531,7 +543,7 @@ export class ChatView extends Control {
       wrap: true,
     });
     this._feedLines.splice(clamped, 0, line);
-    this._shiftFeedIndices(clamped + 1, 1);
+    this._shiftFeedIndices(clamped, 1);
     this._autoScrollToBottom();
     this.invalidate();
   }
@@ -545,7 +557,7 @@ export class ChatView extends Control {
       wrap: true,
     });
     this._feedLines.splice(clamped, 0, line);
-    this._shiftFeedIndices(clamped + 1, 1);
+    this._shiftFeedIndices(clamped, 1);
     this._autoScrollToBottom();
     this.invalidate();
   }
@@ -561,7 +573,7 @@ export class ChatView extends Control {
       wrap: false,
     });
     this._feedLines.splice(clamped, 0, line);
-    this._shiftFeedIndices(clamped + 1, 1);
+    this._shiftFeedIndices(clamped, 1);
     this._feedActions.set(clamped, { items: actions, normalStyle: combined });
     this._autoScrollToBottom();
     this.invalidate();
