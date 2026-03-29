@@ -8,12 +8,13 @@ type: decision
 # Codex activity comes from the paired debug JSONL file
 
 ## Decision
-Use the paired `.teammates\.tmp\debug\<teammate>-<timestamp>.md` JSONL file as the live activity source for Codex runs, and parse `item.started` / `item.completed` entries with `item.type: command_execution` in addition to older tool-call style events.
+Use the paired `.teammates\.tmp\debug\<teammate>-<timestamp>.md` JSONL file as the live activity source for Codex runs, and parse `item.started` / `item.completed` entries with `item.type: command_execution` and `item.type: file_change` in addition to older tool-call style events.
 
 ## Why
-The current Codex logs in this repo are emitting live shell work as `command_execution` items, not primarily as `tool_call` items. Parsing only the older shapes leaves `[show activity]` empty even though the debug file is filling in real time.
+The current Codex logs in this repo are emitting live shell work as `command_execution` items and edit/write phases as `file_change` items, not primarily as `tool_call` items. Parsing only the older shapes leaves `[show activity]` empty or reduced to a single `Exploring` line even though the debug file is filling in real time.
 
 ## Consequences
 - Codex activity now follows a log-watcher model similar to Claude.
 - The parser must unwrap PowerShell `-Command "..."` wrappers before classifying `Read` / `Grep` / `Glob` / `Bash`.
+- The parser must map `file_change` batches into `Edit` / `Write` activity so Codex runs show visible implementation phases instead of only research.
 - The watcher needs trailing-line buffering so partial JSONL appends are not dropped.

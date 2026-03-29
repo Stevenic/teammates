@@ -98,6 +98,48 @@ describe("parseCodexJsonlLine", () => {
     ]);
   });
 
+  it("maps file_change item.started events into write and edit activity", () => {
+    const line = JSON.stringify({
+      type: "item.started",
+      item: {
+        type: "file_change",
+        status: "in_progress",
+        changes: [
+          { path: "packages/cli/src/personas.ts", kind: "update" },
+          { path: "packages/cli/src/personas.test.ts", kind: "update" },
+          { path: "packages/cli/personas/beacon/WISDOM.md", kind: "add" },
+        ],
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      { elapsedMs: 4_000, tool: "Edit", detail: "personas.ts (+1 files)" },
+      { elapsedMs: 4_000, tool: "Write", detail: "WISDOM.md" },
+    ]);
+  });
+
+  it("maps failed file_change item.completed events into error activity", () => {
+    const line = JSON.stringify({
+      type: "item.completed",
+      item: {
+        type: "file_change",
+        status: "failed",
+        changes: [
+          { path: "packages/cli/personas/architect.md", kind: "delete" },
+        ],
+      },
+    });
+
+    expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
+      {
+        elapsedMs: 4_000,
+        tool: "Edit",
+        detail: "architect.md",
+        isError: true,
+      },
+    ]);
+  });
+
   it("accepts stringified tool arguments", () => {
     const line = JSON.stringify({
       type: "item.completed",

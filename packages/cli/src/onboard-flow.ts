@@ -565,9 +565,9 @@ export class OnboardFlow {
       console.log(
         chalk.cyan(`  ${num}`) +
           chalk.gray(") ") +
-          chalk.white(p.persona) +
-          chalk.gray(` (${p.alias})`) +
-          chalk.gray(` — ${p.description}`),
+          chalk.white(`@${p.alias}`) +
+          chalk.gray(` - ${p.persona}`) +
+          chalk.gray(` - ${p.description}`),
       );
     }
 
@@ -602,7 +602,7 @@ export class OnboardFlow {
     for (const idx of unique) {
       const p = personas[idx];
       const nameInput = await this.askInput(
-        `Name for ${p.persona} [${p.alias}]: `,
+        `Alias for @${p.alias} [${p.alias}]: `,
       );
       const name = nameInput || p.alias;
       const folderName = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -612,7 +612,7 @@ export class OnboardFlow {
       console.log(
         chalk.green("  ✔  ") +
           chalk.white(`@${folderName}`) +
-          chalk.gray(` — ${p.persona}`),
+          chalk.gray(` - ${p.persona}`),
       );
     }
 
@@ -656,8 +656,8 @@ export class OnboardFlow {
       const num = String(i + 1).padStart(2, " ");
       this.view.feedLine(
         concat(
-          tp.text(`  ${num}) ${p.persona} `),
-          tp.muted(`(${p.alias}) — ${p.description}`),
+          tp.text(`  ${num}) @${p.alias} `),
+          tp.muted(`- ${p.persona} - ${p.description}`),
         ),
       );
     }
@@ -692,7 +692,7 @@ export class OnboardFlow {
     for (const idx of unique) {
       const p = personas[idx];
       const nameInput = await this.view.askInline(
-        `Name for ${p.persona} [${p.alias}]: `,
+        `Alias for @${p.alias} [${p.alias}]: `,
       );
       const name = nameInput || p.alias;
       const folderName = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -1033,11 +1033,19 @@ export class OnboardFlow {
       /* ok */
     }
 
+    let goals = "";
+    try {
+      goals = readFileSync(join(avatarDir, "GOALS.md"), "utf-8");
+    } catch {
+      /* ok */
+    }
+
     registry.register({
       name: alias,
       type: "human",
       role,
       soul,
+      goals,
       wisdom,
       dailyLogs: [],
       weeklyLogs: [],

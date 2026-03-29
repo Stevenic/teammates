@@ -219,6 +219,83 @@ function getCodexCommandExecutionItem(
   return getString(item, "type") === "command_execution" ? item : null;
 }
 
+function getCodexFileChangeItem(
+  event: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const item =
+    getNestedObject(event, "item", "output_item") ??
+    getNestedObject(getNestedObject(event, "delta"), "item");
+  if (!item) return null;
+  return getString(item, "type") === "file_change" ? item : null;
+}
+
+function getChangeList(
+  item: Record<string, unknown> | null,
+): Array<Record<string, unknown>> {
+  const raw = item?.changes;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => entry !== null);
+}
+
+function summarizeChangedFiles(
+  changes: Array<Record<string, unknown>>,
+): string | undefined {
+  if (changes.length === 0) return undefined;
+  const firstPath = getString(changes[0], "path");
+  if (!firstPath)
+    return changes.length > 1 ? `${changes.length} files` : undefined;
+  const first = basename(firstPath);
+  return changes.length > 1 ? `${first} (+${changes.length - 1} files)` : first;
+}
+
+function mapCodexFileChangeKind(kind: string): ActivityEvent["tool"] {
+  switch (kind) {
+    case "add":
+      return "Write";
+    default:
+      return "Edit";
+  }
+}
+
+function mapCodexFileChangeEvents(
+  item: Record<string, unknown> | null,
+  elapsedMs: number,
+  includeCompleted = false,
+): ActivityEvent[] {
+  const changes = getChangeList(item);
+  if (changes.length === 0) return [];
+
+  const status = getString(item, "status");
+  const isFailed = status === "failed";
+  const grouped = new Map<string, Array<Record<string, unknown>>>();
+
+  for (const change of changes) {
+    const kind = getString(change, "kind") ?? "update";
+    const existing = grouped.get(kind);
+    if (existing) {
+      existing.push(change);
+    } else {
+      grouped.set(kind, [change]);
+    }
+  }
+
+  const events: ActivityEvent[] = [];
+  for (const [kind, entries] of grouped) {
+    if (!includeCompleted && !isFailed) continue;
+    const tool = mapCodexFileChangeKind(kind);
+    const detail = summarizeChangedFiles(entries);
+    events.push({
+      elapsedMs,
+      tool,
+      detail,
+      isError: isFailed,
+    });
+  }
+  return events;
+}
+
 function mapCodexToolCall(
   name: string,
   args: Record<string, unknown> | null,
@@ -370,6 +447,11 @@ export function parseCodexJsonlLine(
       });
       return mapped ? [{ ...mapped, elapsedMs }] : [];
     }
+
+    const fileChangeItem = getCodexFileChangeItem(event);
+    if (fileChangeItem) {
+      return mapCodexFileChangeEvents(fileChangeItem, elapsedMs, true);
+    }
   }
 
   if (
@@ -379,6 +461,13 @@ export function parseCodexJsonlLine(
     eventType !== "response.output_item.done"
   ) {
     return [];
+  }
+
+  if (eventType === "item.completed") {
+    const fileChangeItem = getCodexFileChangeItem(event);
+    if (fileChangeItem) {
+      return mapCodexFileChangeEvents(fileChangeItem, elapsedMs);
+    }
   }
 
   const item = getCodexToolCallItem(event);
