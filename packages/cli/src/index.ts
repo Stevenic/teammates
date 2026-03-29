@@ -1,5 +1,7 @@
 // Public API for @teammates/cli
 
+export type { ActivityManagerDeps } from "./activity-manager.js";
+export { ActivityManager } from "./activity-manager.js";
 export {
   collapseActivityEvents,
   formatActivityTime,
@@ -68,6 +70,8 @@ export { loadPersonas, scaffoldFromPersona } from "./personas.js";
 export { Registry } from "./registry.js";
 export { RetroManager } from "./retro-manager.js";
 export { detectServices } from "./service-config.js";
+export type { StartupManagerDeps } from "./startup-manager.js";
+export { StartupManager } from "./startup-manager.js";
 export { StatusTracker } from "./status-tracker.js";
 export { tp } from "./theme.js";
 export type {
@@ -82,7 +86,6 @@ export type {
   ActivityEvent,
   DailyLog,
   HandoffEnvelope,
-  InterruptState,
   OrchestratorEvent,
   OwnershipRules,
   PresenceState,

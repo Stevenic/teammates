@@ -38,8 +38,9 @@ const TEAMMATE_ARG_POSITIONS: Record<string, Set<number>> = {
   compact: new Set([0]),
   debug: new Set([0]),
   retro: new Set([0]),
-  interrupt: new Set([0]),
-  int: new Set([0]),
+  cancel: new Set([1]),
+  interrupt: new Set([1]),
+  int: new Set([1]),
 };
 
 const CONFIGURABLE_SERVICES = ["github"];

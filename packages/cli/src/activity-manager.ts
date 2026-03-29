@@ -5,11 +5,7 @@
  * Extracted from cli.ts to reduce file size for more reliable agent patching.
  */
 
-import type {
-  ChatView,
-  Color,
-  StyledSpan,
-} from "@teammates/consolonia";
+import type { ChatView, Color, StyledSpan } from "@teammates/consolonia";
 import {
   collapseActivityEvents,
   formatActivityTime,
@@ -108,7 +104,12 @@ export class ActivityManager {
       const bi = this.blankIdx.get(teammate);
       if (bi != null) this.deps.chatView?.setFeedLineHidden(bi, true);
       this.shown.set(teammate, false);
-      this.updatePlaceholderVerb(queueId, teammate, threadId, "[show activity]");
+      this.updatePlaceholderVerb(
+        queueId,
+        teammate,
+        threadId,
+        "[show activity]",
+      );
     } else {
       // Show existing activity lines (or insert them if first time)
       const indices = this.lineIndices.get(teammate) ?? [];
@@ -129,7 +130,12 @@ export class ActivityManager {
         }
       }
       this.shown.set(teammate, true);
-      this.updatePlaceholderVerb(queueId, teammate, threadId, "[hide activity]");
+      this.updatePlaceholderVerb(
+        queueId,
+        teammate,
+        threadId,
+        "[hide activity]",
+      );
     }
     this.deps.refreshView();
   }

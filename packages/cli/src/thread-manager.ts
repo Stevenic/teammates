@@ -599,6 +599,47 @@ export class ThreadManager {
 
     // Clear insert position override
     container.clearInsertAt();
+  }
+
+  /**
+   * Display a "canceled" subject line for a teammate in a thread.
+   * Hides the working placeholder and inserts a dimmed subject line.
+   */
+  displayCanceledInThread(
+    teammate: string,
+    threadId: number,
+    container: ThreadContainer,
+    placeholderId: string,
+  ): void {
+    const t = theme();
+    if (this.view.chatView) {
+      container.hidePlaceholder(this.view.chatView, placeholderId);
+    }
+
+    const displayName =
+      teammate === this.view.selfName ? this.view.adapterName : teammate;
+
+    // Insert canceled subject line (no [hide]/[copy] — nothing to show)
+    container.insertActions(
+      this.view.chatView,
+      [
+        {
+          id: `canceled-${teammate}-${Date.now()}`,
+          normalStyle: this.view.makeSpan(
+            { text: `  ${displayName}: `, style: { fg: t.accent } },
+            { text: "canceled", style: { fg: t.textDim } },
+          ),
+          hoverStyle: this.view.makeSpan(
+            { text: `  ${displayName}: `, style: { fg: t.accent } },
+            { text: "canceled", style: { fg: t.textDim } },
+          ),
+        },
+      ],
+      this.shiftAllContainers,
+    );
+
+    // Blank line after
+    container.insertLine(this.view.chatView, "", this.shiftAllContainers);
 
     // Insert thread-level [reply] [copy thread] verbs (once, shifts automatically)
     if (this.view.chatView) {

@@ -195,22 +195,6 @@ export type QueueEntry =
     };
 
 /** State captured when an agent is interrupted mid-task. */
-export interface InterruptState {
-  /** The teammate that was interrupted */
-  teammate: string;
-  /** The original task prompt (user-facing, not the full wrapped prompt) */
-  originalTask: string;
-  /** The full prompt sent to the agent (identity + memory + task) */
-  originalFullPrompt: string;
-  /** Condensed conversation log from the interrupted session */
-  conversationLog: string;
-  /** How long the agent ran before interruption (ms) */
-  elapsedMs: number;
-  /** Number of tool calls made before interruption */
-  toolCallCount: number;
-  /** Files written/modified before interruption */
-  filesChanged: string[];
-}
 
 /** A threaded task view — groups related messages under a single task ID. */
 export interface TaskThread {
