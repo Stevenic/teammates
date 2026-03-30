@@ -10,6 +10,7 @@
     <ItemGroup>
       <PackageReference Include="Consolonia" />
       <PackageReference Include="Consolonia.ManagedWindows" />
+      <PackageReference Include="Iciclecreek.Avalonia.WindowManager" />
     </ItemGroup>
 
     <ItemGroup>

@@ -11,6 +11,7 @@ using System.Collections.ObjectModel;
 using TeamMates.Contracts;
 using TeamMates.Services;
 using TeamMates.Views;
+using Iciclecreek.Avalonia.WindowManager;
 
 namespace TeamMates.ViewModels;
 
@@ -202,13 +203,13 @@ public partial class MainViewModel : ViewModelBase
         var aboutWindow = new PortableWindow
         {
             Title = "About TeamMates",
-            Width = 420,
-            Height = 220,
             CanResize = false,
+            MaxHeight=300,
+            MaxWidth=400,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Content = new TextBlock
             {
-                Margin = new Thickness(20),
+                Margin= new Thickness(2),
                 TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                 Text =
                     $"TeamMates shell bridge\n\nAdapter: {SelectedAdapterDisplayName}\nConnection: {ConnectionState}\nTransport: {TransportVersion}\nFolder: {_engineShellClient.WorkingDirectory}"
