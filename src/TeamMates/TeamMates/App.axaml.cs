@@ -1,9 +1,12 @@
+using System;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia.Markup.Xaml;
+using TeamMates.Services;
 using TeamMates.ViewModels;
 using TeamMates.Views;
 
@@ -11,6 +14,8 @@ namespace TeamMates;
 
 public partial class App : Application
 {
+    private readonly IEngineShellClient _engineShellClient = ProcessEngineShellClient.CreateDefault();
+
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
@@ -25,14 +30,15 @@ public partial class App : Application
             DisableAvaloniaDataAnnotationValidation();
             desktop.MainWindow = new MainWindow
             {
-                DataContext = new MainViewModel()
+                DataContext = new MainViewModel(_engineShellClient)
             };
+            desktop.Exit += async (_, _) => await DisposeShellClientAsync();
         }
         else if (ApplicationLifetime is ISingleViewApplicationLifetime singleViewPlatform)
         {
             singleViewPlatform.MainView = new MainView
             {
-                DataContext = new MainViewModel()
+                DataContext = new MainViewModel(_engineShellClient)
             };
         }
 
@@ -49,6 +55,14 @@ public partial class App : Application
         foreach (var plugin in dataValidationPluginsToRemove)
         {
             BindingPlugins.DataValidators.Remove(plugin);
+        }
+    }
+
+    private async Task DisposeShellClientAsync()
+    {
+        if (_engineShellClient is IAsyncDisposable asyncDisposable)
+        {
+            await asyncDisposable.DisposeAsync();
         }
     }
 }

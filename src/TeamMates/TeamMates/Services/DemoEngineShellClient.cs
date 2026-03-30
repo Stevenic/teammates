@@ -8,6 +8,15 @@ namespace TeamMates.Services;
 
 public sealed class DemoEngineShellClient : IEngineShellClient
 {
+    private static readonly IReadOnlyList<ShellAdapterOption> KnownAdapters =
+    [
+        new("codex", "Codex"),
+        new("copilot", "Copilot"),
+        new("claude", "Claude"),
+        new("aider", "Aider"),
+        new("echo", "Echo"),
+    ];
+
     private readonly List<TabStateDto> _tabs =
     [
         new("team", ShellTargetKind.Team, "TEAM", "active", true, null, 0),
@@ -26,6 +35,14 @@ public sealed class DemoEngineShellClient : IEngineShellClient
         new("feed-005", "agent:pipeline", "Desktop packaging warning", "Build artifact cache is stale; retry queued after clean output folder reset.", DateTimeOffset.Now.AddMinutes(-4), "@pipeline", "error"),
         new("feed-006", "team", "Roster update", "TEAM tab is aggregating feed items from all agent tabs without text scraping.", DateTimeOffset.Now.AddMinutes(-2), "system", "info"),
     ];
+
+    public event EventHandler<ShellStateSnapshotDto>? ShellStateChanged;
+
+    public string CurrentAdapterName { get; private set; } = "codex";
+
+    public string WorkingDirectory { get; private set; } = Environment.CurrentDirectory;
+
+    public IReadOnlyList<ShellAdapterOption> AvailableAdapters => KnownAdapters;
 
     public Task<ShellStateSnapshotDto> GetShellStateAsync(CancellationToken cancellationToken = default)
     {
@@ -60,6 +77,25 @@ public sealed class DemoEngineShellClient : IEngineShellClient
             Author: "system",
             Status: "info"));
 
+        ShellStateChanged?.Invoke(this, new ShellStateSnapshotDto(
+            ActiveTabId: targetId,
+            ConnectionState: "Connected",
+            TransportVersion: "v1",
+            Tabs: _tabs.ToArray(),
+            FeedItems: _feedItems.ToArray()));
+
+        return Task.CompletedTask;
+    }
+
+    public Task SetAdapterAsync(string adapterName, CancellationToken cancellationToken = default)
+    {
+        CurrentAdapterName = adapterName;
+        return Task.CompletedTask;
+    }
+
+    public Task SetWorkingDirectoryAsync(string workingDirectory, CancellationToken cancellationToken = default)
+    {
+        WorkingDirectory = workingDirectory;
         return Task.CompletedTask;
     }
 }

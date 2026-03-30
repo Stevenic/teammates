@@ -70,6 +70,7 @@ function createController(results?: Map<string, TaskResult>) {
 
   const controller = new ShellBridgeController({
     orchestrator,
+    adapterName: "mock",
     emitEvent: (event) => events.push(event),
     now: () => new Date("2026-03-30T21:00:00.000Z"),
   });

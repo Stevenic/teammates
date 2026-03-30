@@ -12,19 +12,57 @@
 		<vm:MainViewModel />
 	</Design.DataContext>
 
-    <TabControl Classes="shell-tabs"
-                ItemsSource="{Binding Tabs}"
-                SelectedItem="{Binding SelectedTab, Mode=TwoWay}"
-                Margin="{DynamicResource SectionPadding}">
-        <TabControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:ShellTabViewModel">
-<!--                <Border Padding="{DynamicResource ControlPadding}"
-                        Margin="{DynamicResource TabItemMargin}"
-                        CornerRadius="{DynamicResource DefaultCornerRadius}"
-                        Background="#111827"
-                        BorderBrush="#1F2937"
-                        BorderThickness="{DynamicResource HairlineBorderThickness}"
-                        MinWidth="{DynamicResource TabMinWidth}">-->
+    <Grid RowDefinitions="Auto,*">
+        <Menu Grid.Row="0"
+              Margin="{DynamicResource WindowMenuMargin}">
+            <MenuItem Header="_File">
+                <MenuItem Header="_Open Folder"
+                          Click="OpenFolder_Click" />
+                <MenuItem Header="E_xit"
+                          Command="{Binding ExitCommand}" />
+            </MenuItem>
+            <MenuItem Header="_Options">
+                <MenuItem Header="_Adapters">
+                    <MenuItem Header="_Codex"
+                              ToggleType="CheckBox"
+                              IsChecked="{Binding IsCodexSelected}"
+                              Command="{Binding SelectAdapterCommand}"
+                              CommandParameter="codex" />
+                    <MenuItem Header="C_opilot"
+                              ToggleType="CheckBox"
+                              IsChecked="{Binding IsCopilotSelected}"
+                              Command="{Binding SelectAdapterCommand}"
+                              CommandParameter="copilot" />
+                    <MenuItem Header="_Claude"
+                              ToggleType="CheckBox"
+                              IsChecked="{Binding IsClaudeSelected}"
+                              Command="{Binding SelectAdapterCommand}"
+                              CommandParameter="claude" />
+                    <MenuItem Header="_Aider"
+                              ToggleType="CheckBox"
+                              IsChecked="{Binding IsAiderSelected}"
+                              Command="{Binding SelectAdapterCommand}"
+                              CommandParameter="aider" />
+                    <MenuItem Header="_Echo"
+                              ToggleType="CheckBox"
+                              IsChecked="{Binding IsEchoSelected}"
+                              Command="{Binding SelectAdapterCommand}"
+                              CommandParameter="echo" />
+                </MenuItem>
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="_About TeamMates"
+                          Command="{Binding ShowAboutCommand}" />
+            </MenuItem>
+        </Menu>
+
+        <TabControl Grid.Row="1"
+                    Classes="shell-tabs"
+                    ItemsSource="{Binding Tabs}"
+                    SelectedItem="{Binding SelectedTab, Mode=TwoWay}"
+                    Margin="{DynamicResource SectionPadding}">
+            <TabControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:ShellTabViewModel">
                     <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="{DynamicResource SpacingSm}">
                         <Border Width="{DynamicResource AvatarSizeSm}"
                                 Height="{DynamicResource AvatarSizeSm}"
@@ -59,18 +97,18 @@
                                        FontSize="{DynamicResource ShellBadgeFontSize}" />
                         </Border>
                     </Grid>
-                <!--</Border>-->
-            </DataTemplate>
-        </TabControl.ItemTemplate>
+                </DataTemplate>
+            </TabControl.ItemTemplate>
 
-        <TabControl.ContentTemplate>
-            <DataTemplate x:DataType="vm:ShellTabViewModel">
-                <views:AgentActivityPaneView ComposerText="{Binding DataContext.ComposerText, ElementName=Root, Mode=TwoWay}"
-                                             ComposerStatusText="{Binding DataContext.ComposerStatusText, ElementName=Root}"
-                                             ConnectionState="{Binding DataContext.ConnectionState, ElementName=Root}"
-                                             TransportVersion="{Binding DataContext.TransportVersion, ElementName=Root}"
-                                             SendInputCommand="{Binding DataContext.SendInputCommand, ElementName=Root}" />
-            </DataTemplate>
-        </TabControl.ContentTemplate>
-    </TabControl>
+            <TabControl.ContentTemplate>
+                <DataTemplate x:DataType="vm:ShellTabViewModel">
+                    <views:AgentActivityPaneView ComposerText="{Binding DataContext.ComposerText, ElementName=Root, Mode=TwoWay}"
+                                                 ComposerStatusText="{Binding DataContext.ComposerStatusText, ElementName=Root}"
+                                                 ConnectionState="{Binding DataContext.ConnectionState, ElementName=Root}"
+                                                 TransportVersion="{Binding DataContext.TransportVersion, ElementName=Root}"
+                                                 SendInputCommand="{Binding DataContext.SendInputCommand, ElementName=Root}" />
+                </DataTemplate>
+            </TabControl.ContentTemplate>
+        </TabControl>
+    </Grid>
 </UserControl>

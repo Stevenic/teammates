@@ -31,12 +31,14 @@ interface BridgeTaskInfo {
 
 export interface ShellBridgeControllerOptions {
   orchestrator: Orchestrator;
+  adapterName: string;
   emitEvent?: (event: ShellEventEnvelope) => void;
   now?: () => Date;
 }
 
 export class ShellBridgeController {
   private orchestrator: Orchestrator;
+  private adapterName: string;
   private emitEvent: (event: ShellEventEnvelope) => void;
   private now: () => Date;
   private activeTabId = "team";
@@ -47,6 +49,7 @@ export class ShellBridgeController {
 
   constructor(options: ShellBridgeControllerOptions) {
     this.orchestrator = options.orchestrator;
+    this.adapterName = options.adapterName;
     this.emitEvent = options.emitEvent ?? (() => {});
     this.now = options.now ?? (() => new Date());
   }
@@ -66,6 +69,7 @@ export class ShellBridgeController {
             engine: "@teammates/cli",
             engineVersion: PKG_VERSION,
             transportVersion: SHELL_TRANSPORT_LABEL,
+            adapterName: this.getAdapterName(),
             capabilities: {
               commands: [
                 "initialize_shell",
@@ -118,6 +122,7 @@ export class ShellBridgeController {
       engine: "@teammates/cli",
       engineVersion: PKG_VERSION,
       transportVersion: SHELL_TRANSPORT_LABEL,
+      adapterName: this.getAdapterName(),
     });
     this.emit("capabilities_reported", {
       commands: ["initialize_shell", "get_shell_state", "send_input", "ping"],
@@ -409,6 +414,10 @@ export class ShellBridgeController {
     return this.now().toISOString();
   }
 
+  private getAdapterName(): string {
+    return this.adapterName;
+  }
+
   private emit<TPayload>(
     event: ShellEventEnvelope<TPayload>["event"],
     payload: TPayload,
@@ -499,6 +508,7 @@ export async function runShellBridge(
   } satisfies OrchestratorConfig);
   controller = new ShellBridgeController({
     orchestrator,
+    adapterName: options.adapterName,
     emitEvent: (event) => write(event),
   });
   await controller.initialize();

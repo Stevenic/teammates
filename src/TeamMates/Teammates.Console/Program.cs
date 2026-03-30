@@ -1,5 +1,6 @@
 using Avalonia;
 using Consolonia;
+using Consolonia.ManagedWindows.Storage;
 
 namespace Teammates.Console
 {
@@ -15,6 +16,7 @@ namespace Teammates.Console
         {
             return AppBuilder.Configure<App>()
                 .UseConsolonia()
+                .UseConsoloniaStorage()
                 .UseAutoDetectedConsole()
                 .LogToException();
         }
