@@ -14,6 +14,7 @@ import {
   multiSearch,
   type SearchResult,
 } from "@teammates/recall";
+import { PKG_VERSION } from "./cli-args.js";
 import type { TaskResult, TeammateConfig } from "./types.js";
 
 export interface AgentAdapter {
@@ -34,7 +35,14 @@ export interface AgentAdapter {
     sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean },
+    options?: {
+      raw?: boolean;
+      system?: boolean;
+      skipMemoryUpdates?: boolean;
+      onActivity?: (events: import("./types.js").ActivityEvent[]) => void;
+      /** Abort signal — when aborted, the adapter should kill/disconnect the running agent. */
+      signal?: AbortSignal;
+    },
   ): Promise<TaskResult>;
 
   /**
@@ -42,18 +50,6 @@ export interface AgentAdapter {
    * Falls back to startSession if not implemented.
    */
   resumeSession?(teammate: TeammateConfig, sessionId: string): Promise<string>;
-
-  /** Get the session file path for a teammate (if session is active). */
-  getSessionFile?(teammateName: string): string | undefined;
-
-  /**
-   * Kill a running agent and return its partial output.
-   * Used by the interrupt-and-resume system to capture in-progress work.
-   * Returns null if no agent is running for this teammate.
-   */
-  killAgent?(
-    teammate: string,
-  ): Promise<import("./adapters/cli-proxy.js").SpawnResult | null>;
 
   /** Clean up a session. */
   destroySession?(sessionId: string): Promise<void>;
@@ -195,12 +191,15 @@ export function buildTeammatePrompt(
     handoffContext?: string;
     roster?: RosterEntry[];
     services?: InstalledService[];
-    sessionFile?: string;
     recallResults?: SearchResult[];
     /** Contents of USER.md — injected just before the task. */
     userProfile?: string;
     /** Token budget for the prompt wrapper (default 64k). Task is excluded. */
     tokenBudget?: number;
+    /** System task — skip daily log / memory update instructions. */
+    system?: boolean;
+    /** Ephemeral task — suppress memory update instructions. */
+    skipMemoryUpdates?: boolean;
   },
 ): string {
   const parts: string[] = [];
@@ -209,6 +208,11 @@ export function buildTeammatePrompt(
 
   // <IDENTITY> — anchors persona
   parts.push(`<IDENTITY>\n# You are ${teammate.name}\n\n${teammate.soul}\n`);
+
+  // <GOALS> — active objectives and priorities
+  if (teammate.goals.trim()) {
+    parts.push(`<GOALS>\n${teammate.goals}\n`);
+  }
 
   // <WISDOM> — stable knowledge
   if (teammate.wisdom.trim()) {
@@ -382,6 +386,7 @@ export function buildTeammatePrompt(
     "- **You MUST end your turn with visible text output.** A turn that ends with only tool calls and no text is a failed turn.",
     "- The `# Subject` line is REQUIRED — it becomes the message title.",
     "- Always write a substantive body. Never return just the subject.",
+    '- "Task completed", "already logged", or "no updates needed" is NOT a valid body. Describe what you actually did or deliver the actual content.',
     "- Use markdown: headings, lists, code blocks, bold, etc.",
     "",
     "### Handoffs",
@@ -401,24 +406,6 @@ export function buildTeammatePrompt(
     '- Do NOT just say "I\'ll hand this off" in prose — that does nothing. You MUST use the fenced block.',
   ];
 
-  // Session state (conditional)
-  if (options?.sessionFile) {
-    instrLines.push(
-      "",
-      "### Session State",
-      "",
-      `Your session file is at: \`${options.sessionFile}\``,
-      "",
-      "**After completing the task**, append a brief entry to this file with:",
-      "- What you did",
-      "- Key decisions made",
-      "- Files changed",
-      "- Anything the next task should know",
-      "",
-      "This is how you maintain continuity across tasks. Always read it, always update it.",
-    );
-  }
-
   // Cross-folder write boundary (AI teammates only)
   if (teammate.type === "ai") {
     instrLines.push(
@@ -431,31 +418,54 @@ export function buildTeammatePrompt(
     );
   }
 
-  // Memory updates
-  instrLines.push(
-    "",
-    "### Memory Updates",
-    "",
-    "**After completing the task**, update your memory files:",
-    "",
-    `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist. Always include YAML frontmatter with \`version: 0.6.0\` and \`type: daily\`.`,
-    "   - What you did",
-    "   - Key decisions made",
-    "   - Files changed",
-    "   - Anything the next task should know",
-    "",
-    `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`version\`, \`name\`, \`description\`, \`type\`). Always include \`version: 0.6.0\` as the first field. Update existing memory files if the topic already has one.`,
-    "",
-    "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
-    "",
-    "These files are your persistent memory. Without them, your next session starts from scratch.",
-  );
+  // Memory updates (skip for system and ephemeral tasks)
+  if (options?.system) {
+    instrLines.push(
+      "",
+      "### Memory Updates",
+      "",
+      "**This is a system maintenance task.** Do NOT update daily logs, typed memories, or WISDOM.md. Do NOT create or append to any memory files. Just do the work and produce your text response.",
+    );
+  } else if (options?.skipMemoryUpdates) {
+    instrLines.push(
+      "",
+      "### Memory Updates",
+      "",
+      "**This is an ephemeral side task.** Do NOT update daily logs, typed memories, or WISDOM.md. Do NOT create or append to any memory files. Just answer the question and produce your text response.",
+    );
+  } else {
+    instrLines.push(
+      "",
+      "### Memory Updates",
+      "",
+      "**After completing the task**, update your memory files:",
+      "",
+      `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist. Always include YAML frontmatter with \`version: ${PKG_VERSION}\` and \`type: daily\`.`,
+      "   - What you did",
+      "   - Key decisions made",
+      "   - Files changed",
+      "   - Anything the next task should know",
+      "",
+      `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`version\`, \`name\`, \`description\`, \`type\`). Always include \`version: ${PKG_VERSION}\` as the first field. Update existing memory files if the topic already has one.`,
+      "",
+      "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
+      "",
+      "These files are your persistent memory. Without them, your next session starts from scratch.",
+      "",
+      "**IMPORTANT:** Only log work you actually performed in THIS turn. Never log assumed, planned, or prior-turn work. If you didn't do it, don't log it.",
+    );
+  }
 
   // Section Reinforcement — back-references from high-attention bottom edge to each section tag
   instrLines.push("", "### Section Reinforcement", "");
   instrLines.push(
     "- Stay in character as defined in `<IDENTITY>` — never break persona or speak as a generic assistant.",
   );
+  if (teammate.goals.trim()) {
+    instrLines.push(
+      "- Keep `<GOALS>` in mind — prioritize work that advances your active objectives.",
+    );
+  }
   if (teammate.wisdom.trim()) {
     instrLines.push(
       "- Apply lessons from `<WISDOM>` before proposing solutions — do not repeat past mistakes.",

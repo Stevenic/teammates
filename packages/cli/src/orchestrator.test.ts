@@ -13,6 +13,7 @@ function makeTeammate(
     type: "ai" as const,
     role,
     soul: `# ${name}\n\n${role}`,
+    goals: "",
     wisdom: "",
     dailyLogs: [],
     weeklyLogs: [],

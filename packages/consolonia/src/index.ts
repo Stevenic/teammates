@@ -151,8 +151,11 @@ export {
   ChatView,
   type ChatViewOptions,
   type DropdownItem,
+  type FeedActionEntry,
   type FeedActionItem,
+  type FeedItem,
 } from "./widgets/chat-view.js";
+export { FeedStore } from "./widgets/feed-store.js";
 export {
   Interview,
   type InterviewOptions,
@@ -172,6 +175,11 @@ export {
   TextInput,
   type TextInputOptions,
 } from "./widgets/text-input.js";
+export {
+  VirtualList,
+  type VirtualListItem,
+  type VirtualListOptions,
+} from "./widgets/virtual-list.js";
 
 // ── Markdown ─────────────────────────────────────────────────────────
 

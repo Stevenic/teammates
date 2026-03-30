@@ -82,7 +82,7 @@ The CLI handles routing, handoffs, and memory injection automatically.
 
 Tell your agent at the start of each session:
 
-> Read `.teammates/<name>/SOUL.md` and `.teammates/<name>/WISDOM.md` before starting work.
+> Read `.teammates/<name>/SOUL.md`, `.teammates/<name>/GOALS.md`, and `.teammates/<name>/WISDOM.md` before starting work.
 
 Most tools support system prompts or project instructions where you can add this permanently.
 

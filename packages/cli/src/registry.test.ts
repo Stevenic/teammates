@@ -250,6 +250,7 @@ describe("Registry.register", () => {
       type: "ai",
       role: "Test role.",
       soul: "# Test",
+      goals: "",
       wisdom: "",
       dailyLogs: [],
       weeklyLogs: [],

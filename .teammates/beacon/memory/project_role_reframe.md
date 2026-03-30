@@ -1,5 +1,5 @@
 ---
-version: 0.6.0
+version: 0.7.0
 name: team-role-reframe
 description: Team roles reframed 2026-03-21 — Beacon is Software Engineer, Scribe is PM, Pipeline is DevOps
 type: project

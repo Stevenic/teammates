@@ -1,5 +1,5 @@
 ---
-version: 0.6.1
+version: 0.7.0
 name: Always hand off CLI code changes to Beacon
 description: Scribe must never modify cli/src/** files directly — hand off to Beacon with specs
 type: feedback

@@ -24,6 +24,8 @@ export interface TeammateConfig {
   role: string;
   /** Full SOUL.md content */
   soul: string;
+  /** Full GOALS.md content */
+  goals: string;
   /** Full WISDOM.md content */
   wisdom: string;
   /** Daily log entries (most recent first) */
@@ -91,6 +93,10 @@ export interface TaskResult {
   rawOutput?: string;
   /** The full prompt sent to the agent (for debug logging) */
   fullPrompt?: string;
+  /** Path to the prompt file (.teammates/.tmp/<logfile>-prompt.md) */
+  promptFile?: string;
+  /** Path to the activity/debug log file (.teammates/.tmp/<logfile>.md) */
+  logFile?: string;
   /** Process diagnostics for debugging empty/failed responses */
   diagnostics?: {
     /** Process exit code (null if killed by signal) */
@@ -118,6 +124,12 @@ export interface TaskAssignment {
   raw?: boolean;
   /** When true, this is a system-initiated task — suppress progress bar */
   system?: boolean;
+  /** When true, suppress memory-writing instructions in the teammate prompt. */
+  skipMemoryUpdates?: boolean;
+  /** Callback fired during execution with real-time activity events from the agent. */
+  onActivity?: (events: ActivityEvent[]) => void;
+  /** Abort signal — when aborted, the adapter should kill/disconnect the running agent. */
+  signal?: AbortSignal;
 }
 
 /** Orchestrator event for logging/hooks */
@@ -129,40 +141,109 @@ export type OrchestratorEvent =
 /** A task queue entry — either an agent task or an internal operation. */
 export type QueueEntry =
   | {
+      id: string;
       type: "agent";
       teammate: string;
       task: string;
       system?: boolean;
       migration?: boolean;
+      /** Thread ID this task belongs to (if any). */
+      threadId?: number;
       /** Frozen conversation snapshot taken at queue time (used by @everyone). */
       contextSnapshot?: {
         history: { role: string; text: string }[];
         summary: string;
       };
     }
-  | { type: "compact"; teammate: string; task: string }
-  | { type: "retro"; teammate: string; task: string }
-  | { type: "btw"; teammate: string; task: string }
-  | { type: "debug"; teammate: string; task: string }
-  | { type: "script"; teammate: string; task: string }
-  | { type: "summarize"; teammate: string; task: string };
+  | {
+      id: string;
+      type: "compact";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "retro";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "btw";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "debug";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "script";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    }
+  | {
+      id: string;
+      type: "summarize";
+      teammate: string;
+      task: string;
+      threadId?: number;
+    };
 
 /** State captured when an agent is interrupted mid-task. */
-export interface InterruptState {
-  /** The teammate that was interrupted */
-  teammate: string;
-  /** The original task prompt (user-facing, not the full wrapped prompt) */
-  originalTask: string;
-  /** The full prompt sent to the agent (identity + memory + task) */
-  originalFullPrompt: string;
-  /** Condensed conversation log from the interrupted session */
-  conversationLog: string;
-  /** How long the agent ran before interruption (ms) */
+
+/** A threaded task view — groups related messages under a single task ID. */
+export interface TaskThread {
+  /** Short numeric ID displayed as #1, #2, etc. */
+  id: number;
+  /** The user's original input that created this thread. */
+  originMessage: string;
+  /** When the thread was created. */
+  originTimestamp: number;
+  /** Flat append-only list of replies. */
+  entries: ThreadEntry[];
+  /** Queue entry IDs still pending or running in this thread. */
+  pendingTasks: Set<string>;
+  /** Whether the whole thread is collapsed in the feed. */
+  collapsed: boolean;
+  /** Indices of individually collapsed replies. */
+  collapsedEntries: Set<number>;
+  /** Timestamp when this thread was last focused. */
+  focusedAt?: number;
+}
+
+/** A single entry within a TaskThread. */
+export interface ThreadEntry {
+  /** What produced this entry. */
+  type: "user" | "agent" | "handoff" | "system";
+  /** Which teammate produced this entry (undefined for user entries). */
+  teammate?: string;
+  /** The message content (raw markdown body). */
+  content: string;
+  /** Subject line for agent responses. */
+  subject?: string;
+  /** When this entry was created. */
+  timestamp: number;
+}
+
+/** A single activity event from an agent's debug log (e.g. tool call, error). */
+export interface ActivityEvent {
+  /** Elapsed time since task start in milliseconds. */
   elapsedMs: number;
-  /** Number of tool calls made before interruption */
-  toolCallCount: number;
-  /** Files written/modified before interruption */
-  filesChanged: string[];
+  /** Tool name or action type (e.g. "Read", "Write", "Bash", "Grep"). */
+  tool: string;
+  /** Brief detail — file path, search query, command snippet. */
+  detail?: string;
+  /** Whether this event is an error. */
+  isError?: boolean;
 }
 
 /** A registered slash command. */

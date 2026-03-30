@@ -4,7 +4,7 @@
  *
  * Supports any CLI agent that accepts a prompt and runs to completion:
  *   claude -p "prompt"
- *   codex exec "prompt" --full-auto
+ *   codex exec "prompt" -s danger-full-access -a never
  *   aider --message "prompt"
  *   etc.
  *
@@ -17,10 +17,16 @@
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  watchCodexDebugLog,
+  watchCopilotDebugLog,
+  watchDebugLog,
+  watchDebugLogErrors,
+} from "../activity-watcher.js";
 import type {
   AgentAdapter,
   InstalledService,
@@ -33,6 +39,7 @@ import {
 } from "../adapter.js";
 import { autoCompactForBudget } from "../compact.js";
 import type {
+  ActivityEvent,
   HandoffEnvelope,
   SandboxLevel,
   TaskResult,
@@ -57,6 +64,8 @@ export interface SpawnResult {
   timedOut: boolean;
   /** Path to the debug log file, if one was written */
   debugFile?: string;
+  /** Path to the prompt file written for this task */
+  promptFile?: string;
 }
 
 // ─── Agent presets ──────────────────────────────────────────────────
@@ -86,70 +95,12 @@ export interface AgentPreset {
   parseOutput?(raw: string): string;
 }
 
-export const PRESETS: Record<string, AgentPreset> = {
-  claude: {
-    name: "claude",
-    command: "claude",
-    buildArgs(ctx, _teammate, options) {
-      const args = ["-p", "--verbose", "--dangerously-skip-permissions"];
-      if (options.model) args.push("--model", options.model);
-      if (ctx.debugFile) args.push("--debug-file", ctx.debugFile);
-      return args;
-    },
-    env: { FORCE_COLOR: "1", CLAUDECODE: "" },
-    stdinPrompt: true,
-    supportsDebugFile: true,
-  },
+// ─── Built-in presets ────────────────────────────────────────────────
+// Preset definitions live in presets.ts to avoid circular imports
+// (claude.ts/codex.ts extend CliProxyAdapter from this file).
+import { PRESETS } from "./presets.js";
 
-  codex: {
-    name: "codex",
-    command: "codex",
-    buildArgs(_ctx, teammate, options) {
-      const args = ["exec", "-"];
-      if (teammate.cwd) args.push("-C", teammate.cwd);
-      const sandbox =
-        teammate.sandbox ?? options.defaultSandbox ?? "workspace-write";
-      args.push("-s", sandbox);
-      args.push("--full-auto");
-      args.push("--ephemeral");
-      args.push("--json");
-      if (options.model) args.push("-m", options.model);
-      return args;
-    },
-    env: { NO_COLOR: "1" },
-    stdinPrompt: true,
-    /** Parse JSONL output from codex exec --json, returning only the last agent message */
-    parseOutput(raw: string): string {
-      let lastMessage = "";
-      for (const line of raw.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (
-            event.type === "item.completed" &&
-            event.item?.type === "agent_message"
-          ) {
-            lastMessage = event.item.text;
-          }
-        } catch {
-          /* skip non-JSON lines */
-        }
-      }
-      return lastMessage || raw;
-    },
-  },
-
-  aider: {
-    name: "aider",
-    command: "aider",
-    buildArgs({ promptFile }, _teammate, options) {
-      const args = ["--message-file", promptFile, "--yes", "--no-git"];
-      if (options.model) args.push("--model", options.model);
-      return args;
-    },
-    env: { FORCE_COLOR: "1" },
-  },
-};
+export { PRESETS } from "./presets.js";
 
 // ─── Adapter ────────────────────────────────────────────────────────
 
@@ -178,17 +129,9 @@ export class CliProxyAdapter implements AgentAdapter {
   public services: InstalledService[] = [];
   private preset: AgentPreset;
   private options: CliProxyOptions;
-  /** Session files per teammate — persists state across task invocations. */
-  private sessionFiles: Map<string, string> = new Map();
-  /** Base directory for session files. */
-  private sessionsDir = "";
+  private _tmpInitialized = false;
   /** Temp prompt files that need cleanup — guards against crashes before finally. */
   private pendingTempFiles: Set<string> = new Set();
-  /** Active child processes per teammate — used by killAgent() for interruption. */
-  private activeProcesses: Map<
-    string,
-    { child: ChildProcess; done: Promise<SpawnResult>; debugFile?: string }
-  > = new Map();
 
   constructor(options: CliProxyOptions) {
     this.options = options;
@@ -208,15 +151,10 @@ export class CliProxyAdapter implements AgentAdapter {
   async startSession(teammate: TeammateConfig): Promise<string> {
     const id = `${this.name}-${teammate.name}-${nextId++}`;
 
-    // Always ensure sessions directory exists before writing — startupMaintenance
-    // runs concurrently and may delete empty dirs between calls.
+    // Ensure .tmp is gitignored (needed for debug dir)
     const tmpBase = join(teammate.cwd ?? process.cwd(), ".teammates", ".tmp");
-    const dir = join(tmpBase, "sessions");
-    await mkdir(dir, { recursive: true });
-
-    if (!this.sessionsDir) {
-      this.sessionsDir = dir;
-      // Ensure .tmp is gitignored
+    if (!this._tmpInitialized) {
+      this._tmpInitialized = true;
       const gitignorePath = join(tmpBase, "..", ".gitignore");
       const existing = await readFile(gitignorePath, "utf-8").catch(() => "");
       if (!existing.includes(".tmp/")) {
@@ -228,9 +166,6 @@ export class CliProxyAdapter implements AgentAdapter {
         ).catch(() => {});
       }
     }
-    const sessionFile = join(this.sessionsDir, `${teammate.name}.md`);
-    await writeFile(sessionFile, `# Session — ${teammate.name}\n\n`, "utf-8");
-    this.sessionFiles.set(teammate.name, sessionFile);
 
     return id;
   }
@@ -239,11 +174,16 @@ export class CliProxyAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean },
+    options?: {
+      raw?: boolean;
+      system?: boolean;
+      skipMemoryUpdates?: boolean;
+      onActivity?: (events: ActivityEvent[]) => void;
+      signal?: AbortSignal;
+    },
   ): Promise<TaskResult> {
     // If raw mode is set, skip all prompt wrapping — send prompt as-is
     // Used for defensive retries where the full prompt template is counterproductive
-    const sessionFile = this.sessionFiles.get(teammate.name);
     let fullPrompt: string;
     if (options?.raw) {
       fullPrompt = prompt;
@@ -285,9 +225,10 @@ export class CliProxyAdapter implements AgentAdapter {
       fullPrompt = buildTeammatePrompt(teammate, prompt, {
         roster: this.roster,
         services: this.services,
-        sessionFile,
         recallResults: recall?.results,
         userProfile,
+        system: options?.system,
+        skipMemoryUpdates: options?.skipMemoryUpdates,
       });
     } else {
       const parts = [prompt];
@@ -313,22 +254,52 @@ export class CliProxyAdapter implements AgentAdapter {
       fullPrompt = parts.join("\n");
     }
 
-    // Write prompt to temp file to avoid shell escaping issues
-    const promptFile = join(
-      tmpdir(),
-      `teammates-${this.name}-${randomUUID()}.md`,
+    // Generate persistent log file paths in .teammates/.tmp/debug/
+    // These survive after the task so /debug can read them later.
+    //   <logBase>-prompt.md  — the full prompt sent to the agent
+    //   <logBase>.md          — adapter-specific activity/debug log
+    const debugDir = join(
+      teammate.cwd ?? process.cwd(),
+      ".teammates",
+      ".tmp",
+      "debug",
     );
-    await writeFile(promptFile, fullPrompt, "utf-8");
-    this.pendingTempFiles.add(promptFile);
+    try {
+      mkdirSync(debugDir, { recursive: true });
+    } catch {
+      /* best effort */
+    }
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const baseName = `${teammate.name}-${ts}`;
+    const persistentPromptFile = join(debugDir, `${baseName}-prompt.md`);
+    const logFile = join(debugDir, `${baseName}.md`);
+
+    // Write prompt to persistent file (also used as agent input for file-based presets)
+    await writeFile(persistentPromptFile, fullPrompt, "utf-8");
+    if (!this.preset.supportsDebugFile) {
+      // Non-Claude adapters don't own their own debug file, so create it now.
+      // This makes the paired file visible immediately instead of only on close.
+      await writeFile(logFile, "", "utf-8");
+    }
+    this.pendingTempFiles.add(persistentPromptFile);
 
     try {
-      const spawn = await this.spawnAndProxy(teammate, promptFile, fullPrompt);
+      const spawn = await this.spawnAndProxy(
+        teammate,
+        persistentPromptFile,
+        fullPrompt,
+        options?.onActivity,
+        logFile,
+        options?.signal,
+      );
       const output = this.preset.parseOutput
         ? this.preset.parseOutput(spawn.output)
         : spawn.output;
       const teammateNames = this.roster.map((r) => r.name);
       const result = parseResult(teammate.name, output, teammateNames, prompt);
       result.fullPrompt = fullPrompt;
+      result.promptFile = persistentPromptFile;
+      result.logFile = logFile;
       result.diagnostics = {
         exitCode: spawn.exitCode,
         signal: spawn.signal,
@@ -338,8 +309,9 @@ export class CliProxyAdapter implements AgentAdapter {
       };
       return result;
     } finally {
-      this.pendingTempFiles.delete(promptFile);
-      await unlink(promptFile).catch(() => {});
+      // Don't delete promptFile — it persists for /debug.
+      // Old files cleaned by cleanOldTempFiles() on startup.
+      this.pendingTempFiles.delete(persistentPromptFile);
     }
   }
 
@@ -371,6 +343,7 @@ export class CliProxyAdapter implements AgentAdapter {
           type: "ai" as const,
           role: "",
           soul: "",
+          goals: "",
           wisdom: "",
           dailyLogs: [],
           weeklyLogs: [],
@@ -402,6 +375,7 @@ export class CliProxyAdapter implements AgentAdapter {
         });
 
         if (routeStdin && child.stdin) {
+          child.stdin.on("error", () => {});
           child.stdin.write(prompt);
           child.stdin.end();
         }
@@ -450,49 +424,29 @@ export class CliProxyAdapter implements AgentAdapter {
     }
   }
 
-  getSessionFile(teammateName: string): string | undefined {
-    return this.sessionFiles.get(teammateName);
-  }
-
-  async killAgent(teammate: string): Promise<SpawnResult | null> {
-    const entry = this.activeProcesses.get(teammate);
-    if (!entry || entry.child.killed) return null;
-
-    // Kill with SIGTERM → 5s → SIGKILL
-    entry.child.kill("SIGTERM");
-    setTimeout(() => {
-      if (!entry.child.killed) {
-        entry.child.kill("SIGKILL");
-      }
-    }, 5_000);
-
-    // Wait for the process to exit — the spawnAndProxy close handler resolves this
-    return entry.done;
-  }
-
   async destroySession(_sessionId: string): Promise<void> {
     // Clean up any leaked temp prompt files
     for (const file of this.pendingTempFiles) {
       await unlink(file).catch(() => {});
     }
     this.pendingTempFiles.clear();
-
-    // Clean up session files
-    for (const [, file] of this.sessionFiles) {
-      await unlink(file).catch(() => {});
-    }
-    this.sessionFiles.clear();
   }
 
   /**
    * Spawn the agent, stream its output live, and capture it.
+   * @param logFile Path where adapter-specific activity log is written:
+   *   - Claude: passed as --debug-file (Claude writes debug output here)
+   *   - Codex: JSONL stdout is dumped here on process close
+   *   - Others: raw stdout is written here on close
    */
   private spawnAndProxy(
     teammate: TeammateConfig,
     promptFile: string,
     fullPrompt: string,
+    onActivity?: (events: ActivityEvent[]) => void,
+    logFile?: string,
+    signal?: AbortSignal,
   ): Promise<SpawnResult> {
-    // Create a deferred promise so killAgent() can await the same result
     let resolveOuter!: (result: SpawnResult) => void;
     let rejectOuter!: (err: Error) => void;
     const done = new Promise<SpawnResult>((res, rej) => {
@@ -500,23 +454,9 @@ export class CliProxyAdapter implements AgentAdapter {
       rejectOuter = rej;
     });
 
-    // Always generate a debug log file for presets that support it (e.g. Claude's --debug-file).
-    // Written to .teammates/.tmp/debug/ so startup maintenance can clean old logs.
-    let debugFile: string | undefined;
-    if (this.preset.supportsDebugFile) {
-      const debugDir = join(
-        teammate.cwd ?? process.cwd(),
-        ".teammates",
-        ".tmp",
-        "debug",
-      );
-      try {
-        mkdirSync(debugDir, { recursive: true });
-      } catch {
-        /* best effort */
-      }
-      debugFile = join(debugDir, `agent-${teammate.name}-${Date.now()}.log`);
-    }
+    // For Claude, the logFile IS the debug file (passed via --debug-file).
+    // For other presets, debugFile stays undefined (they don't support it).
+    const debugFile = this.preset.supportsDebugFile ? logFile : undefined;
 
     const args = [
       ...this.preset.buildArgs(
@@ -554,12 +494,55 @@ export class CliProxyAdapter implements AgentAdapter {
       stdio: [interactive || useStdin ? "pipe" : "ignore", "pipe", "pipe"],
       shell: needsShell,
     });
+    const taskStartTime = Date.now();
 
-    // Register the active process for killAgent() access
-    this.activeProcesses.set(teammate.name, { child, done, debugFile });
+    // Listen for abort signal — kill the child process on cancellation.
+    // Uses SIGTERM → 5s → SIGKILL escalation, same as the old killAgent().
+    let abortKillTimer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = () => {
+      if (!child.killed) {
+        child.kill("SIGTERM");
+        abortKillTimer = setTimeout(() => {
+          if (!child.killed) {
+            child.kill("SIGKILL");
+          }
+        }, 5_000);
+      }
+    };
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
 
-    // Pipe prompt via stdin if the preset requires it
+    // Start watching for real-time activity events.
+    // Claude: parse the debug log for tool names + errors (Claude writes this file via --debug-file).
+    // Codex: tail the JSONL debug log file we append during execution.
+    const stopWatchers: (() => void)[] = [];
+    if (onActivity) {
+      if (this.preset.name === "codex" && logFile) {
+        stopWatchers.push(
+          watchCodexDebugLog(logFile, taskStartTime, onActivity),
+        );
+      } else if (this.preset.name === "copilot" && logFile) {
+        stopWatchers.push(
+          watchCopilotDebugLog(logFile, taskStartTime, onActivity),
+        );
+      } else if (debugFile) {
+        stopWatchers.push(watchDebugLog(debugFile, taskStartTime, onActivity));
+        stopWatchers.push(
+          watchDebugLogErrors(debugFile, taskStartTime, onActivity),
+        );
+      }
+    }
+
+    // Pipe prompt via stdin if the preset requires it.
+    // Swallow EPIPE / EOF errors — the child may close stdin before
+    // the write completes (e.g. Codex exits early on bad input).
     if (useStdin && child.stdin) {
+      child.stdin.on("error", () => {});
       child.stdin.write(fullPrompt);
       child.stdin.end();
     }
@@ -583,6 +566,7 @@ export class CliProxyAdapter implements AgentAdapter {
     // Connect user's stdin → child only if agent may ask questions
     let onUserInput: ((chunk: Buffer) => void) | null = null;
     if (interactive && !useStdin && child.stdin) {
+      child.stdin.on("error", () => {});
       onUserInput = (chunk: Buffer) => {
         child.stdin?.write(chunk);
       };
@@ -598,19 +582,35 @@ export class CliProxyAdapter implements AgentAdapter {
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutBufs.push(chunk);
+      if (logFile && !this.preset.supportsDebugFile) {
+        try {
+          appendFileSync(logFile, chunk);
+        } catch {
+          /* best effort */
+        }
+      }
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrBufs.push(chunk);
+      if (logFile && !this.preset.supportsDebugFile) {
+        try {
+          appendFileSync(logFile, chunk);
+        } catch {
+          /* best effort */
+        }
+      }
     });
 
     const cleanup = () => {
       clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
+      if (abortKillTimer) clearTimeout(abortKillTimer);
+      if (signal) signal.removeEventListener("abort", onAbort);
       if (onUserInput) {
         process.stdin.removeListener("data", onUserInput);
       }
-      this.activeProcesses.delete(teammate.name);
+      for (const stop of stopWatchers) stop();
     };
 
     child.on("close", (code, signal) => {
@@ -618,6 +618,17 @@ export class CliProxyAdapter implements AgentAdapter {
       const stdout = Buffer.concat(stdoutBufs).toString("utf-8");
       const stderr = Buffer.concat(stderrBufs).toString("utf-8");
       const output = stdout + (stderr ? `\n${stderr}` : "");
+
+      // Write the logFile for non-Claude adapters.
+      // Claude writes its own debug log via --debug-file; others need us to dump stdout.
+      if (logFile && !this.preset.supportsDebugFile) {
+        try {
+          // For Codex: dump raw JSONL stdout. For others: dump raw stdout.
+          writeFileSync(logFile, stdout, "utf-8");
+        } catch {
+          /* best effort */
+        }
+      }
 
       resolveOuter({
         output: killed
@@ -634,6 +645,13 @@ export class CliProxyAdapter implements AgentAdapter {
 
     child.on("error", (err) => {
       cleanup();
+      if (logFile && !this.preset.supportsDebugFile) {
+        try {
+          appendFileSync(logFile, `\n[SPAWN ERROR] ${err.message}\n`, "utf-8");
+        } catch {
+          /* best effort */
+        }
+      }
       rejectOuter(new Error(`Failed to spawn ${command}: ${err.message}`));
     });
 

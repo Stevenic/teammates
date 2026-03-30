@@ -31,10 +31,11 @@ Concrete recipes for common workflows. Each recipe is self-contained — read th
 
 **Steps:**
 
-1. Copy the SOUL.md, WISDOM.md, and RESUME.md templates from `.teammates/TEMPLATE.md` into a new folder:
+1. Copy the SOUL.md, GOALS.md, WISDOM.md, and RESUME.md templates from `.teammates/TEMPLATE.md` into a new folder:
    ```
    .teammates/<name>/
      SOUL.md
+     GOALS.md
      WISDOM.md
      RESUME.md
      memory/
@@ -44,16 +45,18 @@ Concrete recipes for common workflows. Each recipe is self-contained — read th
 
 2. Fill in every section of SOUL.md with project-specific details. Use `template/example/SOUL.md` as a reference for tone and detail level. You can also start from one of the 15 built-in personas at `packages/cli/personas/` — each provides a role-specific SOUL.md scaffold with identity, principles, and ownership pre-filled.
 
-3. Leave WISDOM.md in its initial empty state — wisdom emerges after the first compaction.
+3. Fill in GOALS.md with 2-3 initial objectives based on the teammate's domain. Use priority tiers (P0/P1/P2). Reference `template/example/GOALS.md` for format.
 
-4. Update these shared files:
+4. Leave WISDOM.md in its initial empty state — wisdom emerges after the first compaction.
+
+5. Update these shared files:
    - `.teammates/README.md` — add to the roster table, routing guide, and dependency flow
    - `.teammates/CROSS-TEAM.md` — add a row to the Ownership Scopes table
    - `.teammates/PROTOCOL.md` — update the conflict resolution table if the new domain introduces new conflict types
 
-5. Update existing teammates' SOUL.md Boundaries sections to reference the new teammate where relevant.
+6. Update existing teammates' SOUL.md Boundaries sections to reference the new teammate where relevant.
 
-6. Verify: the new teammate's ownership globs don't overlap with existing teammates.
+7. Verify: the new teammate's ownership globs don't overlap with existing teammates.
 
 **Tip:** Start broad. A new teammate with wide ownership that narrows over time is better than one with gaps from day one.
 

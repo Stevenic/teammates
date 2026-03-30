@@ -35,6 +35,11 @@ import type { InputEvent } from "../input/events.js";
 import { Control } from "../layout/control.js";
 import type { Constraint, Rect, Size } from "../layout/types.js";
 import type { StyledSpan } from "../styled.js";
+import {
+  type FeedActionEntry,
+  type FeedActionItem,
+  FeedStore,
+} from "./feed-store.js";
 import { type StyledLine, StyledText } from "./styled-text.js";
 import { Text } from "./text.js";
 import {
@@ -42,6 +47,7 @@ import {
   type InputColorizer,
   TextInput,
 } from "./text-input.js";
+import { VirtualList, type VirtualListItem } from "./virtual-list.js";
 
 // ── URL / file path detection ───────────────────────────────────────
 const URL_REGEX = /https?:\/\/[^\s)>\]]+/g;
@@ -62,20 +68,12 @@ export interface DropdownItem {
   completion: string;
 }
 
-/** A single action item within an action line. */
-export interface FeedActionItem {
-  id: string;
-  normalStyle: StyledLine;
-  hoverStyle: StyledLine;
-}
-
-/** Entry in the feed action map — single action or multiple side-by-side. */
-interface FeedActionEntry {
-  /** All action items on this line. */
-  items: FeedActionItem[];
-  /** Combined normal style for the full line. */
-  normalStyle: StyledLine;
-}
+// Re-export types that moved to feed-store.ts for backward compatibility
+export type {
+  FeedActionEntry,
+  FeedActionItem,
+  FeedItem,
+} from "./feed-store.js";
 
 export interface ChatViewOptions {
   /** Banner text shown at the top of the chat area. */
@@ -136,15 +134,14 @@ export class ChatView extends Control {
   // ── Child controls ─────────────────────────────────────────────
   private _banner: Control;
   private _topSeparator: _Separator;
-  private _feedLines: StyledText[] = [];
-  /** Maps feed line index → action(s) for clickable lines. */
-  private _feedActions: Map<number, FeedActionEntry> = new Map();
-  /** Feed line index currently hovered (-1 if none). */
-  private _hoveredAction: number = -1;
-  /** Maps screen Y → feed line index (rebuilt each render). */
-  private _screenToFeedLine: Map<number, number> = new Map();
-  /** Maps screen Y → row offset within the feed line (for multi-row wrapped lines). */
-  private _screenToFeedRow: Map<number, number> = new Map();
+  /** Identity-based feed item store — replaces _feedLines + _feedActions + _hiddenFeedLines. */
+  private _store: FeedStore = new FeedStore();
+  /** ID of the feed item currently hovered (null if none). */
+  private _hoveredItemId: string | null = null;
+  /** Scrollable list widget — owns scroll state, height cache, screen mapping, scrollbar. */
+  private _feed!: VirtualList;
+  /** Number of non-feed items (banner + separator) prepended to VirtualList items. */
+  private _feedItemOffset = 0;
   private _bottomSeparator: _Separator;
   private _progressText: StyledText;
   private _input: TextInput;
@@ -163,31 +160,6 @@ export class ChatView extends Control {
   private _dropdownStyle: TextStyle;
   private _footerStyle: TextStyle;
   private _maxInputH: number;
-  private _feedScrollOffset: number = 0;
-
-  // ── Feed geometry (cached from last render for hit-testing) ──
-  private _feedX: number = 0;
-  private _contentWidth: number = 0;
-
-  // ── Feed line height cache ───────────────────────────────────
-  /** Cached measured height per feed line index. Invalidated on width change. */
-  private _feedHeightCache: number[] = [];
-  /** The content width used for the last height cache pass. */
-  private _feedHeightCacheWidth: number = -1;
-
-  // ── Scrollbar state ───────────────────────────────────────────
-  /** Cached from last render for hit-testing. */
-  private _scrollbarX: number = -1;
-  private _feedY: number = 0;
-  private _feedH: number = 0;
-  private _thumbPos: number = 0;
-  private _thumbSize: number = 0;
-  private _maxScroll: number = 0;
-  private _scrollbarVisible: boolean = false;
-  /** True while the user is dragging the scrollbar thumb. */
-  private _dragging: boolean = false;
-  /** The Y offset within the thumb where the drag started. */
-  private _dragOffsetY: number = 0;
 
   // ── Selection state ──────────────────────────────────────────
   private _selAnchor: { x: number; y: number } | null = null;
@@ -235,6 +207,18 @@ export class ChatView extends Control {
       this._separatorStyle,
     );
     this.addChild(this._topSeparator);
+
+    // Virtual list (scrollable feed area — owns scroll, height cache, scrollbar)
+    this._feed = new VirtualList({
+      trackStyle: this._separatorStyle,
+      thumbStyle: this._feedStyle,
+    });
+    this._feed.onRenderOverlay = (ctx, x, y, w, h) => {
+      if (this._selAnchor && this._selEnd) {
+        this._renderSelection(ctx, x, y, w, h);
+      }
+    };
+    this.addChild(this._feed);
 
     // Bottom separator (between feed and input area)
     this._bottomSeparator = new _Separator(
@@ -375,24 +359,24 @@ export class ChatView extends Control {
 
   /** Append a line of plain text to the feed. Auto-scrolls to bottom. */
   appendToFeed(text: string, style?: TextStyle): void {
-    const line = new StyledText({
+    const content = new StyledText({
       lines: [text],
       defaultStyle: style ?? this._feedStyle,
       wrap: true,
     });
-    this._feedLines.push(line);
+    this._store.push(content);
     this._autoScrollToBottom();
     this.invalidate();
   }
 
   /** Append a styled line (StyledSpan) to the feed. */
   appendStyledToFeed(styledLine: StyledSpan): void {
-    const line = new StyledText({
+    const content = new StyledText({
       lines: [styledLine],
       defaultStyle: this._feedStyle,
       wrap: true,
     });
-    this._feedLines.push(line);
+    this._store.push(content);
     this._autoScrollToBottom();
     this.invalidate();
   }
@@ -403,14 +387,12 @@ export class ChatView extends Control {
     normalContent: StyledLine,
     hoverContent: StyledLine,
   ): void {
-    const line = new StyledText({
+    const content = new StyledText({
       lines: [normalContent],
       defaultStyle: this._feedStyle,
       wrap: false,
     });
-    const idx = this._feedLines.length;
-    this._feedLines.push(line);
-    this._feedActions.set(idx, {
+    this._store.push(content, {
       items: [{ id, normalStyle: normalContent, hoverStyle: hoverContent }],
       normalStyle: normalContent,
     });
@@ -422,14 +404,12 @@ export class ChatView extends Control {
   appendActionList(actions: FeedActionItem[]): void {
     if (actions.length === 0) return;
     const combined = this._concatSpans(actions.map((a) => a.normalStyle));
-    const line = new StyledText({
+    const content = new StyledText({
       lines: [combined],
       defaultStyle: this._feedStyle,
       wrap: false,
     });
-    const idx = this._feedLines.length;
-    this._feedLines.push(line);
-    this._feedActions.set(idx, { items: actions, normalStyle: combined });
+    this._store.push(content, { items: actions, normalStyle: combined });
     this._autoScrollToBottom();
     this.invalidate();
   }
@@ -447,12 +427,12 @@ export class ChatView extends Control {
   /** Append multiple plain lines to the feed. */
   appendLines(lines: string[], style?: TextStyle): void {
     for (const text of lines) {
-      const line = new StyledText({
+      const content = new StyledText({
         lines: [text],
         defaultStyle: style ?? this._feedStyle,
         wrap: true,
       });
-      this._feedLines.push(line);
+      this._store.push(content);
     }
     this._autoScrollToBottom();
     this.invalidate();
@@ -460,39 +440,117 @@ export class ChatView extends Control {
 
   /** Clear everything between the banner and the input box. */
   clear(): void {
-    this._feedLines = [];
-    this._feedHeightCache = [];
-    this._feedActions.clear();
-    this._hoveredAction = -1;
-    this._feedScrollOffset = 0;
+    this._store.clear();
+    this._hoveredItemId = null;
+    this._feed.reset();
     this.invalidate();
   }
 
   /** Total number of feed lines. */
   get feedLineCount(): number {
-    return this._feedLines.length;
+    return this._store.length;
   }
 
   /** Update the content of an existing feed line by index. Also removes its action if any. */
   updateFeedLine(index: number, content: StyledLine): void {
-    if (index < 0 || index >= this._feedLines.length) return;
-    this._feedLines[index].lines = [content];
-    // Invalidate cached height — content changed, may wrap differently
-    delete this._feedHeightCache[index];
-    this._feedActions.delete(index);
-    if (this._hoveredAction === index) this._hoveredAction = -1;
+    const item = this._store.at(index);
+    if (!item) return;
+    item.content.lines = [content];
+    this._feed.invalidateItem(item.id);
+    item.actions = undefined;
+    if (this._hoveredItemId === item.id) this._hoveredItemId = null;
     this.invalidate();
+  }
+
+  /** Update the action items on an existing action line by index. */
+  updateActionList(index: number, actions: FeedActionItem[]): void {
+    const item = this._store.at(index);
+    if (!item) return;
+    if (actions.length === 0) return;
+    const combined = this._concatSpans(actions.map((a) => a.normalStyle));
+    item.content.lines = [combined];
+    this._feed.invalidateItem(item.id);
+    item.actions = { items: actions, normalStyle: combined };
+    if (this._hoveredItemId === item.id) this._hoveredItemId = null;
+    this.invalidate();
+  }
+
+  // ── Insert API ──────────────────────────────────────────────────
+  // No _shiftFeedIndices needed — FeedStore handles the single array splice.
+
+  /** Insert a plain text line at a specific feed index. */
+  insertToFeed(atIndex: number, text: string, style?: TextStyle): void {
+    const content = new StyledText({
+      lines: [text],
+      defaultStyle: style ?? this._feedStyle,
+      wrap: true,
+    });
+    this._store.insert(atIndex, content);
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
+  /** Insert a styled line at a specific feed index. */
+  insertStyledToFeed(atIndex: number, styledLine: StyledSpan): void {
+    const content = new StyledText({
+      lines: [styledLine],
+      defaultStyle: this._feedStyle,
+      wrap: true,
+    });
+    this._store.insert(atIndex, content);
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
+  /** Insert an action list at a specific feed index. */
+  insertActionList(atIndex: number, actions: FeedActionItem[]): void {
+    if (actions.length === 0) return;
+    const combined = this._concatSpans(actions.map((a) => a.normalStyle));
+    const content = new StyledText({
+      lines: [combined],
+      defaultStyle: this._feedStyle,
+      wrap: false,
+    });
+    this._store.insert(atIndex, content, {
+      items: actions,
+      normalStyle: combined,
+    });
+    this._autoScrollToBottom();
+    this.invalidate();
+  }
+
+  // ── Visibility API ────────────────────────────────────────────────
+
+  /** Hide or show a single feed line. Hidden lines take zero height. */
+  setFeedLineHidden(index: number, hidden: boolean): void {
+    const item = this._store.at(index);
+    if (item) item.hidden = hidden;
+    this.invalidate();
+  }
+
+  /** Hide or show a range of feed lines. */
+  setFeedLinesHidden(startIndex: number, count: number, hidden: boolean): void {
+    for (let i = startIndex; i < startIndex + count; i++) {
+      const item = this._store.at(i);
+      if (item) item.hidden = hidden;
+    }
+    this.invalidate();
+  }
+
+  /** Check if a feed line is hidden. */
+  isFeedLineHidden(index: number): boolean {
+    return this._store.at(index)?.hidden === true;
   }
 
   /** Scroll the feed to the bottom. */
   scrollToBottom(): void {
-    this._autoScrollToBottom();
+    this._feed.scrollToBottom();
     this.invalidate();
   }
 
   /** Scroll the feed by a delta (positive = down, negative = up). */
   scrollFeed(delta: number): void {
-    this._feedScrollOffset = Math.max(0, this._feedScrollOffset + delta);
+    this._feed.scroll(delta);
     // Clear selection when scrolling (unless actively drag-selecting)
     if (!this._selecting && this._hasSelection()) {
       this.clearSelection();
@@ -717,6 +775,7 @@ export class ChatView extends Control {
     // Mouse events: wheel scrolling, scrollbar drag, selection, actions
     if (event.type === "mouse") {
       const me = event.event;
+      const fb = this._feed.bounds;
       if (me.type === "wheelup") {
         this.scrollFeed(-3);
         return true;
@@ -728,55 +787,37 @@ export class ChatView extends Control {
 
       // Precompute scrollbar hit for reuse
       const onScrollbar =
-        this._scrollbarVisible &&
-        me.x === this._scrollbarX &&
-        me.y >= this._feedY &&
-        me.y < this._feedY + this._feedH;
+        fb != null &&
+        this._feed.scrollbarVisible &&
+        me.x === this._feed.scrollbarX &&
+        me.y >= fb.y &&
+        me.y < fb.y + fb.height;
 
-      // Scrollbar drag
-      if (this._scrollbarVisible) {
+      // Scrollbar drag — delegate to VirtualList
+      if (this._feed.scrollbarVisible) {
         if (me.type === "press" && me.button === "left" && onScrollbar) {
-          const relY = me.y - this._feedY;
-          if (
-            relY >= this._thumbPos &&
-            relY < this._thumbPos + this._thumbSize
-          ) {
-            this._dragging = true;
-            this._dragOffsetY = relY - this._thumbPos;
-          } else {
-            const ratio = relY / this._feedH;
-            this._feedScrollOffset = Math.round(ratio * this._maxScroll);
-            this._feedScrollOffset = Math.max(
-              0,
-              Math.min(this._feedScrollOffset, this._maxScroll),
-            );
-            if (this._hasSelection()) this.clearSelection();
-            this.invalidate();
-          }
-          return true;
-        }
-
-        if (me.type === "move" && this._dragging) {
-          const relY = me.y - this._feedY;
-          const newThumbPos = relY - this._dragOffsetY;
-          const maxThumbPos = this._feedH - this._thumbSize;
-          const clampedPos = Math.max(0, Math.min(newThumbPos, maxThumbPos));
-          const ratio = maxThumbPos > 0 ? clampedPos / maxThumbPos : 0;
-          this._feedScrollOffset = Math.round(ratio * this._maxScroll);
+          this._feed.handleScrollbarPress(me.y);
           if (this._hasSelection()) this.clearSelection();
           this.invalidate();
           return true;
         }
 
-        if (me.type === "release" && this._dragging) {
-          this._dragging = false;
+        if (me.type === "move" && this._feed.isDragging) {
+          this._feed.handleScrollbarDrag(me.y);
+          if (this._hasSelection()) this.clearSelection();
+          this.invalidate();
+          return true;
+        }
+
+        if (me.type === "release" && this._feed.isDragging) {
+          this._feed.handleScrollbarRelease();
           return true;
         }
       }
 
       // Ctrl+click to open URLs or file paths
       if (me.type === "press" && me.button === "left" && me.ctrl) {
-        const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
+        const feedLineIdx = this._feedLineAtScreen(me.y);
         if (feedLineIdx >= 0) {
           const text = this._extractFeedLineText(feedLineIdx);
           // Collect all clickable targets: URLs and absolute file paths
@@ -801,9 +842,9 @@ export class ChatView extends Control {
             return true;
           }
           if (allTargets.length > 1) {
-            const row = this._screenToFeedRow.get(me.y) ?? 0;
-            const col = me.x - this._feedX;
-            const charOffset = row * this._contentWidth + col;
+            const row = this._feed.rowAtScreen(me.y);
+            const col = me.x - (fb?.x ?? 0);
+            const charOffset = row * this._feed.contentWidth + col;
             const hit = allTargets.find(
               (t) =>
                 charOffset >= t.index && charOffset < t.index + t.text.length,
@@ -822,8 +863,9 @@ export class ChatView extends Control {
         !me.ctrl &&
         !onScrollbar
       ) {
-        const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
-        const isAction = feedLineIdx >= 0 && this._feedActions.has(feedLineIdx);
+        const feedLineIdx = this._feedLineAtScreen(me.y);
+        const isAction =
+          feedLineIdx >= 0 && !!this._store.at(feedLineIdx)?.actions;
         if (!isAction) {
           this._selAnchor = { x: me.x, y: me.y };
           this._selEnd = { x: me.x, y: me.y };
@@ -836,8 +878,8 @@ export class ChatView extends Control {
       // Text selection: extend on move (with auto-scroll at edges)
       if (me.type === "move" && this._selecting) {
         this._selEnd = { x: me.x, y: me.y };
-        const feedTop = this._feedY;
-        const feedBot = this._feedY + this._feedH;
+        const feedTop = fb?.y ?? 0;
+        const feedBot = feedTop + (fb?.height ?? 0);
         if (me.y < feedTop) {
           this._startSelScroll(-1);
         } else if (me.y >= feedBot) {
@@ -869,31 +911,34 @@ export class ChatView extends Control {
       }
 
       // Action hover/click in feed area
-      if (this._feedActions.size > 0) {
-        const feedLineIdx = this._screenToFeedLine.get(me.y) ?? -1;
-        const entry =
-          feedLineIdx >= 0 ? this._feedActions.get(feedLineIdx) : undefined;
+      if (this._store.hasActions) {
+        const feedLineIdx = this._feedLineAtScreen(me.y);
+        const feedItem =
+          feedLineIdx >= 0 ? this._store.at(feedLineIdx) : undefined;
+        const entry = feedItem?.actions;
 
         if (me.type === "move") {
-          const newHover = entry ? feedLineIdx : -1;
+          const newHoverId = entry ? feedItem!.id : null;
           if (
-            newHover !== this._hoveredAction ||
+            newHoverId !== this._hoveredItemId ||
             (entry && entry.items.length > 1)
           ) {
-            if (this._hoveredAction >= 0) {
-              const prev = this._feedActions.get(this._hoveredAction);
-              if (prev) {
-                this._feedLines[this._hoveredAction].lines = [prev.normalStyle];
-                delete this._feedHeightCache[this._hoveredAction];
+            // Restore previous hover item to normal style
+            if (this._hoveredItemId) {
+              const prevItem = this._store.get(this._hoveredItemId);
+              if (prevItem?.actions) {
+                prevItem.content.lines = [prevItem.actions.normalStyle];
+                this._feed.invalidateItem(prevItem.id);
               }
             }
-            if (entry && newHover >= 0) {
+            // Apply hover style to new item
+            if (entry && feedItem) {
               const hitItem = this._resolveActionItem(entry, me.x);
               const hoverLine = this._buildHoverLine(entry, hitItem);
-              this._feedLines[newHover].lines = [hoverLine];
-              delete this._feedHeightCache[newHover];
+              feedItem.content.lines = [hoverLine];
+              this._feed.invalidateItem(feedItem.id);
             }
-            this._hoveredAction = newHover;
+            this._hoveredItemId = newHoverId;
             this.invalidate();
           }
         }
@@ -913,9 +958,17 @@ export class ChatView extends Control {
     return this._input.handleInput(event);
   }
 
+  /** Map screen Y → feed line index (accounting for banner/separator prefix items). */
+  private _feedLineAtScreen(screenY: number): number {
+    const itemIdx = this._feed.itemIndexAtScreen(screenY);
+    return itemIdx >= this._feedItemOffset
+      ? itemIdx - this._feedItemOffset
+      : -1;
+  }
+
   /** Extract the plain text content of a feed line. */
   private _extractFeedLineText(idx: number): string {
-    const styledText = this._feedLines[idx];
+    const styledText = this._store.at(idx)?.content;
     if (!styledText) return "";
     return styledText.lines
       .map((line) => {
@@ -995,6 +1048,9 @@ export class ChatView extends Control {
     const W = b.width;
     const H = b.height;
 
+    // Build VirtualList items: banner + separator + feed items
+    this._buildVirtualListItems();
+
     // ── Measure fixed-height sections ────────────────────────
 
     // Progress text height (always 1 row when visible)
@@ -1021,9 +1077,10 @@ export class ChatView extends Control {
 
       let y = b.y;
 
-      // 1. Feed area
+      // 1. Feed area — delegate to VirtualList
       if (feedH > 0) {
-        this._renderFeed(ctx, b.x, y, W, feedH);
+        this._feed.arrange({ x: b.x, y, width: W, height: feedH });
+        this._feed.render(ctx);
         y += feedH;
       }
 
@@ -1094,9 +1151,10 @@ export class ChatView extends Control {
 
     let y = b.y;
 
-    // 1. Feed area (banner + separator + feed lines all scroll together)
+    // 1. Feed area — delegate to VirtualList
     if (feedH > 0) {
-      this._renderFeed(ctx, b.x, y, W, feedH);
+      this._feed.arrange({ x: b.x, y, width: W, height: feedH });
+      this._feed.render(ctx);
       y += feedH;
     }
 
@@ -1163,176 +1221,20 @@ export class ChatView extends Control {
     }
   }
 
-  // ── Feed rendering ─────────────────────────────────────────────
-
-  private _renderFeed(
-    ctx: DrawingContext,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-  ): void {
-    // Build the list of scrollable items: banner + separator + feed lines
-    // Each item is { control, height } measured against content width.
-    const contentWidth = width - 1; // reserve 1 col for scrollbar
-    this._feedX = x;
-    this._contentWidth = contentWidth;
-
-    interface ScrollItem {
-      render: (cx: number, cy: number, cw: number, ch: number) => void;
-      height: number;
-      feedLineIdx: number; // -1 for non-feed items (banner, separator)
-    }
-    const items: ScrollItem[] = [];
-
-    // Banner (if visible)
+  /** Build the VirtualList items array from banner + separator + feed store items. */
+  private _buildVirtualListItems(): void {
+    const items: VirtualListItem[] = [];
     if (this._banner.visible) {
-      const bannerSize = this._banner.measure({
-        minWidth: 0,
-        maxWidth: contentWidth,
-        minHeight: 0,
-        maxHeight: Infinity,
-      });
-      const bh = Math.max(1, bannerSize.height);
-      items.push({
-        height: bh,
-        feedLineIdx: -1,
-        render: (cx, cy, cw, ch) => {
-          this._banner.arrange({ x: cx, y: cy, width: cw, height: ch });
-          this._banner.render(ctx);
-        },
-      });
-      // Top separator after banner
-      items.push({
-        height: 1,
-        feedLineIdx: -1,
-        render: (cx, cy, cw, _ch) => {
-          this._topSeparator.arrange({ x: cx, y: cy, width: cw, height: 1 });
-          this._topSeparator.render(ctx);
-        },
-      });
+      // Banner height changes during animation — always re-measure
+      this._feed.invalidateItem("__banner__");
+      items.push({ id: "__banner__", content: this._banner });
+      items.push({ id: "__topsep__", content: this._topSeparator });
     }
-
-    // Feed lines — use cached heights to avoid re-measuring every line each frame.
-    // Cache is invalidated when content width changes (e.g. terminal resize).
-    if (contentWidth !== this._feedHeightCacheWidth) {
-      this._feedHeightCache = [];
-      this._feedHeightCacheWidth = contentWidth;
+    this._feedItemOffset = items.length;
+    for (const fi of this._store.items) {
+      items.push(fi);
     }
-    for (let fi = 0; fi < this._feedLines.length; fi++) {
-      const line = this._feedLines[fi];
-      let h = this._feedHeightCache[fi];
-      if (h === undefined) {
-        const lineSize = line.measure({
-          minWidth: 0,
-          maxWidth: contentWidth,
-          minHeight: 0,
-          maxHeight: Infinity,
-        });
-        h = Math.max(1, lineSize.height);
-        this._feedHeightCache[fi] = h;
-      }
-      items.push({
-        height: h,
-        feedLineIdx: fi,
-        render: (cx, cy, cw, ch) => {
-          line.arrange({ x: cx, y: cy, width: cw, height: ch });
-          line.render(ctx);
-        },
-      });
-    }
-
-    // Calculate total content height
-    let totalContentH = 0;
-    for (const item of items) {
-      totalContentH += item.height;
-    }
-
-    // Clamp scroll offset
-    const maxScroll = Math.max(0, totalContentH - height);
-    this._feedScrollOffset = Math.max(
-      0,
-      Math.min(this._feedScrollOffset, maxScroll),
-    );
-
-    // Clip feed area
-    ctx.pushClip({ x, y, width, height });
-
-    // Find the first visible item
-    let skippedRows = 0;
-    let startIdx = 0;
-    for (let i = 0; i < items.length; i++) {
-      if (skippedRows + items[i].height > this._feedScrollOffset) break;
-      skippedRows += items[i].height;
-      startIdx = i + 1;
-    }
-
-    // Render visible items and build screen→feedLine map
-    this._screenToFeedLine.clear();
-    this._screenToFeedRow.clear();
-    let cy = y - (this._feedScrollOffset - skippedRows);
-    for (let i = startIdx; i < items.length && cy < y + height; i++) {
-      const item = items[i];
-      item.render(x, cy, contentWidth, item.height);
-      // Map screen rows to feed line index + row offset for hit-testing
-      if (item.feedLineIdx >= 0) {
-        for (let row = 0; row < item.height; row++) {
-          const screenY = cy + row;
-          if (screenY >= y && screenY < y + height) {
-            this._screenToFeedLine.set(screenY, item.feedLineIdx);
-            this._screenToFeedRow.set(screenY, row);
-          }
-        }
-      }
-      cy += item.height;
-    }
-
-    // Always cache feed geometry for selection edge-detection
-    this._feedY = y;
-    this._feedH = height;
-
-    // Render scrollbar and cache geometry for hit-testing
-    if (height > 0 && totalContentH > height) {
-      const scrollX = x + width - 1;
-      const thumbSize = Math.max(
-        1,
-        Math.round((height / totalContentH) * height),
-      );
-      const thumbPos =
-        maxScroll > 0
-          ? Math.round(
-              (this._feedScrollOffset / maxScroll) * (height - thumbSize),
-            )
-          : 0;
-      const trackStyle = this._separatorStyle;
-      const thumbStyle = this._feedStyle;
-
-      // Cache for mouse interaction
-      this._scrollbarX = scrollX;
-      this._thumbPos = thumbPos;
-      this._thumbSize = thumbSize;
-      this._maxScroll = maxScroll;
-      this._scrollbarVisible = true;
-
-      for (let row = 0; row < height; row++) {
-        const inThumb = row >= thumbPos && row < thumbPos + thumbSize;
-        ctx.drawChar(
-          scrollX,
-          y + row,
-          inThumb ? "┃" : "│",
-          inThumb ? thumbStyle : trackStyle,
-        );
-      }
-    } else {
-      this._scrollbarVisible = false;
-    }
-
-    // Render selection highlight overlay
-    if (this._selAnchor && this._selEnd) {
-      this._renderSelection(ctx, x, y, width, height);
-    }
-
-    ctx.popClip();
+    this._feed.items = items;
   }
 
   // ── Dropdown rendering ─────────────────────────────────────────
@@ -1394,10 +1296,13 @@ export class ChatView extends Control {
       [startX, endX] = [endX, startX];
     }
 
+    const fb = this._feed.bounds;
+    const feedX = fb?.x ?? 0;
+    const contentW = this._feed.contentWidth;
     const lines: string[] = [];
     for (let row = startY; row <= endY; row++) {
-      const colStart = row === startY ? startX : this._feedX;
-      const colEnd = row === endY ? endX : this._feedX + this._contentWidth - 1;
+      const colStart = row === startY ? startX : feedX;
+      const colEnd = row === endY ? endX : feedX + contentW - 1;
       let line = "";
       for (let col = colStart; col <= colEnd; col++) {
         const ch = this._ctx.readCharAbsolute(col, row);
@@ -1462,12 +1367,12 @@ export class ChatView extends Control {
       this.scrollFeed(this._selScrollDir * 3);
       // Move selEnd to keep extending the selection while scrolling
       if (this._selEnd) {
+        const fb = this._feed.bounds;
+        const feedY = fb?.y ?? 0;
+        const feedH = fb?.height ?? 0;
         this._selEnd = {
           x: this._selEnd.x,
-          y:
-            this._selScrollDir < 0
-              ? this._feedY
-              : this._feedY + this._feedH - 1,
+          y: this._selScrollDir < 0 ? feedY : feedY + feedH - 1,
         };
       }
     }, 80);
@@ -1483,8 +1388,7 @@ export class ChatView extends Control {
   }
 
   private _autoScrollToBottom(): void {
-    // Set scroll to a very large value; it will be clamped during render
-    this._feedScrollOffset = Number.MAX_SAFE_INTEGER;
+    this._feed.autoScrollToBottom();
   }
 }
 

@@ -8,6 +8,7 @@ function makeConfig(overrides?: Partial<TeammateConfig>): TeammateConfig {
     type: "ai" as const,
     role: "Platform engineer.",
     soul: "# Beacon\n\nBeacon owns the recall package.",
+    goals: "",
     wisdom: "",
     dailyLogs: [],
     weeklyLogs: [],
@@ -46,6 +47,15 @@ describe("buildTeammatePrompt", () => {
     const prompt = buildTeammatePrompt(makeConfig(), "task");
     expect(prompt).toContain("### Memory Updates");
     expect(prompt).toContain(".teammates/beacon/memory/");
+  });
+
+  it("suppresses memory update instructions for ephemeral tasks", () => {
+    const prompt = buildTeammatePrompt(makeConfig(), "task", {
+      skipMemoryUpdates: true,
+    });
+    expect(prompt).toContain("### Memory Updates");
+    expect(prompt).toContain("ephemeral side task");
+    expect(prompt).not.toContain(".teammates/beacon/memory/");
   });
 
   it("skips wisdom section when empty", () => {
@@ -108,14 +118,6 @@ describe("buildTeammatePrompt", () => {
     });
     expect(prompt).toContain("<HANDOFF_CONTEXT>");
     expect(prompt).toContain("Handed off from scribe");
-  });
-
-  it("includes session file when provided", () => {
-    const prompt = buildTeammatePrompt(makeConfig(), "task", {
-      sessionFile: "/tmp/beacon-session.md",
-    });
-    expect(prompt).toContain("### Session State");
-    expect(prompt).toContain("/tmp/beacon-session.md");
   });
 
   it("drops daily logs that exceed the 12k daily budget", () => {

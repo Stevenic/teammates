@@ -25,7 +25,9 @@ const samplePersona: Persona = {
   alias: "beacon",
   tier: 1,
   description: "Architecture and implementation",
-  body: "# <Name> — Software Engineer\n\n## Identity\n<Name> is the team's SWE.",
+  soul: "# <Name> - Software Engineer\n\n## Identity\n<Name> is the team's SWE.",
+  wisdom:
+    "# <Name> - Wisdom\n\nDistilled principles. Read this first every session (after SOUL.md).\n\nLast compacted: never\n\n---\n\n*No entries yet - wisdom is distilled from experience.*",
 };
 
 describe("scaffoldFromPersona", () => {
@@ -35,9 +37,9 @@ describe("scaffoldFromPersona", () => {
     const soul = await readFile(join(teamDir, "SOUL.md"), "utf-8");
     const wisdom = await readFile(join(teamDir, "WISDOM.md"), "utf-8");
 
-    expect(soul).toContain("# Beacon — Software Engineer");
+    expect(soul).toContain("# Beacon - Software Engineer");
     expect(soul).toContain("Beacon is the team's SWE.");
-    expect(wisdom).toContain("# Beacon — Wisdom");
+    expect(wisdom).toContain("# Beacon - Wisdom");
     expect(wisdom).toContain("Last compacted: never");
   });
 
@@ -63,7 +65,7 @@ describe("scaffoldFromPersona", () => {
   it("creates memory subdirectory", async () => {
     const teamDir = await scaffoldFromPersona(testDir, "test", samplePersona);
 
-    // Should not throw — directory exists
+    // Should not throw - directory exists
     const memDir = join(teamDir, "memory");
     await mkdir(memDir, { recursive: true }); // no-op if exists
   });
@@ -72,7 +74,7 @@ describe("scaffoldFromPersona", () => {
     const teamDir = await scaffoldFromPersona(testDir, "forge", samplePersona);
     const wisdom = await readFile(join(teamDir, "WISDOM.md"), "utf-8");
 
-    expect(wisdom).toContain("# Forge — Wisdom");
+    expect(wisdom).toContain("# Forge - Wisdom");
   });
 });
 
@@ -86,21 +88,21 @@ describe("loadPersonas", () => {
     expect(personas.length).toBeGreaterThan(0);
   });
 
-  it("sorts by tier then alphabetically", async () => {
+  it("sorts by tier then alias", async () => {
     const personas = await loadPersonas();
 
-    // Verify ordering: all tier 1 before tier 2
+    // Verify ordering: all tier 1 before higher tiers, then alias order.
     let lastTier = 0;
-    let lastName = "";
+    let lastAlias = "";
     for (const p of personas) {
       if (p.tier > lastTier) {
         lastTier = p.tier;
-        lastName = "";
+        lastAlias = "";
       }
-      if (p.tier === lastTier && lastName) {
-        expect(p.persona.localeCompare(lastName)).toBeGreaterThanOrEqual(0);
+      if (p.tier === lastTier && lastAlias) {
+        expect(p.alias.localeCompare(lastAlias)).toBeGreaterThanOrEqual(0);
       }
-      lastName = p.persona;
+      lastAlias = p.alias;
     }
   });
 
@@ -112,7 +114,8 @@ describe("loadPersonas", () => {
       expect(p.alias).toBeTruthy();
       expect(p.description).toBeTruthy();
       expect(typeof p.tier).toBe("number");
-      expect(p.body.length).toBeGreaterThan(0);
+      expect(p.soul.length).toBeGreaterThan(0);
+      expect(p.wisdom.length).toBeGreaterThan(0);
     }
   });
 });

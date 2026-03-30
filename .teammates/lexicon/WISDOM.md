@@ -1,21 +1,27 @@
 # Lexicon — Wisdom
 
-Last compacted: 2026-03-28
+Last compacted: 2026-03-30
 
 ---
 
-**Continuity is non-negotiable** — Always read memory files (daily log, yesterday's log, WISDOM.md, session file) before responding to any task. On 2026-03-22, failing to do this caused a "no prior context" response when the answer was right there in the logs. The continuity mechanism only works if you actually use it.
+**Continuity Must Load First** — Read WISDOM, today's log, yesterday's log, and the session file before answering. If continuity loads late, already-solved work looks missing and the response invents avoidable gaps.
 
-**SOUL.md content lands in `<IDENTITY>`, not `<INSTRUCTIONS>`** — SOUL.md gets embedded inside the `<IDENTITY>` section tag at runtime. Instruction-reinforcement blocks, back-references, and runtime directives belong in the `<INSTRUCTIONS>` block built by adapter.ts — never in SOUL.md itself.
+**SOUL Is Identity, Not Runtime Control** — SOUL.md lands in `<IDENTITY>`, so keep it to persona and durable principles. Runtime reminders, task mechanics, and output rules belong in the assembled instruction block, not in SOUL.
 
-**Recall-to-Task token distance degrades retrieval** — Recall results placed far from the Task prompt force the model to traverse irrelevant tokens. Low-frequency reference data (roster, services, datetime) should sit above daily logs so recall results land adjacent to the Task. This is a distance problem — the fix is proximity, not more context.
+**Keep Reference Data Off The Evidence Path** — Roster, services, datetime, and similar support data can stay in the prompt, but they should not sit between recalled context and the active task. Low-frequency reference blocks dilute attention when they interrupt the evidence chain.
 
-**Verify handoff completion before assuming it's done** — Writing a spec and handing off to Beacon does not mean it's implemented. Always confirm implementation status before referencing handed-off work as complete. Multiple specs (section tags, reorder, reinforcement) required re-handoffs because initial handoffs weren't tracked to completion.
+**Bottom-Edge Reinforcement Has Outsized Weight** — Short reminders at the very end of the instruction block carry more global force than mid-prompt guidance. Tie each reminder to the exact section name it governs so attention routes back correctly.
 
-**Section tags beat markdown headers in prompts** — Open-only `<SECTION>` tags (no closing tags) delineate prompt regions more cleanly than `##` headers. The next open tag implicitly closes the previous section. Reference exact tag names in instructions to create direct token-level attention bridges.
+**Constraint Beats Choreography** — Instructions work better when they specify outcomes, format, and limits. Sequencing mandates about when to speak or when to call tools add noise unless strict ordering is truly required. Constrain *what*, not *when*.
 
-**Reinforcement blocks go at the bottom edge** — Place section-reinforcement lines (one per `<SECTION>` tag) at the very end of `<INSTRUCTIONS>` for maximum positional attention. Each line is an actionable instruction naming the exact tag — creates bidirectional attention bridges from the bottom edge to every section in the prompt.
+**Housekeeping Must Not Crowd Out The Deliverable** — Memory reads and session maintenance support the task, but they are not the task. Front-loading too much upkeep can consume tool budget and attention before the visible answer is produced.
 
-**Don't prescribe execution ordering in instructions** — Rules like "write text before using tools" confuse teammates and conflict with how agents naturally operate. Instructions should constrain *what* to produce, not *when* to produce it relative to tool calls. stevenic flagged this as confusing — removed from adapter.ts on 2026-03-25.
+**Compression Bugs Often Masquerade As Missing Context** — If the right facts are present but buried in duplicated logs or bloated payloads, the model will behave as if context is absent. Trim, dedupe, and pre-structure before concluding retrieval failed.
 
-**Attention dilution is a 3-layer failure** — When teammates ignore task instructions buried in long context: (1) distance — task prompt buried after thousands of tokens of conversation history, (2) compression — bloated daily logs + recall duplicating log content wastes token budget, (3) decompression — continuity housekeeping hijacks all tool calls before the model reaches the actual task. Fix each layer independently: move task closer, trim logs, cap housekeeping.
+**Specs Are Hypotheses Until Verified In Assembly** — A spec, handoff, or design note is not live behavior. Check the prompt builder or generated prompt before treating a proposed improvement as current system reality.
+
+**Patch The Assembly Point, Not The Description Of It** — Prompt changes only matter where the final token stream is built. A correct idea placed in the wrong file has no runtime effect and usually costs an extra round-trip to fix.
+
+**Attention Failures Are Usually Multi-Layer** — When a teammate misses its task, check all three layers before prescribing a fix. A single symptom (e.g., Scribe ignoring conversation history) can have co-occurring distance, compression, and decompression failures — fixing only one layer leaves the others active.
+
+**Log Bloat Is A Compression Tax On Every Turn** — Duplicated recall results, verbose daily logs, and repeated standup entries all consume tokens that compete with task-relevant context. Aggressive compression of historical data directly improves task performance.

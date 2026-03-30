@@ -1,0 +1,1 @@
+Read packages/cli/src/adapters/presets.ts and reply with ok

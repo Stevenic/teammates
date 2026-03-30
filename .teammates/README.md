@@ -29,7 +29,7 @@ Scribe defines the framework structure (templates, onboarding instructions). Bea
 
 | Keywords | Teammate |
 |---|---|
-| strategy, roadmap, specs, planning, priorities, docs, documentation, template, onboarding, SOUL.md, WISDOM.md, protocol, framework, roster, markdown | **Scribe** |
+| strategy, roadmap, specs, planning, priorities, docs, documentation, template, onboarding, SOUL.md, GOALS.md, WISDOM.md, protocol, framework, roster, markdown | **Scribe** |
 | recall, search, embeddings, vectra, indexer, vector, semantic, cli, orchestrator, adapter, REPL, handoff, agent, routing, queue, consolonia, terminal UI, code, implementation, bug fix, feature | **Beacon** |
 | ci, cd, pipeline, workflow, actions, release, publish, deploy, build automation, shipping, containers, infrastructure | **Pipeline** |
 
@@ -44,7 +44,8 @@ Every child folder of `.teammates/` is interpreted by its name prefix:
 Each teammate folder contains:
 
 - **SOUL.md** — Identity, continuity instructions, principles, boundaries, capabilities, and ownership
-- **WISDOM.md** — Distilled principles from compacted memories (read second, after SOUL.md)
+- **GOALS.md** — Active objectives and priorities (read after SOUL.md)
+- **WISDOM.md** — Distilled principles from compacted memories (read after GOALS.md)
 - **memory/** — Daily logs (`YYYY-MM-DD.md`), typed memory files (`<type>_<topic>.md`), and episodic summaries (`weekly/`, `monthly/`)
 
 Shared folders:
