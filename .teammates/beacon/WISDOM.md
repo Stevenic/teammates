@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-29
+Last compacted: 2026-03-30
 
 ---
 
@@ -10,6 +10,9 @@ Last compacted: 2026-03-29
 
 **Prompt structure drives compliance**
 Put context first, the concrete task next, and hard rules last. Restate the user request near the bottom so the model ends on the actual ask, not on background instructions.
+
+**Prompt stack order is IDENTITY → GOALS → WISDOM → TEAM → ...**
+GOALS.md was added between SOUL.md and WISDOM.md in `buildTeammatePrompt()`. Every `TeammateConfig` must include a `goals` field (empty string if no file exists). Missing it causes `undefined.trim()` crashes.
 
 **Budgets must be explicit**
 Prompt context needs fixed budgets, not intuition. Daily logs, recall results, and conversation history should each have bounded allocations so one source cannot starve the rest.
@@ -23,8 +26,8 @@ When dispatching `@everyone` or any parallel queue, capture immutable `conversat
 **Empty-response defense is layered**
 Use response-first prompting, retry in raw mode when `rawOutput` is empty, and synthesize a fallback from `changedFiles` plus `summary` if needed. Reject lazy bodies and stale session recaps.
 
-**System behavior belongs on task flags, not agent scope**
-Drive maintenance behavior from `system` on the task/result, not agent-level muting. Agent-scoped silence leaks across concurrent work. The `system` flag must reach `buildTeammatePrompt()` so the prompt builder can suppress memory-update instructions for system tasks.
+**Task behavior flags are purpose-specific**
+`system` suppresses memory updates and feed output for maintenance tasks. `skipMemoryUpdates` suppresses only memory instructions (used by `/btw` for ephemeral questions). `raw` skips `buildTeammatePrompt` entirely for retries. Do not overload one flag for multiple purposes.
 
 **Session state belongs in-process, not in files**
 Do not persist session state to per-teammate markdown files. Session files waste tokens, create phantom agent activity, and add no value over inline conversation context. The Orchestrator's in-memory `sessions` Map is sufficient.
@@ -42,6 +45,9 @@ Maintenance work like compaction, summarization, and wisdom distillation should 
 
 **Migrations are markdown and commit last**
 Keep upgrade instructions in `packages/cli/MIGRATIONS.md`, parse them by version heading, and persist the new version only after every migration succeeds. Interrupted upgrades should rerun cleanly on next startup. Resolve the file via `import.meta.url`, never `__dirname`.
+
+**Wisdom distillation must be idempotent**
+`buildWisdomPrompt()` checks `Last compacted: YYYY-MM-DD` in WISDOM.md. If today's date is already present, return `null` (skip). Without this guard, wisdom distillation fires on every startup, burning tokens for no reason.
 
 ## Feed & Rendering
 
@@ -65,6 +71,9 @@ Use `process.stdout.columns || 80` for layout math. Hardcoded `80` causes suffix
 
 ## Threads
 
+**Thread container must exist before placeholders**
+`renderThreadHeader()` creates the `ThreadContainer`. Always call it before `renderTaskPlaceholder()`. Reversing the order causes placeholders to silently not render because the container doesn't exist yet.
+
 **Thread insertion must be non-destructive**
 Use `peekInsertPoint()` to inspect where thread content should go and reserve `getInsertPoint()` for the actual write. Reading with the destructive path pushes content past the thread action line.
 
@@ -80,33 +89,45 @@ When a subsystem (handoffs, activity) needs to insert lines within a thread, pas
 ## Activity Tracking
 
 **Activity pipelines are adapter-specific**
-Claude activity comes from layered hook and debug-log watchers; Codex activity comes from incremental parsing of `codex exec --json` stdout. Post-task markdown logs and `codex-tui.log` are not the live source of truth.
+Claude activity comes from its debug log (`--debug-file`). Codex and Copilot activity come from tailing their paired JSONL debug log files. All three agents write paired debug files under `.teammates/.tmp/debug/`. The PostToolUse hook system was removed — it never worked because Claude doesn't propagate custom env vars to hook subprocesses.
 
-**Claude activity needs three watchers**
-(1) Hook log for rich tool details (file paths, commands), (2) legacy debug-log parser for tool names when the hook doesn't fire, (3) debug-log error watcher. Suppress legacy events when hook events are flowing to avoid duplicates.
+**Activity watchers must start from byte zero**
+Each task's debug log file is unique. Start per-task file watchers from byte `0`, not from the current file size. Otherwise, early commands written before the watcher attaches are silently dropped.
 
-**Hook environment variables don't propagate**
-Claude Code does not pass custom env vars (like `TEAMMATES_ACTIVITY_LOG`) to hook subprocesses. The PostToolUse hook script can't reliably receive the activity log path this way. Always wire up the legacy debug-log parser as a fallback alongside the hook watcher.
+**Codex activity is a multi-shape JSONL stream**
+Parse `command_execution`, `file_change`, `exec_command_begin`, `patch_apply_begin`, `web_search_begin`, `mcp_tool_call_begin`, `item.started`, `item.completed`, `response.output_item.added/done`, `custom_tool_call`/`function_call`. Arguments may arrive as objects or stringified JSON. Unwrap PowerShell `-Command "..."` wrappers before classifying. De-dup start/completed pairs and flush the final buffered line on close.
 
-**Codex activity is a multi-shape stream**
-Treat Codex live activity as a family of JSONL event shapes: `exec_command_begin`, `patch_apply_begin`, `web_search_begin`, `mcp_tool_call_begin`, `item.started`, `item.completed`, `response.output_item.added/done`, and tool-call types `custom_tool_call`/`function_call`. Arguments may arrive as objects or stringified JSON under various field names. De-dup start/completed pairs and flush the final buffered stdout line on close.
+**Codex activity must watch logFile, not debugFile**
+Codex does not support `--debug-file`. The adapter creates and appends to `logFile` during execution. Gate Codex watcher startup on `logFile` existing, not `debugFile`. This is the #1 cause of "parser works but UI shows nothing."
 
-**Codex TUI log lacks tool events**
-`codex-tui.log` contains runtime telemetry (session init, thread spawn, shutdown) but no `tool_call`, `shell_command`, or `apply_patch` entries. It is not useful for `[show activity]` — only as an optional coarse lifecycle side channel.
+**Copilot activity uses tool.execution_start events**
+`parseCopilotJsonlLine()` maps `tool.execution_start` events (`view`, `shell`, `grep`, `glob`, `edit`, `write`) into standard activity labels. Copilot tails its paired debug log file, same as Codex.
 
-**Collapse activity before rendering it**
-Raw tool streams are too noisy for the UI. Group consecutive research tools into a single "Exploring" line, merge repeated edits to the same file, filter out internal plumbing (TodoWrite, ToolSearch), and never collapse errors.
+**Collapse activity but preserve singles**
+Group consecutive research runs of 2+ events into `Exploring (N× Read, ...)`. Merge repeated edits to the same file. Filter out TodoWrite and ToolSearch. Never collapse errors. But preserve a single research event (`Read`, `Grep`) as a first-class line — collapsing one event into `Exploring (1× Read)` hides useful evidence.
 
 **Activity cleanup must be thorough**
 When a task completes or is cancelled, hide all activity display lines and delete all bookkeeping state (buffers, indices, blank lines, shown flags). Stale indices from prior feed insertions are the #1 cause of leftover activity lines.
 
 ## Architecture
 
-**Extract large CLI subsystems behind typed deps**
-When breaking up `cli.ts`, move logic into focused managers with explicit dependency interfaces and closure-backed getters for shared mutable state. This shrinks the file without inventing premature global abstractions. Seven modules extracted so far: `status-tracker`, `handoff-manager`, `retro-manager`, `wordwheel`, `service-config`, `thread-manager`, `onboard-flow`.
+**cli.ts is decomposed into 12 focused modules**
+Original 6815 lines → 1986 lines (-71%). Modules: `status-tracker`, `handoff-manager`, `retro-manager`, `wordwheel`, `service-config`, `thread-manager`, `onboard-flow`, `activity-manager`, `startup-manager`, `commands`, `conversation`, `feed-renderer`. Each receives deps via typed interface with closure-backed getters for shared mutable state.
+
+**All three agents use the CLI proxy adapter pattern**
+Claude, Codex, and Copilot are all `CliProxyAdapter` subclasses with agent-specific presets in `presets.ts`. The Copilot SDK was removed — copilot uses stdin piping in interactive mode (no `-p` flag) to avoid Windows command-line length limits.
 
 **Adapter presets live outside the base class**
-Keep shared preset definitions in `presets.ts` and agent-specific adapters in their own files (`claude.ts`, `codex.ts`). Putting presets inside `cli-proxy.ts` creates circular imports that can leave the base class undefined at extension time.
+Keep shared preset definitions in `presets.ts` and agent-specific adapters in their own files (`claude.ts`, `codex.ts`, `copilot.ts`). Putting presets inside `cli-proxy.ts` creates circular imports that can leave the base class undefined at extension time.
+
+**Copilot requires stdin piping, not -p**
+`copilot -p <text>` passes the prompt as a command-line argument, which exceeds Windows' ~32K char limit for large prompts. `copilot -p -` treats `-` as literal text, not stdin. Interactive mode (no `-p`) with stdin piping is the only working path. Use `stdinPrompt: true` on the preset.
+
+**Codex has no -a (approval) flag**
+`codex exec` only supports `-s` (sandbox), not `-a` (approval). Passing `-a never` causes "unexpected argument" errors. Use `-s danger-full-access` for non-interactive mode.
+
+**Cancellation uses AbortSignal, not adapter killAgent**
+`cli.ts` creates an `AbortController` per running task. The signal flows through `TaskAssignment` → orchestrator → adapter → `spawnAndProxy()`. Adapters react to abort by killing the child process (SIGTERM → 5s → SIGKILL). `controller.abort()` is synchronous from the caller's perspective.
 
 **Cross-folder write boundaries are two-layer**
 Layer 1 is the prompt rule in `adapter.ts` for AI teammates. Layer 2 is a post-task audit with `[revert]` and `[allow]` actions. Relying on either layer alone is too weak.
@@ -121,7 +142,10 @@ Inside `.teammates\`, bare names are teammates, `_` prefixes are shared checked-
 When importing teammates from another project, skip folders where SOUL.md has `**Type:** human`. Never copy USER.md during import — it is user-specific and gitignored.
 
 **Debug logging is paired files per task**
-Each adapter writes two files under `.teammates/.tmp/debug/`: `<teammate>-<timestamp>-prompt.md` (full prompt sent) and `<teammate>-<timestamp>.md` (activity/debug log). For Claude, the log file is passed as `--debug-file` so the agent writes directly. For Codex/others, raw stdout is dumped to the log file on process close. `/debug` reads both files for analysis.
+Each adapter writes two files under `.teammates/.tmp/debug/`: `<teammate>-<timestamp>-prompt.md` (full prompt sent) and `<teammate>-<timestamp>.md` (activity/debug log). Non-Claude log files are pre-created at task start and appended incrementally during execution so the pair exists immediately. Claude's log file is passed as `--debug-file` so the agent writes directly.
+
+**Persona templates are folder-based with alias as canonical name**
+Bundled personas live under `packages/cli/personas/<alias>/` with `SOUL.md` and `WISDOM.md`. The loader only accepts folders whose directory name matches `alias:` in the frontmatter. The frontmatter parser must accept CRLF line endings for Windows compatibility.
 
 ## Build & Ship
 

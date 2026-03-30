@@ -71,12 +71,41 @@ export const COPILOT_PRESET: AgentPreset = {
   name: "copilot",
   command: "copilot",
   buildArgs(_ctx, _teammate, options) {
-    const args = ["-p", "-", "--allow-all", "-s"];
+    // Prompt is piped via stdin (stdinPrompt: true) to avoid Windows
+    // command-line length limits. No -p flag needed — copilot reads
+    // stdin in interactive mode, processes one message, then exits on EOF.
+    const args = [
+      "--allow-all",
+      "--output-format",
+      "json",
+      "--stream",
+      "off",
+      "--no-color",
+    ];
     if (options.model) args.push("--model", options.model);
     return args;
   },
   env: { NO_COLOR: "1" },
   stdinPrompt: true,
+  parseOutput(raw: string): string {
+    let lastMessage = "";
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line);
+        if (
+          event.type === "assistant.message" &&
+          typeof event.data?.content === "string" &&
+          event.data.content.trim()
+        ) {
+          lastMessage = event.data.content;
+        }
+      } catch {
+        /* skip non-JSON lines */
+      }
+    }
+    return lastMessage || raw;
+  },
 };
 
 /** All built-in presets, keyed by name. */

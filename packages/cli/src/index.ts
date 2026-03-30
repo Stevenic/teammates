@@ -6,7 +6,9 @@ export {
   collapseActivityEvents,
   formatActivityTime,
   parseClaudeActivity,
+  parseCopilotJsonlLine,
   watchCodexDebugLog,
+  watchCopilotDebugLog,
   watchDebugLog,
   watchDebugLogErrors,
 } from "./activity-watcher.js";
@@ -38,22 +40,22 @@ export {
 export { EchoAdapter } from "./adapters/echo.js";
 export type { BannerInfo, ServiceInfo, ServiceStatus } from "./banner.js";
 export { AnimatedBanner } from "./banner.js";
-export type { CommandsDeps } from "./commands.js";
-export { CommandManager } from "./commands.js";
-export type { ConversationManagerDeps } from "./conversation.js";
-export { ConversationManager } from "./conversation.js";
-export type { FeedRendererDeps } from "./feed-renderer.js";
-export { FeedRenderer } from "./feed-renderer.js";
 export type { CliArgs } from "./cli-args.js";
 export { findTeammatesDir, PKG_VERSION, parseCliArgs } from "./cli-args.js";
 export type { ThreadContextEntry } from "./cli-utils.js";
 export { buildThreadContext } from "./cli-utils.js";
+export type { CommandsDeps } from "./commands.js";
+export { CommandManager } from "./commands.js";
 export {
   autoCompactForBudget,
   buildDailyCompressionPrompt,
   buildMigrationCompressionPrompt,
   findUncompressedDailies,
 } from "./compact.js";
+export type { ConversationManagerDeps } from "./conversation.js";
+export { ConversationManager } from "./conversation.js";
+export type { FeedRendererDeps } from "./feed-renderer.js";
+export { FeedRenderer } from "./feed-renderer.js";
 export { HandoffManager } from "./handoff-manager.js";
 export type { LogEntry } from "./log-parser.js";
 export {

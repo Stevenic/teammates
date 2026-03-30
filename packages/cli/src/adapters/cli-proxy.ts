@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   watchCodexDebugLog,
+  watchCopilotDebugLog,
   watchDebugLog,
   watchDebugLogErrors,
 } from "../activity-watcher.js";
@@ -524,6 +525,10 @@ export class CliProxyAdapter implements AgentAdapter {
       if (this.preset.name === "codex" && logFile) {
         stopWatchers.push(
           watchCodexDebugLog(logFile, taskStartTime, onActivity),
+        );
+      } else if (this.preset.name === "copilot" && logFile) {
+        stopWatchers.push(
+          watchCopilotDebugLog(logFile, taskStartTime, onActivity),
         );
       } else if (debugFile) {
         stopWatchers.push(watchDebugLog(debugFile, taskStartTime, onActivity));

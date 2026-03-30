@@ -5,6 +5,8 @@
  * Data sources:
  *   - **Claude debug log** — tool names + errors, written by Claude via --debug-file.
  *   - **Codex JSONL debug log** — tailed from the paired `.tmp/debug/*.md` file.
+ *   - **Copilot JSONL debug log** — tailed from paired `.tmp/debug/*.md` file;
+ *     parses `tool.execution_start` / `tool.execution_complete` events.
  */
 
 import { readFileSync, statSync, unwatchFile, watchFile } from "node:fs";
@@ -250,6 +252,13 @@ function summarizeChangedFiles(
   return changes.length > 1 ? `${first} (+${changes.length - 1} files)` : first;
 }
 
+function summarizeCopilotPath(path: string): string | undefined {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!normalized) return undefined;
+  const parts = normalized.split("/");
+  return parts[parts.length - 1] || normalized;
+}
+
 function mapCodexFileChangeKind(kind: string): ActivityEvent["tool"] {
   switch (kind) {
     case "add":
@@ -481,6 +490,230 @@ export function parseCodexJsonlLine(
   return [{ ...mapped, elapsedMs }];
 }
 
+/** Tool names that are internal plumbing — silently dropped from activity. */
+const COPILOT_PLUMBING = new Set([
+  "report_intent",
+  "store_memory",
+  "fetch_copilot_cli_documentation",
+  "list_powershell",
+  "list_agents",
+  "read_powershell",
+  "write_powershell",
+  "stop_powershell",
+  "sql",
+]);
+
+function mapCopilotToolCall(
+  name: string,
+  args: Record<string, unknown> | null,
+): ActivityEvent | null {
+  // Skip known plumbing tools
+  if (COPILOT_PLUMBING.has(name)) return null;
+
+  switch (name) {
+    case "view": {
+      const path = getString(args, "path");
+      if (!path) return { elapsedMs: 0, tool: "Read" };
+      const summary = summarizeCopilotPath(path);
+      const normalized = path.replace(/\\/g, "/");
+      const lastSegment = normalized.split("/").pop() ?? normalized;
+      const looksFile = lastSegment.includes(".");
+      return {
+        elapsedMs: 0,
+        tool: looksFile ? "Read" : "Glob",
+        detail: summary,
+      };
+    }
+    case "edit":
+    case "str_replace":
+    case "replace_in_file":
+      return {
+        elapsedMs: 0,
+        tool: "Edit",
+        detail: summarizeCopilotPath(
+          getString(args, "path") ?? getString(args, "file_path") ?? "",
+        ),
+      };
+    case "write":
+    case "create":
+      return {
+        elapsedMs: 0,
+        tool: "Write",
+        detail: summarizeCopilotPath(
+          getString(args, "path") ?? getString(args, "file_path") ?? "",
+        ),
+      };
+    case "grep":
+    case "search":
+      return {
+        elapsedMs: 0,
+        tool: "Grep",
+        detail:
+          getString(args, "pattern") ??
+          getString(args, "query") ??
+          summarizeCopilotPath(getString(args, "path") ?? ""),
+      };
+    case "glob":
+      return {
+        elapsedMs: 0,
+        tool: "Glob",
+        detail:
+          getString(args, "pattern") ??
+          summarizeCopilotPath(getString(args, "path") ?? ""),
+      };
+    case "run_in_terminal":
+    case "shell":
+    case "bash":
+    case "powershell": {
+      const command =
+        getString(args, "command") ??
+        getString(args, "cmd") ??
+        getString(args, "input");
+      if (!command) return { elapsedMs: 0, tool: "Bash" };
+      const normalized = unwrapShellWrapper(command);
+      if (/^\s*(Get-Content|cat|type)\b/i.test(normalized)) {
+        return {
+          elapsedMs: 0,
+          tool: "Read",
+          detail: extractFileFromCommand(normalized),
+        };
+      }
+      if (/\b(rg|Select-String|findstr)\b/i.test(normalized)) {
+        return {
+          elapsedMs: 0,
+          tool: "Grep",
+          detail:
+            extractPatternFromCommand(normalized) ??
+            summarizeCommand(normalized),
+        };
+      }
+      if (/\b(Get-ChildItem|ls|dir)\b/i.test(normalized)) {
+        return {
+          elapsedMs: 0,
+          tool: "Glob",
+          detail: summarizeCommand(normalized),
+        };
+      }
+      return {
+        elapsedMs: 0,
+        tool: "Bash",
+        detail: summarizeCommand(normalized),
+      };
+    }
+    case "task":
+      return {
+        elapsedMs: 0,
+        tool: "Agent",
+        detail:
+          getString(args, "description") ??
+          getString(args, "name") ??
+          getString(args, "agent_type"),
+      };
+    case "read_agent":
+    case "write_agent":
+      return { elapsedMs: 0, tool: "Agent" };
+    case "web_search":
+      return {
+        elapsedMs: 0,
+        tool: "WebSearch",
+        detail: getString(args, "query"),
+      };
+    case "web_fetch":
+      return {
+        elapsedMs: 0,
+        tool: "WebFetch",
+        detail: getString(args, "url"),
+      };
+    default:
+      break;
+  }
+
+  // GitHub MCP server tools: github-mcp-server-<method>
+  if (name.startsWith("github-mcp-server-")) {
+    const method = name.slice("github-mcp-server-".length);
+    if (method.startsWith("search_")) {
+      return {
+        elapsedMs: 0,
+        tool: "Search",
+        detail: getString(args, "query") ?? method,
+      };
+    }
+    if (
+      method.startsWith("get_") ||
+      method.startsWith("issue_read") ||
+      method.startsWith("pull_request_read") ||
+      method.startsWith("list_")
+    ) {
+      return {
+        elapsedMs: 0,
+        tool: "Read",
+        detail: getString(args, "repo")
+          ? `${getString(args, "owner") ?? ""}/${getString(args, "repo") ?? ""}`
+          : method,
+      };
+    }
+    // Fallback for any other MCP tool
+    return { elapsedMs: 0, tool: "Search", detail: method };
+  }
+
+  return null;
+}
+
+export function parseCopilotJsonlLine(
+  line: string,
+  taskStartTime: number,
+  receivedAt = Date.now(),
+): ActivityEvent[] {
+  const trimmed = line.trim();
+  if (!trimmed) return [];
+
+  let event: Record<string, unknown> | null = null;
+  try {
+    event = JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+
+  // Prefer the event's own timestamp for accurate elapsed time
+  const ts = getString(event, "timestamp");
+  const eventTime = ts ? new Date(ts).getTime() : NaN;
+  const elapsedMs = Math.max(
+    0,
+    Number.isNaN(eventTime)
+      ? receivedAt - taskStartTime
+      : eventTime - taskStartTime,
+  );
+  const eventType = getString(event, "type");
+  if (!eventType) return [];
+
+  if (eventType === "tool.execution_start") {
+    const data = getNestedObject(event, "data");
+    const mapped = mapCopilotToolCall(
+      getString(data, "toolName") ?? "",
+      getNestedObject(data, "arguments"),
+    );
+    return mapped ? [{ ...mapped, elapsedMs }] : [];
+  }
+
+  if (eventType === "tool.execution_complete") {
+    const data = getNestedObject(event, "data");
+    if (!data || data.success !== false) return [];
+    return [
+      {
+        elapsedMs,
+        tool: getString(data, "toolName") ?? "Copilot",
+        detail:
+          getString(getNestedObject(data, "result"), "content") ??
+          getString(getNestedObject(data, "result"), "detailedContent") ??
+          "tool failed",
+        isError: true,
+      },
+    ];
+  }
+
+  return [];
+}
+
 // ── Debug log parsing (errors only) ─────────────────────────────────
 
 /**
@@ -708,6 +941,54 @@ export function watchCodexDebugLog(
     unwatchFile(debugFilePath);
     if (!trailing.trim()) return;
     const events = parseCodexJsonlLine(trailing, taskStartTime, Date.now());
+    if (events.length > 0) callback(events);
+  };
+}
+
+/**
+ * Watch a Copilot JSONL debug log and emit live activity from tool events.
+ */
+export function watchCopilotDebugLog(
+  debugFilePath: string,
+  taskStartTime: number,
+  callback: ActivityCallback,
+  pollIntervalMs = 1000,
+): () => void {
+  let lastSize = 0;
+  let stopped = false;
+  let trailing = "";
+
+  const checkForNew = () => {
+    if (stopped) return;
+    try {
+      const s = statSync(debugFilePath);
+      if (s.size <= lastSize) return;
+      const fd = readFileSync(debugFilePath, "utf-8");
+      const newContent = fd.slice(lastSize);
+      lastSize = s.size;
+
+      const chunk = trailing + newContent;
+      const lines = chunk.split(/\r?\n/);
+      trailing = lines.pop() ?? "";
+
+      const now = Date.now();
+      const events = lines.flatMap((line) =>
+        parseCopilotJsonlLine(line, taskStartTime, now),
+      );
+      if (events.length > 0) callback(events);
+    } catch {
+      // File not ready yet or read error.
+    }
+  };
+
+  watchFile(debugFilePath, { interval: pollIntervalMs }, () => checkForNew());
+  checkForNew();
+
+  return () => {
+    stopped = true;
+    unwatchFile(debugFilePath);
+    if (!trailing.trim()) return;
+    const events = parseCopilotJsonlLine(trailing, taskStartTime, Date.now());
     if (events.length > 0) callback(events);
   };
 }

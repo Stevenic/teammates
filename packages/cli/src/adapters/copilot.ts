@@ -1,8 +1,8 @@
 /**
  * GitHub Copilot adapter — wraps CliProxyAdapter with Copilot-specific preset.
  *
- * Spawns `copilot -p - --allow-all -s` and pipes the prompt via stdin.
- * Uses --allow-all for full permissions and -s for clean text output.
+ * Spawns Copilot in JSONL mode so we can parse the final response
+ * and surface live tool activity in the thread UI.
  */
 
 import type { CliProxyOptions } from "./cli-proxy.js";

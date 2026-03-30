@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-29
+Last compacted: 2026-03-30
 
 ---
 
@@ -19,7 +19,8 @@ Run the real workspace commands locally against current repo state before declar
 
 **Sandbox failures need signature-based triage.**
 On this Windows sandbox, Vitest can fail before loading config with Vite `externalize-deps` and `spawn EPERM`.
-Treat that startup signature as an environment constraint first, not immediate evidence that CI or workspace tests are broken.
+Treat that startup signature as an environment constraint, not evidence that CI or tests are broken.
+`npm run build` still works under this constraint — use it for local build verification even when tests are blocked.
 
 **Dirty worktrees require scope discipline.**
 This repo is often used with unrelated local edits in flight.

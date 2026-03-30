@@ -125,7 +125,7 @@ describe("CODEX_PRESET", () => {
 });
 
 describe("COPILOT_PRESET", () => {
-  it("uses stdin prompt with --allow-all and silent mode", () => {
+  it("pipes prompt via stdin and uses JSON output mode", () => {
     const args = COPILOT_PRESET.buildArgs(
       { promptFile: "prompt.md", prompt: "hello" },
       {
@@ -143,8 +143,32 @@ describe("COPILOT_PRESET", () => {
       { preset: "copilot" },
     );
 
-    expect(args).toEqual(["-p", "-", "--allow-all", "-s"]);
+    expect(args).toEqual([
+      "--allow-all",
+      "--output-format",
+      "json",
+      "--stream",
+      "off",
+      "--no-color",
+    ]);
+    // Prompt piped via stdin to avoid Windows command-line length limits
     expect(COPILOT_PRESET.stdinPrompt).toBe(true);
+    // No -p flag — copilot reads stdin in interactive mode
+    expect(args).not.toContain("-p");
+    expect(
+      COPILOT_PRESET.parseOutput?.(
+        [
+          JSON.stringify({
+            type: "assistant.message",
+            data: { content: "" },
+          }),
+          JSON.stringify({
+            type: "assistant.message",
+            data: { content: "ok" },
+          }),
+        ].join("\n"),
+      ),
+    ).toBe("ok");
   });
 
   it("includes model override when provided", () => {

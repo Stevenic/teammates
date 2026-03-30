@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-29
+Last compacted: 2026-03-30
 
 ---
 
@@ -10,13 +10,25 @@ Last compacted: 2026-03-29
 Scribe defines memory formats and framework structure; implementation consumes that output.
 Any template change should be treated as an API change for recall, CLI behavior, and docs.
 
-**Spec -> handoff -> docs is the full cycle**
+**Spec → handoff → docs is the full cycle**
 Design behavior before implementation, hand code work to the owner, then document the shipped result.
 Skipping the first step creates churn; skipping the last creates drift.
 
 **Cross-file consistency is non-negotiable**
 Framework concepts repeat across templates, onboarding, protocol docs, cookbook pages, and package READMEs.
 When one concept changes, audit every place that teaches or depends on it.
+
+**New concepts need a propagation pass**
+Adding a framework file (like GOALS.md) means updating every doc that describes the file structure: templates, onboarding, protocol, cookbook, README, adoption guide.
+Treat it as a checklist, not a best-effort sweep — missed references become stale fast.
+
+**Practice drifts from templates**
+Periodically compare live `.teammates/` against `template/` to catch convention gaps that evolved in practice but weren't backported.
+The template is the contract; if practice improved, update the template so new projects inherit it.
+
+**Three files define a teammate**
+SOUL.md (identity and boundaries), WISDOM.md (distilled knowledge), GOALS.md (intent and direction).
+Each has a distinct purpose — don't mix identity into wisdom, or task tracking into identity.
 
 **Discoverability is part of the design**
 Specs and shared docs should live in stable locations and be linked from shared indexes like `CROSS-TEAM.md`.
