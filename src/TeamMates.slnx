@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="../package.json" />
+  </Folder>
+  <Project Path="TeamMates/TeamMates.Android/TeamMates.Android.csproj">
+    <Deploy />
+  </Project>
+  <Project Path="TeamMates/Teammates.Console/Teammates.Console.csproj" />
+  <Project Path="TeamMates/TeamMates.Desktop/TeamMates.Desktop.csproj" />
+  <Project Path="TeamMates/TeamMates.iOS/TeamMates.iOS.csproj">
+    <Deploy />
+  </Project>
+  <Project Path="TeamMates/TeamMates/TeamMates.csproj" />
+</Solution>

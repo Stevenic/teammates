@@ -4,3 +4,58 @@ dist/
 .teammates/.tmp/
 coverage/
 .claude/
+
+# Build output
+bin/
+obj/
+out/
+publish/
+
+# .NET
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+project.lock.json
+project.fragment.lock.json
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets / environment
+.env
+.env.*
+appsettings.*.local.json
+secrets.json
+
+# Logs
+*.log
+logs/
+
+# Test results
+TestResults/
+coverage/
+
+# Temporary
+*.tmp
+*.temp
+*.bak
+
+artifacts
+.dotnet
