@@ -24,6 +24,13 @@ project.fragment.lock.json
 *.snupkg
 .nuget/
 packages/
+!packages/
+!packages/cli/
+!packages/cli/**
+!packages/consolonia/
+!packages/consolonia/**
+!packages/recall/
+!packages/recall/**
 
 # IDE
 .vs/

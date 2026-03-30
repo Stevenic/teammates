@@ -1,19 +1,76 @@
 <UserControl xmlns="https://github.com/avaloniaui"
-			 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-			 xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-			 xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-			 xmlns:vm="clr-namespace:TeamMates.ViewModels"
-			 mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
-			 x:Class="TeamMates.Views.MainView"
-			 x:DataType="vm:MainViewModel">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:TeamMates.ViewModels"
+             xmlns:views="clr-namespace:TeamMates.Views"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="TeamMates.Views.MainView"
+             x:DataType="vm:MainViewModel"
+             x:Name="Root">
 	<Design.DataContext>
-		<!-- This only sets the DataContext for the previewer in an IDE,
-		to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
 		<vm:MainViewModel />
 	</Design.DataContext>
 
-	<StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-		<TextBlock Text="{Binding Greeting}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-		<Button Click="Button_Click">E_xit</Button>
-	</StackPanel>
+    <TabControl Classes="shell-tabs"
+                ItemsSource="{Binding Tabs}"
+                SelectedItem="{Binding SelectedTab, Mode=TwoWay}"
+                Margin="{DynamicResource SectionPadding}">
+        <TabControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ShellTabViewModel">
+<!--                <Border Padding="{DynamicResource ControlPadding}"
+                        Margin="{DynamicResource TabItemMargin}"
+                        CornerRadius="{DynamicResource DefaultCornerRadius}"
+                        Background="#111827"
+                        BorderBrush="#1F2937"
+                        BorderThickness="{DynamicResource HairlineBorderThickness}"
+                        MinWidth="{DynamicResource TabMinWidth}">-->
+                    <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="{DynamicResource SpacingSm}">
+                        <Border Width="{DynamicResource AvatarSizeSm}"
+                                Height="{DynamicResource AvatarSizeSm}"
+                                CornerRadius="{DynamicResource AvatarCornerRadiusSm}"
+                                ClipToBounds="True"
+                                BorderBrush="#334155"
+                                BorderThickness="{DynamicResource HairlineBorderThickness}"
+                                IsVisible="{DynamicResource ShowShellAvatars}"
+                                VerticalAlignment="Center">
+                            <Image Source="{Binding AvatarImage^}"
+                                   Stretch="UniformToFill" />
+                        </Border>
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding ActivityGlyph}"
+                                   VerticalAlignment="Center"
+                                   Foreground="#38BDF8" />
+                        <StackPanel Grid.Column="2" Spacing="{DynamicResource DenseInlineGap}">
+                            <TextBlock Text="{Binding DisplayName}"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding ActivityState}"
+                                       Foreground="#94A3B8"
+                                       FontSize="{DynamicResource ShellMetaFontSize}" />
+                        </StackPanel>
+                        <Border Grid.Column="3"
+                                Background="#1D4ED8"
+                                CornerRadius="{DynamicResource PillCornerRadius}"
+                                MinWidth="{DynamicResource BadgeMinWidth}"
+                                Padding="{DynamicResource BadgePadding}"
+                                IsVisible="{Binding HasUnread}">
+                            <TextBlock Text="{Binding UnreadCount}"
+                                       HorizontalAlignment="Center"
+                                       FontSize="{DynamicResource ShellBadgeFontSize}" />
+                        </Border>
+                    </Grid>
+                <!--</Border>-->
+            </DataTemplate>
+        </TabControl.ItemTemplate>
+
+        <TabControl.ContentTemplate>
+            <DataTemplate x:DataType="vm:ShellTabViewModel">
+                <views:AgentActivityPaneView ComposerText="{Binding DataContext.ComposerText, ElementName=Root, Mode=TwoWay}"
+                                             ComposerStatusText="{Binding DataContext.ComposerStatusText, ElementName=Root}"
+                                             ConnectionState="{Binding DataContext.ConnectionState, ElementName=Root}"
+                                             TransportVersion="{Binding DataContext.TransportVersion, ElementName=Root}"
+                                             SendInputCommand="{Binding DataContext.SendInputCommand, ElementName=Root}" />
+            </DataTemplate>
+        </TabControl.ContentTemplate>
+    </TabControl>
 </UserControl>

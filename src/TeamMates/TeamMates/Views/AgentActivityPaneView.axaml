@@ -1,0 +1,131 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:TeamMates.ViewModels"
+             mc:Ignorable="d"
+             x:Class="TeamMates.Views.AgentActivityPaneView"
+             x:DataType="vm:ShellTabViewModel"
+             x:Name="Pane">
+    <Grid RowDefinitions="Auto,*,Auto"
+          RowSpacing="{DynamicResource PaneGap}"
+          Margin="{DynamicResource SectionPadding}">
+        <Border Background="#111827"
+                BorderBrush="#1E293B"
+                BorderThickness="{DynamicResource HairlineBorderThickness}"
+                CornerRadius="{DynamicResource DefaultCornerRadius}"
+                Padding="{DynamicResource CardPadding}">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource SpacingMd}">
+                <Border Width="{DynamicResource AvatarSizeLg}"
+                        Height="{DynamicResource AvatarSizeLg}"
+                        CornerRadius="{DynamicResource AvatarCornerRadiusLg}"
+                        ClipToBounds="True"
+                        BorderBrush="#334155"
+                        BorderThickness="{DynamicResource HairlineBorderThickness}"
+                        IsVisible="{DynamicResource ShowShellAvatars}"
+                        VerticalAlignment="Top">
+                    <Image Source="{Binding AvatarImage^}"
+                           Stretch="UniformToFill" />
+                </Border>
+                <StackPanel Grid.Column="1" Spacing="{DynamicResource SpacingXs}">
+                    <TextBlock Text="{Binding DisplayName}"
+                               FontSize="{DynamicResource ShellTitleFontSize}"
+                               FontWeight="Bold" />
+                    <TextBlock Text="{Binding ComposerStatusText, ElementName=Pane}"
+                               Foreground="#94A3B8"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="{DynamicResource SpacingXs}">
+                    <TextBlock Text="{Binding ConnectionState, ElementName=Pane}"
+                               HorizontalAlignment="Right" />
+                    <TextBlock Text="{Binding TransportVersion, ElementName=Pane, StringFormat=Transport {0}}"
+                               Foreground="#94A3B8"
+                               HorizontalAlignment="Right" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1"
+                Background="#020617"
+                BorderBrush="#1E293B"
+                BorderThickness="{DynamicResource HairlineBorderThickness}"
+                CornerRadius="{DynamicResource DefaultCornerRadius}"
+                Padding="{DynamicResource CardPadding}">
+            <ScrollViewer>
+                <ItemsControl ItemsSource="{Binding FeedItems}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:FeedItemViewModel">
+                            <Border Background="#0F172A"
+                                    BorderBrush="#1E293B"
+                                    BorderThickness="{DynamicResource HairlineBorderThickness}"
+                                    CornerRadius="{DynamicResource DefaultCornerRadius}"
+                                    Margin="{DynamicResource FeedItemMargin}"
+                                    Padding="{DynamicResource CardPadding}">
+                                <StackPanel Spacing="{DynamicResource SpacingXs}">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel Spacing="{DynamicResource DenseInlineGap}">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Author}" Foreground="#93C5FD" FontSize="{DynamicResource ShellMetaFontSize}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="{DynamicResource DenseInlineGap}" HorizontalAlignment="Right">
+                                            <TextBlock Text="{Binding TimestampText}" FontSize="{DynamicResource ShellMetaFontSize}" Foreground="#94A3B8" HorizontalAlignment="Right" />
+                                            <TextBlock Text="{Binding Status}" FontSize="{DynamicResource ShellMetaFontSize}" Foreground="#94A3B8" HorizontalAlignment="Right" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <TextBlock Text="{Binding Body}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="2"
+                Background="#111827"
+                BorderBrush="#1E293B"
+                BorderThickness="{DynamicResource HairlineBorderThickness}"
+                CornerRadius="{DynamicResource DefaultCornerRadius}"
+                Padding="{DynamicResource CardPadding}">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="{DynamicResource SpacingMd}">
+                <Border Width="{DynamicResource AvatarSizeSm}"
+                        Height="{DynamicResource AvatarSizeSm}"
+                        CornerRadius="{DynamicResource AvatarCornerRadiusSm}"
+                        ClipToBounds="True"
+                        BorderBrush="#334155"
+                        BorderThickness="{DynamicResource HairlineBorderThickness}"
+                        IsVisible="{DynamicResource ShowShellAvatars}"
+                        VerticalAlignment="Center">
+                    <Image Source="{Binding AvatarImage^}"
+                           Stretch="UniformToFill" />
+                </Border>
+                <Border Grid.Column="1"
+                        Background="#1D4ED8"
+                        CornerRadius="{DynamicResource PillCornerRadius}"
+                        Padding="{DynamicResource TargetChipPadding}"
+                        VerticalAlignment="Center">
+                    <TextBlock Text="{Binding DisplayName}"
+                               FontWeight="SemiBold" />
+                </Border>
+
+                <TextBox Grid.Column="2"
+                         Text="{Binding ComposerText, ElementName=Pane, Mode=TwoWay}"
+                         Watermark="{Binding ComposerPlaceholder}"
+                         IsEnabled="{Binding ComposerEnabled}"
+                         VerticalContentAlignment="Center"
+                         MinHeight="{DynamicResource ComposerMinHeight}" />
+
+                <Button Grid.Column="3"
+                        Command="{Binding SendInputCommand, ElementName=Pane}"
+                        IsEnabled="{Binding ComposerEnabled}"
+                        Padding="{DynamicResource ControlPadding}">
+                    <StackPanel Orientation="Horizontal" Spacing="{DynamicResource SpacingXs}">
+                        <TextBlock Text="Send" />
+                        <TextBlock Text="{Binding DisplayName}" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

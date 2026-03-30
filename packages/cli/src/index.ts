@@ -46,6 +46,24 @@ export {
 export type { Persona } from "./personas.js";
 export { loadPersonas, scaffoldFromPersona } from "./personas.js";
 export { Registry } from "./registry.js";
+export { runShellBridge, ShellBridgeController } from "./shell-bridge.js";
+export type {
+  FeedItemDto,
+  ShellCommandEnvelope,
+  ShellCommandName,
+  ShellErrorEnvelope,
+  ShellEventEnvelope,
+  ShellEventName,
+  ShellResponseEnvelope,
+  ShellStateSnapshotDto,
+  ShellTargetKind,
+  TabStateDto,
+} from "./shell-types.js";
+export {
+  isShellCommandEnvelope,
+  SHELL_TRANSPORT_LABEL,
+  SHELL_TRANSPORT_VERSION,
+} from "./shell-types.js";
 export { tp } from "./theme.js";
 export type {
   DailyLog,

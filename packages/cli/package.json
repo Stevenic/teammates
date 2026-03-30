@@ -12,7 +12,8 @@
     "scripts"
   ],
   "bin": {
-    "teammates": "dist/cli.js"
+    "teammates": "dist/cli.js",
+    "teammates-shell-bridge": "dist/shell-bridge-cli.js"
   },
   "scripts": {
     "build": "tsc",
