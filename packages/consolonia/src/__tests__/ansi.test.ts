@@ -1,9 +1,14 @@
 import { Writable } from "node:stream";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as esc from "../ansi/esc.js";
 import { AnsiOutput } from "../ansi/output.js";
 import { stripAnsi, truncateAnsi, visibleLength } from "../ansi/strip.js";
+import { detectTerminal, type TerminalCaps } from "../ansi/terminal-env.js";
+import {
+  enableWin32Mouse,
+  restoreWin32Console,
+} from "../ansi/win32-console.js";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -157,12 +162,16 @@ describe("esc", () => {
       expect(esc.bracketedPasteOff).toBe(`${ESC}?2004l`);
     });
 
-    it("mouseTrackingOn enables button-event tracking and SGR mode", () => {
-      expect(esc.mouseTrackingOn).toBe(`${ESC}?1003h${ESC}?1006h`);
+    it("mouseTrackingOn enables all mouse tracking modes", () => {
+      expect(esc.mouseTrackingOn).toBe(
+        `${ESC}?1000h${ESC}?1003h${ESC}?1005h${ESC}?1006h${ESC}?1015h${ESC}?1016h`,
+      );
     });
 
-    it("mouseTrackingOff disables SGR mode and button-event tracking", () => {
-      expect(esc.mouseTrackingOff).toBe(`${ESC}?1006l${ESC}?1003l`);
+    it("mouseTrackingOff disables all mouse tracking modes", () => {
+      expect(esc.mouseTrackingOff).toBe(
+        `${ESC}?1016l${ESC}?1015l${ESC}?1006l${ESC}?1005l${ESC}?1003l${ESC}?1000l`,
+      );
     });
   });
 
@@ -669,6 +678,363 @@ describe("AnsiOutput", () => {
       output.flush();
       expect(stream.output).toContain(esc.fg(100, 100, 100));
       expect(stream.output).toContain(esc.bg(50, 50, 50));
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// terminal-env.ts
+// ═══════════════════════════════════════════════════════════════════
+
+describe("detectTerminal", () => {
+  const origEnv = { ...process.env };
+  const origPlatform = process.platform;
+  const origIsTTY = process.stdout.isTTY;
+
+  afterEach(() => {
+    // Restore environment
+    for (const key of Object.keys(process.env)) {
+      if (!(key in origEnv)) delete process.env[key];
+    }
+    Object.assign(process.env, origEnv);
+    Object.defineProperty(process, "platform", { value: origPlatform });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: origIsTTY,
+      writable: true,
+    });
+  });
+
+  function setEnv(overrides: Record<string, string | undefined>) {
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+
+  it("returns pipe caps when stdout is not a TTY", () => {
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: false,
+      writable: true,
+    });
+    const caps = detectTerminal();
+    expect(caps.isTTY).toBe(false);
+    expect(caps.mouse).toBe(false);
+    expect(caps.alternateScreen).toBe(false);
+    expect(caps.name).toBe("pipe");
+  });
+
+  it("detects Windows Terminal via WT_SESSION", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({ WT_SESSION: "some-guid" });
+    const caps = detectTerminal();
+    expect(caps.name).toBe("windows-terminal");
+    expect(caps.sgrMouse).toBe(true);
+    expect(caps.truecolor).toBe(true);
+  });
+
+  it("detects VS Code terminal on Windows", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({ WT_SESSION: undefined, TERM_PROGRAM: "vscode" });
+    const caps = detectTerminal();
+    expect(caps.name).toBe("vscode");
+    expect(caps.sgrMouse).toBe(true);
+  });
+
+  it("detects ConEmu on Windows", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({
+      WT_SESSION: undefined,
+      TERM_PROGRAM: undefined,
+      ConEmuPID: "1234",
+    });
+    const caps = detectTerminal();
+    expect(caps.name).toBe("conemu");
+  });
+
+  it("detects mintty via TERM + MSYSTEM", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({
+      WT_SESSION: undefined,
+      TERM_PROGRAM: undefined,
+      ConEmuPID: undefined,
+      TERM: "xterm-256color",
+      MSYSTEM: "MINGW64",
+    });
+    const caps = detectTerminal();
+    expect(caps.name).toBe("mintty");
+  });
+
+  it("detects tmux on Unix", () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({ TMUX: "/tmp/tmux-1000/default,1234,0", TERM: "screen-256color" });
+    const caps = detectTerminal();
+    expect(caps.name).toBe("tmux");
+    expect(caps.sgrMouse).toBe(true);
+  });
+
+  it("detects GNU screen with limited caps", () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({
+      TMUX: undefined,
+      TERM: "screen",
+      TERM_PROGRAM: undefined,
+      ITERM_SESSION_ID: undefined,
+    });
+    const caps = detectTerminal();
+    expect(caps.name).toBe("screen");
+    expect(caps.sgrMouse).toBe(false);
+    expect(caps.bracketedPaste).toBe(false);
+  });
+
+  it("detects iTerm2", () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({
+      TMUX: undefined,
+      TERM: "xterm-256color",
+      TERM_PROGRAM: "iTerm.app",
+    });
+    const caps = detectTerminal();
+    expect(caps.name).toBe("iterm2");
+    expect(caps.truecolor).toBe(true);
+  });
+
+  it("detects xterm-compatible with COLORTERM truecolor", () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({
+      TMUX: undefined,
+      TERM: "xterm-256color",
+      TERM_PROGRAM: undefined,
+      ITERM_SESSION_ID: undefined,
+      COLORTERM: "truecolor",
+    });
+    const caps = detectTerminal();
+    expect(caps.truecolor).toBe(true);
+    expect(caps.color256).toBe(true);
+  });
+
+  it("detects dumb terminal with minimal caps", () => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: true,
+      writable: true,
+    });
+    setEnv({
+      TMUX: undefined,
+      TERM: "dumb",
+      TERM_PROGRAM: undefined,
+      ITERM_SESSION_ID: undefined,
+    });
+    const caps = detectTerminal();
+    expect(caps.name).toBe("dumb");
+    expect(caps.mouse).toBe(false);
+    expect(caps.alternateScreen).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// esc.ts — environment-aware init/restore sequences
+// ═══════════════════════════════════════════════════════════════════
+
+describe("esc environment-aware sequences", () => {
+  /** Helper to build a TerminalCaps with overrides. */
+  function makeCaps(overrides: Partial<TerminalCaps> = {}): TerminalCaps {
+    return {
+      isTTY: true,
+      alternateScreen: true,
+      bracketedPaste: true,
+      mouse: true,
+      sgrMouse: true,
+      truecolor: true,
+      color256: true,
+      name: "test",
+      ...overrides,
+    };
+  }
+
+  describe("mouseOn / mouseOff", () => {
+    it("returns full mouse sequence when SGR is supported", () => {
+      const caps = makeCaps({ sgrMouse: true });
+      expect(esc.mouseOn(caps)).toBe(esc.mouseTrackingOn);
+      expect(esc.mouseOff(caps)).toBe(esc.mouseTrackingOff);
+    });
+
+    it("returns minimal mouse sequence when SGR is not supported", () => {
+      const caps = makeCaps({ sgrMouse: false });
+      const on = esc.mouseOn(caps);
+      expect(on).toContain("?1000h");
+      expect(on).toContain("?1003h");
+      expect(on).not.toContain("?1006h");
+      expect(on).not.toContain("?1015h");
+    });
+
+    it("returns empty string when mouse is not supported", () => {
+      const caps = makeCaps({ mouse: false });
+      expect(esc.mouseOn(caps)).toBe("");
+      expect(esc.mouseOff(caps)).toBe("");
+    });
+  });
+
+  describe("initSequence", () => {
+    it("includes all features for a full-caps terminal", () => {
+      const caps = makeCaps();
+      const seq = esc.initSequence(caps, {
+        alternateScreen: true,
+        mouse: true,
+      });
+      expect(seq).toContain(esc.alternateScreenOn);
+      expect(seq).toContain(esc.hideCursor);
+      expect(seq).toContain(esc.bracketedPasteOn);
+      expect(seq).toContain(esc.mouseTrackingOn);
+      expect(seq).toContain(esc.clearScreen);
+    });
+
+    it("skips alternate screen when not supported", () => {
+      const caps = makeCaps({ alternateScreen: false });
+      const seq = esc.initSequence(caps, {
+        alternateScreen: true,
+        mouse: false,
+      });
+      expect(seq).not.toContain(esc.alternateScreenOn);
+    });
+
+    it("skips alternate screen when app opts out", () => {
+      const caps = makeCaps();
+      const seq = esc.initSequence(caps, {
+        alternateScreen: false,
+        mouse: false,
+      });
+      expect(seq).not.toContain(esc.alternateScreenOn);
+    });
+
+    it("skips bracketed paste when not supported", () => {
+      const caps = makeCaps({ bracketedPaste: false });
+      const seq = esc.initSequence(caps, {
+        alternateScreen: false,
+        mouse: false,
+      });
+      expect(seq).not.toContain(esc.bracketedPasteOn);
+    });
+
+    it("skips mouse when app opts out even if caps support it", () => {
+      const caps = makeCaps();
+      const seq = esc.initSequence(caps, {
+        alternateScreen: false,
+        mouse: false,
+      });
+      expect(seq).not.toContain("?1000h");
+    });
+
+    it("returns empty string for non-TTY", () => {
+      const caps = makeCaps({ isTTY: false });
+      const seq = esc.initSequence(caps, {
+        alternateScreen: true,
+        mouse: true,
+      });
+      expect(seq).toBe("");
+    });
+  });
+
+  describe("restoreSequence", () => {
+    it("includes all restore features for a full-caps terminal", () => {
+      const caps = makeCaps();
+      const seq = esc.restoreSequence(caps, {
+        alternateScreen: true,
+        mouse: true,
+      });
+      expect(seq).toContain(esc.reset);
+      expect(seq).toContain(esc.mouseTrackingOff);
+      expect(seq).toContain(esc.bracketedPasteOff);
+      expect(seq).toContain(esc.showCursor);
+      expect(seq).toContain(esc.alternateScreenOff);
+    });
+
+    it("mirrors initSequence — skips what init skipped", () => {
+      const caps = makeCaps({ bracketedPaste: false, alternateScreen: false });
+      const seq = esc.restoreSequence(caps, {
+        alternateScreen: true,
+        mouse: false,
+      });
+      expect(seq).not.toContain(esc.bracketedPasteOff);
+      expect(seq).not.toContain(esc.alternateScreenOff);
+      expect(seq).not.toContain(esc.mouseTrackingOff);
+    });
+
+    it("returns empty string for non-TTY", () => {
+      const caps = makeCaps({ isTTY: false });
+      const seq = esc.restoreSequence(caps, {
+        alternateScreen: true,
+        mouse: true,
+      });
+      expect(seq).toBe("");
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// win32-console.ts
+// ═══════════════════════════════════════════════════════════════════
+
+describe("win32-console", () => {
+  const originalPlatform = process.platform;
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: originalPlatform });
+  });
+
+  describe("enableWin32Mouse", () => {
+    it("returns false on non-win32 platforms", () => {
+      Object.defineProperty(process, "platform", { value: "linux" });
+      expect(enableWin32Mouse()).toBe(false);
+    });
+
+    it("returns false on darwin", () => {
+      Object.defineProperty(process, "platform", { value: "darwin" });
+      expect(enableWin32Mouse()).toBe(false);
+    });
+  });
+
+  describe("restoreWin32Console", () => {
+    it("returns false on non-win32 platforms", () => {
+      Object.defineProperty(process, "platform", { value: "linux" });
+      expect(restoreWin32Console()).toBe(false);
+    });
+
+    it("returns false when no original mode was saved", () => {
+      // Even on win32, if enableWin32Mouse was never called, restore is a no-op
+      Object.defineProperty(process, "platform", { value: "win32" });
+      expect(restoreWin32Console()).toBe(false);
     });
   });
 });

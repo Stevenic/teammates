@@ -1,6 +1,6 @@
 {
   "name": "@teammates/consolonia",
-  "version": "0.7.0",
+  "version": "0.7.2",
   "description": "Terminal UI rendering engine inspired by Consolonia. Pixel-level compositing with ANSI output.",
   "type": "module",
   "main": "dist/index.js",
@@ -41,5 +41,8 @@
   },
   "dependencies": {
     "marked": "^17.0.4"
+  },
+  "optionalDependencies": {
+    "koffi": "^2.9.0"
   }
 }

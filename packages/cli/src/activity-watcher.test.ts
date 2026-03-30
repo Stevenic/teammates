@@ -117,7 +117,12 @@ describe("parseCodexJsonlLine", () => {
     });
 
     expect(parseCodexJsonlLine(line, start, receivedAt)).toEqual([
-      { elapsedMs: 4_000, tool: "Edit", detail: "personas.ts (+1 files)", isError: false },
+      {
+        elapsedMs: 4_000,
+        tool: "Edit",
+        detail: "personas.ts (+1 files)",
+        isError: false,
+      },
       { elapsedMs: 4_000, tool: "Write", detail: "WISDOM.md", isError: false },
     ]);
   });

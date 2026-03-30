@@ -9,6 +9,8 @@
 import type { Writable } from "node:stream";
 import * as esc from "./ansi/esc.js";
 import { AnsiOutput } from "./ansi/output.js";
+import { detectTerminal, type TerminalCaps } from "./ansi/terminal-env.js";
+import { enableWin32Mouse, restoreWin32Console } from "./ansi/win32-console.js";
 import { DrawingContext } from "./drawing/context.js";
 import type { InputEvent } from "./input/events.js";
 import { createInputProcessor } from "./input/processor.js";
@@ -40,6 +42,7 @@ export class App {
   private readonly _alternateScreen: boolean;
   private readonly _mouse: boolean;
   private readonly _title: string | undefined;
+  private readonly _caps: TerminalCaps;
 
   // Subsystems — created during run()
   private _output!: AnsiOutput;
@@ -58,11 +61,17 @@ export class App {
   private _sigintListener: (() => void) | null = null;
   private _renderScheduled = false;
 
+  /** Detected terminal capabilities (read-only, for diagnostics). */
+  get caps(): Readonly<TerminalCaps> {
+    return this._caps;
+  }
+
   constructor(options: AppOptions) {
     this.root = options.root;
     this._alternateScreen = options.alternateScreen ?? true;
     this._mouse = options.mouse ?? false;
     this._title = options.title;
+    this._caps = detectTerminal();
   }
 
   // ── Public API ───────────────────────────────────────────────────
@@ -124,62 +133,57 @@ export class App {
     // 1. Enable raw mode
     enableRawMode();
 
-    // 2. Create ANSI output
+    // 2. On Windows, configure console mode for mouse input
+    //    (must happen after raw mode so we modify the right base flags)
+    if (this._mouse) {
+      enableWin32Mouse();
+    }
+
+    // 3. Create ANSI output
     this._output = new AnsiOutput(stdout);
 
-    // 3. Prepare terminal (custom sequence instead of prepareTerminal()
+    // 4. Prepare terminal (custom sequence instead of prepareTerminal()
     //    so we can conditionally enable mouse tracking)
     this._prepareTerminal();
 
-    // 4. Set terminal title
+    // 5. Set terminal title
     if (this._title) {
       stdout.write(esc.setTitle(this._title));
     }
 
-    // 5. Create pixel buffer at terminal dimensions
+    // 6. Create pixel buffer at terminal dimensions
     const cols = stdout.columns || 80;
     const rows = stdout.rows || 24;
     this._createRenderPipeline(cols, rows);
 
-    // 6. Wire up input
+    // 7. Wire up input
     this._setupInput();
 
-    // 7. Wire up resize
+    // 8. Wire up resize
     this._resizeListener = () => this._handleResize();
     stdout.on("resize", this._resizeListener);
 
-    // 8. SIGINT fallback
+    // 9. SIGINT fallback
     this._sigintListener = () => this.stop();
     process.on("SIGINT", this._sigintListener);
   }
 
   private _prepareTerminal(): void {
     const stream = process.stdout as Writable;
-    let seq = "";
-    if (this._alternateScreen) {
-      seq += esc.alternateScreenOn;
-    }
-    seq += esc.hideCursor;
-    seq += esc.bracketedPasteOn;
-    if (this._mouse) {
-      seq += esc.mouseTrackingOn;
-    }
-    seq += esc.clearScreen;
-    stream.write(seq);
+    const seq = esc.initSequence(this._caps, {
+      alternateScreen: this._alternateScreen,
+      mouse: this._mouse,
+    });
+    if (seq) stream.write(seq);
   }
 
   private _restoreTerminal(): void {
     const stream = process.stdout as Writable;
-    let seq = esc.reset;
-    if (this._mouse) {
-      seq += esc.mouseTrackingOff;
-    }
-    seq += esc.bracketedPasteOff;
-    seq += esc.showCursor;
-    if (this._alternateScreen) {
-      seq += esc.alternateScreenOff;
-    }
-    stream.write(seq);
+    const seq = esc.restoreSequence(this._caps, {
+      alternateScreen: this._alternateScreen,
+      mouse: this._mouse,
+    });
+    if (seq) stream.write(seq);
   }
 
   private _createRenderPipeline(cols: number, rows: number): void {
@@ -374,6 +378,9 @@ export class App {
 
     // Restore terminal
     this._restoreTerminal();
+
+    // Restore Win32 console mode (before disabling raw mode)
+    restoreWin32Console();
 
     // Disable raw mode
     disableRawMode();

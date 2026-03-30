@@ -41,6 +41,12 @@ function collectEvents(data: string): InputEvent[] {
   return collected;
 }
 
+function x10Seq(cb: number, x: number, y: number): string {
+  return `\x1b[M${String.fromCharCode(cb + 32)}${String.fromCharCode(
+    x + 32,
+  )}${String.fromCharCode(y + 32)}`;
+}
+
 // =====================================================================
 // EscapeMatcher
 // =====================================================================
@@ -779,6 +785,151 @@ describe("MouseMatcher", () => {
       expect(results[results.length - 1]).toBe(MatchResult.Complete);
     });
   });
+
+  // ── URXVT sequences ────────────────────────────────────────────────
+
+  describe("URXVT sequences", () => {
+    it("parses URXVT left press at (9,19) from \\x1b[0;10;20M", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[0;10;20M")).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      expect(ev).not.toBeNull();
+      expect(ev!.type).toBe("mouse");
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("left");
+        expect(ev!.event.type).toBe("press");
+        expect(ev!.event.x).toBe(9);
+        expect(ev!.event.y).toBe(19);
+      }
+    });
+
+    it("parses URXVT right press", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[2;5;5M")).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("right");
+        expect(ev!.event.type).toBe("press");
+        expect(ev!.event.x).toBe(4);
+        expect(ev!.event.y).toBe(4);
+      }
+    });
+
+    it("parses URXVT release (button bits = 3)", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[3;10;20M")).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("none");
+        expect(ev!.event.type).toBe("release");
+      }
+    });
+
+    it("parses URXVT wheel up (cb=64)", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[64;5;5M")).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("none");
+        expect(ev!.event.type).toBe("wheelup");
+      }
+    });
+
+    it("parses URXVT wheel down (cb=65)", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[65;5;5M")).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("none");
+        expect(ev!.event.type).toBe("wheeldown");
+      }
+    });
+
+    it("parses URXVT motion with left button (cb=32)", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[32;10;10M")).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      if (ev!.type === "mouse") {
+        expect(ev!.event.type).toBe("move");
+        expect(ev!.event.button).toBe("left");
+      }
+    });
+
+    it("parses URXVT shift+left press (cb=4)", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[4;1;1M")).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("left");
+        expect(ev!.event.type).toBe("press");
+        expect(ev!.event.shift).toBe(true);
+        expect(ev!.event.ctrl).toBe(false);
+        expect(ev!.event.alt).toBe(false);
+      }
+    });
+
+    it("parses URXVT with large coordinates (beyond X10 range)", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[0;300;200M")).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("left");
+        expect(ev!.event.type).toBe("press");
+        expect(ev!.event.x).toBe(299);
+        expect(ev!.event.y).toBe(199);
+      }
+    });
+
+    it("rejects URXVT with wrong param count (2 params)", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[0;10M")).toBe(MatchResult.NoMatch);
+    });
+
+    it("rejects URXVT with wrong param count (4 params)", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, "\x1b[0;10;20;30M")).toBe(MatchResult.NoMatch);
+    });
+  });
+
+  describe("classic X10 sequences", () => {
+    it("parses left press from classic CSI M encoding", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, x10Seq(0, 10, 20))).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      expect(ev).not.toBeNull();
+      expect(ev!.type).toBe("mouse");
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("left");
+        expect(ev!.event.type).toBe("press");
+        expect(ev!.event.x).toBe(9);
+        expect(ev!.event.y).toBe(19);
+      }
+    });
+
+    it("parses release from classic CSI M encoding", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, x10Seq(3, 10, 20))).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      expect(ev).not.toBeNull();
+      expect(ev!.type).toBe("mouse");
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("none");
+        expect(ev!.event.type).toBe("release");
+      }
+    });
+
+    it("parses wheel down from classic CSI M encoding", () => {
+      matcher = new MouseMatcher();
+      expect(feedString(matcher, x10Seq(65, 5, 5))).toBe(MatchResult.Complete);
+      const ev = matcher.flush();
+      expect(ev).not.toBeNull();
+      expect(ev!.type).toBe("mouse");
+      if (ev!.type === "mouse") {
+        expect(ev!.event.button).toBe("none");
+        expect(ev!.event.type).toBe("wheeldown");
+      }
+    });
+  });
 });
 
 // =====================================================================
@@ -958,6 +1109,31 @@ describe("InputProcessor", () => {
 
   it("mouse sequences are recognized through parallel matching", () => {
     const events = collectEvents("\x1b[<0;1;1M");
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("mouse");
+    if (events[0].type === "mouse") {
+      expect(events[0].event.button).toBe("left");
+      expect(events[0].event.type).toBe("press");
+      expect(events[0].event.x).toBe(0);
+      expect(events[0].event.y).toBe(0);
+    }
+  });
+
+  it("URXVT mouse sequences are recognized through parallel matching", () => {
+    // URXVT: \x1b[0;5;10M — left press at (4,9)
+    const events = collectEvents("\x1b[0;5;10M");
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("mouse");
+    if (events[0].type === "mouse") {
+      expect(events[0].event.button).toBe("left");
+      expect(events[0].event.type).toBe("press");
+      expect(events[0].event.x).toBe(4);
+      expect(events[0].event.y).toBe(9);
+    }
+  });
+
+  it("classic X10 mouse sequences are recognized through parallel matching", () => {
+    const events = collectEvents(x10Seq(0, 1, 1));
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe("mouse");
     if (events[0].type === "mouse") {
