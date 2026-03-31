@@ -108,12 +108,13 @@ function extractQuotedValue(command: string): string | undefined {
 function extractFileFromCommand(command: string): string | undefined {
   const normalized = unwrapShellWrapper(command);
   const quoted = extractQuotedValue(normalized);
-  if (quoted) return basename(quoted);
+  // Replace backslashes so basename works on Linux CI with Windows-style paths
+  if (quoted) return basename(quoted.replace(/\\/g, "/"));
 
   const tokens = normalized.trim().split(/\s+/);
   const last = tokens[tokens.length - 1];
   if (!last || last.startsWith("-")) return undefined;
-  return basename(last.replace(/^['"`]|['"`]$/g, ""));
+  return basename(last.replace(/^['"`]|['"`]$/g, "").replace(/\\/g, "/"));
 }
 
 function extractPatternFromCommand(command: string): string | undefined {
