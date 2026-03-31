@@ -103,10 +103,6 @@ export {
   detectTerminal,
   type TerminalCaps,
 } from "./ansi/terminal-env.js";
-export {
-  enableWin32Mouse,
-  restoreWin32Console,
-} from "./ansi/win32-console.js";
 
 // ── Render pipeline ─────────────────────────────────────────────────
 

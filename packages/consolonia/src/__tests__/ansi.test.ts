@@ -1,14 +1,10 @@
 import { Writable } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import * as esc from "../ansi/esc.js";
 import { AnsiOutput } from "../ansi/output.js";
 import { stripAnsi, truncateAnsi, visibleLength } from "../ansi/strip.js";
 import { detectTerminal, type TerminalCaps } from "../ansi/terminal-env.js";
-import {
-  enableWin32Mouse,
-  restoreWin32Console,
-} from "../ansi/win32-console.js";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -998,43 +994,6 @@ describe("esc environment-aware sequences", () => {
         mouse: true,
       });
       expect(seq).toBe("");
-    });
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════
-// win32-console.ts
-// ═══════════════════════════════════════════════════════════════════
-
-describe("win32-console", () => {
-  const originalPlatform = process.platform;
-
-  afterEach(() => {
-    Object.defineProperty(process, "platform", { value: originalPlatform });
-  });
-
-  describe("enableWin32Mouse", () => {
-    it("returns false on non-win32 platforms", () => {
-      Object.defineProperty(process, "platform", { value: "linux" });
-      expect(enableWin32Mouse()).toBe(false);
-    });
-
-    it("returns false on darwin", () => {
-      Object.defineProperty(process, "platform", { value: "darwin" });
-      expect(enableWin32Mouse()).toBe(false);
-    });
-  });
-
-  describe("restoreWin32Console", () => {
-    it("returns false on non-win32 platforms", () => {
-      Object.defineProperty(process, "platform", { value: "linux" });
-      expect(restoreWin32Console()).toBe(false);
-    });
-
-    it("returns false when no original mode was saved", () => {
-      // Even on win32, if enableWin32Mouse was never called, restore is a no-op
-      Object.defineProperty(process, "platform", { value: "win32" });
-      expect(restoreWin32Console()).toBe(false);
     });
   });
 });

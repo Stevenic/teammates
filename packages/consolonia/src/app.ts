@@ -10,7 +10,7 @@ import type { Writable } from "node:stream";
 import * as esc from "./ansi/esc.js";
 import { AnsiOutput } from "./ansi/output.js";
 import { detectTerminal, type TerminalCaps } from "./ansi/terminal-env.js";
-import { enableWin32Mouse, restoreWin32Console } from "./ansi/win32-console.js";
+
 import { DrawingContext } from "./drawing/context.js";
 import type { InputEvent } from "./input/events.js";
 import { createInputProcessor } from "./input/processor.js";
@@ -133,37 +133,30 @@ export class App {
     // 1. Enable raw mode
     enableRawMode();
 
-    // 2. On Windows, configure console mode for mouse input
-    //    (must happen after raw mode so we modify the right base flags)
-    if (this._mouse) {
-      enableWin32Mouse();
-    }
-
-    // 3. Create ANSI output
+    // 2. Create ANSI output
     this._output = new AnsiOutput(stdout);
 
-    // 4. Prepare terminal (custom sequence instead of prepareTerminal()
-    //    so we can conditionally enable mouse tracking)
+    // 3. Prepare terminal (ANSI sequences for alternate screen, mouse, etc.)
     this._prepareTerminal();
 
-    // 5. Set terminal title
+    // 4. Set terminal title
     if (this._title) {
       stdout.write(esc.setTitle(this._title));
     }
 
-    // 6. Create pixel buffer at terminal dimensions
+    // 5. Create pixel buffer at terminal dimensions
     const cols = stdout.columns || 80;
     const rows = stdout.rows || 24;
     this._createRenderPipeline(cols, rows);
 
-    // 7. Wire up input
+    // 6. Wire up input
     this._setupInput();
 
-    // 8. Wire up resize
+    // 7. Wire up resize
     this._resizeListener = () => this._handleResize();
     stdout.on("resize", this._resizeListener);
 
-    // 9. SIGINT fallback
+    // 8. SIGINT fallback
     this._sigintListener = () => this.stop();
     process.on("SIGINT", this._sigintListener);
   }
@@ -378,9 +371,6 @@ export class App {
 
     // Restore terminal
     this._restoreTerminal();
-
-    // Restore Win32 console mode (before disabling raw mode)
-    restoreWin32Console();
 
     // Disable raw mode
     disableRawMode();
