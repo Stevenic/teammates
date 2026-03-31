@@ -95,7 +95,7 @@ describe("concat", () => {
     const s = concat(pen.green("✔ "), pen.white("done"));
     expect(s).toHaveLength(2);
     expect(spanText(s)).toBe("✔ done");
-    expect(spanLength(s)).toBe(7); // ✔ is width 2 (dingbat emoji)
+    expect(spanLength(s)).toBe(7); // ✔ is width 2 (renders wide on Windows Terminal)
   });
 
   it("accepts plain strings", () => {

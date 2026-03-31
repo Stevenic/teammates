@@ -96,35 +96,70 @@ export function charWidth(codePoint: number): 1 | 2 {
   // CJK Compatibility Ideographs Supplement
   if (codePoint >= 0x2f800 && codePoint <= 0x2fa1f) return 2;
 
-  // ── Emoji ranges (rendered as width 2 on modern terminals) ─────
-  // Hourglass + Watch
+  // ── Emoji with Emoji_Presentation=Yes (rendered as 2 cells by default) ──
+  // Only characters that terminals render as wide WITHOUT a variation selector.
+
+  // ── Text-presentation characters that Windows Terminal renders as wide ──
+  // These have Emoji_Presentation=No in Unicode but modern terminals (Windows
+  // Terminal, VS Code integrated terminal) render them as double-width emoji.
+  if (codePoint === 0x2139) return 2; // ℹ Information Source
+  if (codePoint === 0x2605 || codePoint === 0x2606) return 2; // ★☆ Stars
+  if (codePoint === 0x2660) return 2; // ♠ Black Spade Suit
+  if (codePoint === 0x2663) return 2; // ♣ Black Club Suit
+  if (codePoint === 0x2665) return 2; // ♥ Black Heart Suit
+  if (codePoint === 0x2666) return 2; // ♦ Black Diamond Suit
+  if (codePoint === 0x2690 || codePoint === 0x2691) return 2; // ⚐⚑ Flags
+  if (codePoint === 0x2699) return 2; // ⚙ Gear
+  if (codePoint === 0x26a0) return 2; // ⚠ Warning Sign
+  if (codePoint === 0x2714) return 2; // ✔ Heavy Check Mark
+  if (codePoint === 0x2716) return 2; // ✖ Heavy Multiplication X
+  if (codePoint === 0x279c) return 2; // ➜ Heavy Round-Tipped Arrow
+  if (codePoint === 0x27a4) return 2; // ➤ Black Right Arrowhead
+  if (codePoint === 0x25b6) return 2; // ▶ Black Right Triangle
+  if (codePoint === 0x23f1) return 2; // ⏱ Stopwatch
+
+  // Hourglass + Watch (⌚⌛)
   if (codePoint === 0x231a || codePoint === 0x231b) return 2;
-  // Player controls (⏩-⏳)
-  if (codePoint >= 0x23e9 && codePoint <= 0x23f3) return 2;
-  // Media controls (⏸-⏺)
-  if (codePoint >= 0x23f8 && codePoint <= 0x23fa) return 2;
-  // Play / reverse play buttons
-  if (codePoint === 0x25b6 || codePoint === 0x25c0) return 2;
-  // Geometric shapes used as emoji (◻◼◽◾)
-  if (codePoint >= 0x25fb && codePoint <= 0x25fe) return 2;
-  // Miscellaneous Symbols — most have emoji presentation (☀-⛿)
-  if (codePoint >= 0x2600 && codePoint <= 0x26ff) return 2;
-  // Dingbats with emoji presentation (✂-➿)
-  if (codePoint >= 0x2702 && codePoint <= 0x27b0) return 2;
-  // Curly loop
-  if (codePoint === 0x27bf) return 2;
-  // Supplemental arrows used as emoji
-  if (codePoint === 0x2934 || codePoint === 0x2935) return 2;
-  // Misc symbols used as emoji (⬛⬜⭐⭕)
-  if (codePoint >= 0x2b05 && codePoint <= 0x2b07) return 2;
+  // Fast-forward through rewind (⏩⏪⏫⏬)
+  if (codePoint >= 0x23e9 && codePoint <= 0x23ec) return 2;
+  // Alarm clock (⏰)
+  if (codePoint === 0x23f0) return 2;
+  // Hourglass flowing (⏳)
+  if (codePoint === 0x23f3) return 2;
+  // White/black medium small square with emoji pres (◽◾)
+  if (codePoint === 0x25fd || codePoint === 0x25fe) return 2;
+  // Misc Symbols — only Emoji_Presentation=Yes entries
+  if (codePoint === 0x2614 || codePoint === 0x2615) return 2; // ☔☕
+  if (codePoint >= 0x2648 && codePoint <= 0x2653) return 2; // ♈-♓
+  if (codePoint === 0x267f) return 2; // ♿
+  if (codePoint === 0x2693) return 2; // ⚓
+  if (codePoint === 0x26a1) return 2; // ⚡
+  if (codePoint === 0x26aa || codePoint === 0x26ab) return 2; // ⚪⚫
+  if (codePoint === 0x26bd || codePoint === 0x26be) return 2; // ⚽⚾
+  if (codePoint === 0x26c4 || codePoint === 0x26c5) return 2; // ⛄⛅
+  if (codePoint === 0x26ce) return 2; // ⛎
+  if (codePoint === 0x26d4) return 2; // ⛔
+  if (codePoint === 0x26ea) return 2; // ⛪
+  if (codePoint === 0x26f2 || codePoint === 0x26f3) return 2; // ⛲⛳
+  if (codePoint === 0x26f5) return 2; // ⛵
+  if (codePoint === 0x26fa) return 2; // ⛺
+  if (codePoint === 0x26fd) return 2; // ⛽
+  // Dingbats — only Emoji_Presentation=Yes entries
+  if (codePoint === 0x2705) return 2; // ✅
+  if (codePoint === 0x270a || codePoint === 0x270b) return 2; // ✊✋
+  if (codePoint === 0x2728) return 2; // ✨
+  if (codePoint === 0x274c) return 2; // ❌
+  if (codePoint === 0x274e) return 2; // ❎
+  if (codePoint >= 0x2753 && codePoint <= 0x2755) return 2; // ❓❔❕
+  if (codePoint === 0x2757) return 2; // ❗
+  if (codePoint === 0x2764) return 2; // ❤
+  if (codePoint >= 0x2795 && codePoint <= 0x2797) return 2; // ➕➖➗
+  // Curly loop / double curly loop (➰➿)
+  if (codePoint === 0x27b0 || codePoint === 0x27bf) return 2;
+  // Black large square/circle, star, hollow circle (⬛⬜⭐⭕)
   if (codePoint === 0x2b1b || codePoint === 0x2b1c) return 2;
   if (codePoint === 0x2b50 || codePoint === 0x2b55) return 2;
-  // Copyright / Registered / TM (when emoji-styled)
-  if (codePoint === 0x00a9 || codePoint === 0x00ae) return 2;
-  // Wavy dash, part alternation mark
-  if (codePoint === 0x3030 || codePoint === 0x303d) return 2;
   // SMP Emoji: Mahjong through Symbols & Pictographs Extended-A
-  // Covers emoticons, transport, flags, supplemental symbols, etc.
   if (codePoint >= 0x1f000 && codePoint <= 0x1faff) return 2;
 
   return 1;

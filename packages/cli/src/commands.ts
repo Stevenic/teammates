@@ -6,14 +6,14 @@
  * getThreadTeammates, buildSessionMarkdown, doCopy, feedCommand, printBanner).
  */
 
-import { exec as execCb } from "node:child_process";
+import { exec as execCb, execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-
 import {
   type ChatView,
   concat,
+  detectTerminal,
   esc,
   pen,
   type StyledSpan,
@@ -242,6 +242,13 @@ export class CommandManager {
         usage: "/theme",
         description: "Show current theme colors",
         run: () => this.cmdTheme(),
+      },
+      {
+        name: "about",
+        aliases: ["info", "diag"],
+        usage: "/about",
+        description: "Show version, platform, and diagnostic info",
+        run: () => this.cmdAbout(),
       },
       {
         name: "configure",
@@ -1454,6 +1461,132 @@ Issues that can't be resolved unilaterally — they need input from other teamma
 
     d.feedMarkdown(mdSample);
     d.feedLine();
+    d.refreshView();
+  }
+
+  // ── /about ─────────────────────────────────────────────────────────
+
+  private async cmdAbout(): Promise<void> {
+    const d = this.deps;
+    const caps = detectTerminal();
+
+    // Gather diagnostic info
+    const lines: string[] = [];
+    const add = (label: string, value: string) => {
+      lines.push(`  ${label.padEnd(22)} ${value}`);
+    };
+
+    lines.push("");
+    lines.push("  Teammates — Diagnostic Info");
+    lines.push(`  ${"─".repeat(50)}`);
+    lines.push("");
+
+    // ── Version & runtime ──
+    add("Version:", `v${PKG_VERSION}`);
+    add("Node.js:", process.version);
+    add("Platform:", `${process.platform} ${process.arch}`);
+    add(
+      "OS:",
+      `${process.env.OS || process.platform} (${process.env.PROCESSOR_ARCHITECTURE || process.arch})`,
+    );
+
+    // ── Terminal ──
+    lines.push("");
+    add("Terminal:", caps.name);
+    add("TTY:", caps.isTTY ? "yes" : "no");
+    add("Columns:", `${process.stdout.columns || "unknown"}`);
+    add("Rows:", `${process.stdout.rows || "unknown"}`);
+    add("TERM:", process.env.TERM || "(not set)");
+    add("TERM_PROGRAM:", process.env.TERM_PROGRAM || "(not set)");
+    if (process.platform === "win32") {
+      add("WT_SESSION:", process.env.WT_SESSION ? "yes" : "no");
+      add("ConEmuPID:", process.env.ConEmuPID || "(not set)");
+    }
+
+    // ── Capabilities ──
+    lines.push("");
+    const flag = (b: boolean) => (b ? "yes" : "no");
+    add("Mouse:", flag(caps.mouse));
+    add("SGR Mouse:", flag(caps.sgrMouse));
+    add("Alternate Screen:", flag(caps.alternateScreen));
+    add("Bracketed Paste:", flag(caps.bracketedPaste));
+    add("Truecolor:", flag(caps.truecolor));
+    add("256 Color:", flag(caps.color256));
+
+    // ── Agent / adapter ──
+    lines.push("");
+    add("Adapter:", d.adapterName);
+    const registry = d.orchestrator.getRegistry();
+    const teammates = registry.list();
+    add("Teammates:", `${teammates.length} (${teammates.join(", ")})`);
+    add("Teammates Dir:", d.teammatesDir);
+
+    // ── Services ──
+    lines.push("");
+    for (const svc of d.serviceStatuses) {
+      add(`${svc.name}:`, svc.status);
+    }
+
+    // GitHub CLI version (if available)
+    const ghSvc = d.serviceStatuses.find((s) => s.name === "GitHub");
+    if (
+      ghSvc &&
+      (ghSvc.status === "configured" || ghSvc.status === "not-configured")
+    ) {
+      try {
+        const ghVersion = execSync("gh --version", {
+          stdio: "pipe",
+          encoding: "utf-8",
+        })
+          .trim()
+          .split("\n")[0];
+        add("GitHub CLI:", ghVersion);
+      } catch {
+        // already reported as missing
+      }
+    }
+
+    // ── Internal state ──
+    lines.push("");
+    add("Active Tasks:", `${d.agentActive.size}`);
+    add("Queued Tasks:", `${d.taskQueue.length}`);
+    add("Threads:", `${d.threads.size}`);
+    add(
+      "Focused Thread:",
+      d.focusedThreadId !== null ? `#${d.focusedThreadId}` : "none",
+    );
+    add("Conversation Len:", `${d.conversation.history.length} messages`);
+
+    lines.push("");
+
+    // Display
+    const text = lines.join("\n");
+    for (const line of lines) {
+      if (line.includes("─")) {
+        d.feedLine(tp.muted(line));
+      } else if (
+        line.trim() === "" ||
+        line.includes("Teammates — Diagnostic")
+      ) {
+        d.feedLine(line.includes("Diagnostic") ? tp.bold(line) : undefined);
+      } else {
+        const colonIdx = line.indexOf(":");
+        if (colonIdx > 0 && colonIdx < 26) {
+          d.feedLine(
+            concat(
+              tp.muted(line.slice(0, colonIdx + 1)),
+              tp.text(line.slice(colonIdx + 1)),
+            ),
+          );
+        } else {
+          d.feedLine(tp.text(line));
+        }
+      }
+    }
+
+    // Copy to clipboard
+    this.doCopy(text);
+
     d.refreshView();
   }
 

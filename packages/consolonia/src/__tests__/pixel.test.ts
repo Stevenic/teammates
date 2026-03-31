@@ -388,6 +388,47 @@ describe("symbol", () => {
       // U+1F600 = grinning face (in emoji range 0x1f000-0x1faff)
       expect(charWidth(0x1f600)).toBe(2);
     });
+
+    it("text-presentation symbols that remain width 1", () => {
+      // These render as 1 cell even on Windows Terminal
+      expect(charWidth(0x2713)).toBe(1); // ✓ Check Mark
+      expect(charWidth(0x2702)).toBe(1); // ✂ Scissors
+      expect(charWidth(0x00a9)).toBe(1); // © Copyright
+      expect(charWidth(0x00ae)).toBe(1); // ® Registered
+    });
+
+    it("emoji-presentation symbols are width 2", () => {
+      // These have Emoji_Presentation=Yes and render as 2 cells
+      expect(charWidth(0x2614)).toBe(2); // ☔ Umbrella with Rain Drops
+      expect(charWidth(0x2615)).toBe(2); // ☕ Hot Beverage
+      expect(charWidth(0x2705)).toBe(2); // ✅ White Heavy Check Mark
+      expect(charWidth(0x274c)).toBe(2); // ❌ Cross Mark
+      expect(charWidth(0x2757)).toBe(2); // ❗ Heavy Exclamation Mark
+      expect(charWidth(0x26bd)).toBe(2); // ⚽ Soccer Ball
+      expect(charWidth(0x26fd)).toBe(2); // ⛽ Fuel Pump
+      expect(charWidth(0x2b50)).toBe(2); // ⭐ White Medium Star
+    });
+
+    it("Windows Terminal wide symbols are width 2", () => {
+      // Text-presentation chars that Windows Terminal renders as double-width
+      expect(charWidth(0x2139)).toBe(2); // ℹ Information Source
+      expect(charWidth(0x2605)).toBe(2); // ★ Black Star
+      expect(charWidth(0x2606)).toBe(2); // ☆ White Star
+      expect(charWidth(0x2660)).toBe(2); // ♠ Black Spade Suit
+      expect(charWidth(0x2663)).toBe(2); // ♣ Black Club Suit
+      expect(charWidth(0x2665)).toBe(2); // ♥ Black Heart Suit
+      expect(charWidth(0x2666)).toBe(2); // ♦ Black Diamond Suit
+      expect(charWidth(0x2690)).toBe(2); // ⚐ White Flag
+      expect(charWidth(0x2691)).toBe(2); // ⚑ Black Flag
+      expect(charWidth(0x2699)).toBe(2); // ⚙ Gear
+      expect(charWidth(0x26a0)).toBe(2); // ⚠ Warning Sign
+      expect(charWidth(0x2714)).toBe(2); // ✔ Heavy Check Mark
+      expect(charWidth(0x2716)).toBe(2); // ✖ Heavy Multiplication X
+      expect(charWidth(0x279c)).toBe(2); // ➜ Heavy Round-Tipped Arrow
+      expect(charWidth(0x27a4)).toBe(2); // ➤ Black Right Arrowhead
+      expect(charWidth(0x25b6)).toBe(2); // ▶ Black Right Triangle
+      expect(charWidth(0x23f1)).toBe(2); // ⏱ Stopwatch
+    });
   });
 
   describe("sym() factory", () => {

@@ -9,6 +9,8 @@
 import type { Writable } from "node:stream";
 import * as esc from "./ansi/esc.js";
 import { AnsiOutput } from "./ansi/output.js";
+import { detectTerminal, type TerminalCaps } from "./ansi/terminal-env.js";
+
 import { DrawingContext } from "./drawing/context.js";
 import type { InputEvent } from "./input/events.js";
 import { createInputProcessor } from "./input/processor.js";
@@ -40,6 +42,7 @@ export class App {
   private readonly _alternateScreen: boolean;
   private readonly _mouse: boolean;
   private readonly _title: string | undefined;
+  private readonly _caps: TerminalCaps;
 
   // Subsystems — created during run()
   private _output!: AnsiOutput;
@@ -58,11 +61,17 @@ export class App {
   private _sigintListener: (() => void) | null = null;
   private _renderScheduled = false;
 
+  /** Detected terminal capabilities (read-only, for diagnostics). */
+  get caps(): Readonly<TerminalCaps> {
+    return this._caps;
+  }
+
   constructor(options: AppOptions) {
     this.root = options.root;
     this._alternateScreen = options.alternateScreen ?? true;
     this._mouse = options.mouse ?? false;
     this._title = options.title;
+    this._caps = detectTerminal();
   }
 
   // ── Public API ───────────────────────────────────────────────────
@@ -127,8 +136,7 @@ export class App {
     // 2. Create ANSI output
     this._output = new AnsiOutput(stdout);
 
-    // 3. Prepare terminal (custom sequence instead of prepareTerminal()
-    //    so we can conditionally enable mouse tracking)
+    // 3. Prepare terminal (ANSI sequences for alternate screen, mouse, etc.)
     this._prepareTerminal();
 
     // 4. Set terminal title
@@ -155,31 +163,20 @@ export class App {
 
   private _prepareTerminal(): void {
     const stream = process.stdout as Writable;
-    let seq = "";
-    if (this._alternateScreen) {
-      seq += esc.alternateScreenOn;
-    }
-    seq += esc.hideCursor;
-    seq += esc.bracketedPasteOn;
-    if (this._mouse) {
-      seq += esc.mouseTrackingOn;
-    }
-    seq += esc.clearScreen;
-    stream.write(seq);
+    const seq = esc.initSequence(this._caps, {
+      alternateScreen: this._alternateScreen,
+      mouse: this._mouse,
+    });
+    if (seq) stream.write(seq);
   }
 
   private _restoreTerminal(): void {
     const stream = process.stdout as Writable;
-    let seq = esc.reset;
-    if (this._mouse) {
-      seq += esc.mouseTrackingOff;
-    }
-    seq += esc.bracketedPasteOff;
-    seq += esc.showCursor;
-    if (this._alternateScreen) {
-      seq += esc.alternateScreenOff;
-    }
-    stream.write(seq);
+    const seq = esc.restoreSequence(this._caps, {
+      alternateScreen: this._alternateScreen,
+      mouse: this._mouse,
+    });
+    if (seq) stream.write(seq);
   }
 
   private _createRenderPipeline(cols: number, rows: number): void {

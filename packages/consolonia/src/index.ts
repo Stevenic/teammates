@@ -99,6 +99,10 @@ export {
   truncateAnsi,
   visibleLength,
 } from "./ansi/strip.js";
+export {
+  detectTerminal,
+  type TerminalCaps,
+} from "./ansi/terminal-env.js";
 
 // ── Render pipeline ─────────────────────────────────────────────────
 
