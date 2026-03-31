@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: Persona templates are folder-based
 description: Bundled CLI personas now live in per-persona folders with SOUL.md and WISDOM.md instead of single markdown files.
 type: decision

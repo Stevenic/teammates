@@ -12,7 +12,6 @@
 
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { PKG_VERSION } from "./cli-args.js";
 
 /** How long daily logs are kept on disk before purging (30 days). */
 export const DAILY_LOG_RETENTION_DAYS = 30;
@@ -112,7 +111,6 @@ function buildWeeklySummary(
 
   const lines: string[] = [];
   lines.push("---");
-  lines.push(`version: ${PKG_VERSION}`);
   lines.push(`type: weekly`);
   lines.push(`week: ${weekKey}`);
   lines.push(`period: ${firstDate} to ${lastDate}`);
@@ -145,7 +143,6 @@ function buildMonthlySummary(
 
   const lines: string[] = [];
   lines.push("---");
-  lines.push(`version: ${PKG_VERSION}`);
   lines.push(`type: monthly`);
   lines.push(`month: ${monthKey}`);
   lines.push(`period: ${firstWeek} to ${lastWeek}`);
@@ -721,7 +718,6 @@ For EACH file listed below:
 6. Start the file with this frontmatter:
 \`\`\`
 ---
-version: ${PKG_VERSION}
 type: daily
 compressed: true
 ---
@@ -795,7 +791,6 @@ Keep the same markdown structure (# date header, ## Task headers) but make each 
 Write the compressed version to \`.teammates/${basename(teammateDir)}/memory/${yesterdayStr}.md\`. Start the file with this frontmatter:
 \`\`\`
 ---
-version: ${PKG_VERSION}
 type: daily
 compressed: true
 ---

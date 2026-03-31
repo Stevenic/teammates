@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: codex-activity-watch-logfile-not-debugfile
 description: Codex live activity must tail the adapter logFile, not debugFile, because Codex does not support --debug-file.
 type: decision

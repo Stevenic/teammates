@@ -1,5 +1,4 @@
 ---
-version: 0.7.3
 name: Win32 mouse — pure ANSI, no SetConsoleMode
 description: Consolonia creator confirmed ANSI escape sequences are the correct and more accurate approach for mouse tracking. Removed koffi/SetConsoleMode entirely.
 type: feedback

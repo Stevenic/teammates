@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: Codex Activity From JSONL Stdout
 description: For Codex, live activity should be derived from the `codex exec --json` stdout stream, not the markdown debug log.
 type: decision

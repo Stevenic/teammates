@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: codex_activity_from_debug_jsonl
 description: Codex live activity should be tailed from the paired debug JSONL file and must parse command_execution items, not just older tool_call shapes.
 type: decision

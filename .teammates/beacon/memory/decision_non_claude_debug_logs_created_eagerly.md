@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: non_claude_debug_logs_created_eagerly
 description: Non-Claude adapter debug logs should be created before process completion so paired prompt and log files exist during task execution.
 type: decision

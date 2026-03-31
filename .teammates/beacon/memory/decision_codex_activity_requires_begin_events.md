@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: codex_activity_requires_begin_events
 description: Codex live activity needs begin-event parsing, not only completed tool-call events.
 type: decision

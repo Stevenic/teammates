@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: copilot_cli_stdin_piping
 description: Copilot CLI must use interactive mode (no -p flag) with stdin piping to avoid Windows command-line length limits. -p - does NOT work, but omitting -p entirely and piping stdin does.
 type: decision

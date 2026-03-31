@@ -14,7 +14,6 @@ import {
   multiSearch,
   type SearchResult,
 } from "@teammates/recall";
-import { PKG_VERSION } from "./cli-args.js";
 import type { TaskResult, TeammateConfig } from "./types.js";
 
 export interface AgentAdapter {
@@ -440,13 +439,13 @@ export function buildTeammatePrompt(
       "",
       "**After completing the task**, update your memory files:",
       "",
-      `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist. Always include YAML frontmatter with \`version: ${PKG_VERSION}\` and \`type: daily\`.`,
+      `1. **Daily log** — Read \`.teammates/${teammate.name}/memory/${today}.md\` first (it may have entries from earlier tasks today), then write it back with your entry added. Create the file if it doesn't exist. Always include YAML frontmatter with \`type: daily\`.`,
       "   - What you did",
       "   - Key decisions made",
       "   - Files changed",
       "   - Anything the next task should know",
       "",
-      `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`version\`, \`name\`, \`description\`, \`type\`). Always include \`version: ${PKG_VERSION}\` as the first field. Update existing memory files if the topic already has one.`,
+      `2. **Typed memories** — If you learned something durable (a decision, pattern, feedback, or reference), create a typed memory file at \`.teammates/${teammate.name}/memory/<type>_<topic>.md\` with frontmatter (\`name\`, \`description\`, \`type\`). Update existing memory files if the topic already has one.`,
       "",
       "3. **WISDOM.md** — Do not edit directly. Wisdom entries are distilled from typed memories during compaction.",
       "",

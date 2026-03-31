@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: Thread verbs always at end of thread
 description: [reply] [copy thread] must ONLY appear at the very end of the thread, never per-item or between subject and body
 type: feedback

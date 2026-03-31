@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: terminal_mouse_sgr
 description: ChatView clickable verbs depend on SGR mouse tracking support from the host terminal.
 type: reference

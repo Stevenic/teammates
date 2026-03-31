@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: terminal_mouse_protocols
 description: Consolonia should support both SGR and classic xterm mouse packets for clickable terminal actions.
 type: decision

@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: Codex TUI Log Not Activity Source
 description: `codex-tui.log` exposes Codex runtime telemetry, not the detailed tool activity needed for the CLI's `[show activity]` stream.
 type: decision

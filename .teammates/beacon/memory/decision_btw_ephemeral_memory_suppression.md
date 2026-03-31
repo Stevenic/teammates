@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: BTW Memory Suppression
 description: The /btw command is an ephemeral side-question path and must not write daily logs or typed memories.
 type: decision

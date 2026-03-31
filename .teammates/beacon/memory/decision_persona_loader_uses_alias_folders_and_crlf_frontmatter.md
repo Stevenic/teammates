@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: persona-loader-alias-folders-crlf
 description: Bundled persona templates are keyed by alias folders, and the loader must accept Windows CRLF frontmatter.
 type: decision

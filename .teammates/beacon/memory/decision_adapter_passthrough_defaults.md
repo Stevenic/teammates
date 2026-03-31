@@ -1,5 +1,4 @@
 ---
-version: 0.7.0
 name: adapter-passthrough-defaults
 description: Keep agent CLI passthrough in adapter argv construction and use explicit Codex defaults instead of bundled aliases.
 type: decision
