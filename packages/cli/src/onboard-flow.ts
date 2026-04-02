@@ -14,6 +14,7 @@ import { concat } from "@teammates/consolonia";
 import chalk from "chalk";
 import ora from "ora";
 
+import { buildTitle } from "./console/startup.js";
 import type { AgentAdapter } from "./adapter.js";
 import {
   buildImportAdaptationPrompt,
@@ -1065,7 +1066,6 @@ export class OnboardFlow {
    * Render the box logo with up to 4 info lines on the right side.
    */
   printLogo(infoLines: string[]): void {
-    const { buildTitle } = require("./console/startup.js");
     const [top, bot] = buildTitle("teammates");
     console.log(`  ${chalk.cyan(top)}`);
     console.log(`  ${chalk.cyan(bot)}`);
