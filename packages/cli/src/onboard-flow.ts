@@ -513,7 +513,7 @@ export class OnboardFlow {
       console.log(
         chalk.gray("  Running in solo mode — all tasks go to your agent."),
       );
-      console.log(chalk.gray("  Run /init later to set up teammates."));
+      console.log(chalk.gray("  Run /add later to add teammates."));
       console.log();
       return true;
     }
@@ -631,7 +631,7 @@ export class OnboardFlow {
   }
 
   /**
-   * In-TUI persona picker for /init pick. Uses feedLine + askInline instead
+   * In-TUI persona picker for /add. Uses feedLine + askInline instead
    * of console.log + askInput.
    */
   async runPersonaOnboardingInline(teammatesDir: string): Promise<void> {
@@ -905,7 +905,7 @@ export class OnboardFlow {
           "  adapt their files, and create any new teammates the project needs.",
         ),
       );
-      console.log(chalk.gray("  You can also do this later with /init."));
+      console.log(chalk.gray("  You can also do this later with /add."));
       console.log();
 
       const adapt = await this.askChoice("Adapt now? (y/n): ", ["y", "n"]);
@@ -920,7 +920,7 @@ export class OnboardFlow {
         );
       } else {
         console.log(
-          chalk.gray("  Skipped adaptation. Run /init to adapt later."),
+          chalk.gray("  Skipped adaptation. Run /add to adapt later."),
         );
       }
     } catch (err: any) {

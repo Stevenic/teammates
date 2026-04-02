@@ -151,3 +151,25 @@ export async function scaffoldFromPersona(
 
   return teamDir;
 }
+
+/**
+ * Update an existing teammate's SOUL.md and WISDOM.md from a persona template.
+ * Preserves the teammate's memory/ directory and other files.
+ *
+ * @param teammatesDir - The .teammates/ directory
+ * @param name - The teammate folder name
+ * @param persona - The persona to update from
+ */
+export async function updateFromPersona(
+  teammatesDir: string,
+  name: string,
+  persona: Persona,
+): Promise<void> {
+  const teamDir = join(teammatesDir, name);
+  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+  const soulContent = persona.soul.replace(/<Name>/g, displayName);
+  const wisdomContent = persona.wisdom.replace(/<Name>/g, displayName);
+
+  await writeFile(join(teamDir, "SOUL.md"), soulContent, "utf-8");
+  await writeFile(join(teamDir, "WISDOM.md"), wisdomContent, "utf-8");
+}

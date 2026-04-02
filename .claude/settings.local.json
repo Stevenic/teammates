@@ -34,7 +34,12 @@
     "PostToolUse": [
       {
         "matcher": "",
-        "hooks": []
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"\" /* teammates-activity */"
+          }
+        ]
       }
     ]
   }

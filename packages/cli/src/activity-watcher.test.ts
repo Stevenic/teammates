@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collapseActivityEvents,
+  parseClaudeActivity,
   parseCodexJsonlLine,
   parseCopilotJsonlLine,
 } from "./activity-watcher.js";
@@ -242,6 +243,199 @@ describe("collapseActivityEvents", () => {
     ).toEqual([
       { elapsedMs: 4_000, tool: "Exploring", detail: "1× Read, 1× Grep" },
     ]);
+  });
+});
+
+describe("parseClaudeActivity", () => {
+  const start = Date.parse("2026-04-02T10:38:00.000Z");
+
+  it("parses Hook PostToolUse lines (current format)", () => {
+    const log = [
+      "2026-04-02T10:39:03.877Z [DEBUG] Hook PostToolUse:Read (PostToolUse) error:",
+      "node:internal/modules/cjs/loader:1386",
+      "  throw err;",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toEqual([
+      { elapsedMs: expect.any(Number), tool: "Read" },
+    ]);
+    expect(events[0].elapsedMs).toBeGreaterThan(0);
+  });
+
+  it("parses multiple tool types from hook lines", () => {
+    const log = [
+      "2026-04-02T10:39:03.877Z [DEBUG] Hook PostToolUse:Read (PostToolUse) error:",
+      "2026-04-02T10:39:04.328Z [DEBUG] Hook PostToolUse:Glob (PostToolUse) error:",
+      "2026-04-02T10:39:06.306Z [DEBUG] Hook PostToolUse:Grep (PostToolUse) error:",
+      "2026-04-02T10:39:53.120Z [DEBUG] Hook PostToolUse:Agent (PostToolUse) error:",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    expect(events.map((e) => e.tool)).toEqual(["Read", "Glob", "Grep", "Agent"]);
+  });
+
+  it("skips non-work tools like ToolSearch", () => {
+    const log =
+      "2026-04-02T10:39:10.695Z [DEBUG] Hook PostToolUse:ToolSearch (PostToolUse) error:";
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toEqual([]);
+  });
+
+  it("parses tool errors", () => {
+    const log =
+      "2026-04-02T10:39:14.620Z [DEBUG] Read tool error (213ms): File content exceeds max tokens";
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toEqual([
+      {
+        elapsedMs: expect.any(Number),
+        tool: "Read",
+        detail: "File content exceeds max tokens",
+        isError: true,
+      },
+    ]);
+  });
+
+  it("captures filename from Renaming lines for Edit events with hooks", () => {
+    const log = [
+      "2026-04-02T10:41:37.770Z [DEBUG] Renaming C:\\source\\teammates\\packages\\cli\\src\\adapter.ts.tmp.34504.12345 to C:\\source\\teammates\\packages\\cli\\src\\adapter.ts",
+      "2026-04-02T10:41:37.970Z [DEBUG] Hook PostToolUse:Edit (PostToolUse) error:",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toEqual([
+      { elapsedMs: expect.any(Number), tool: "Edit", detail: "adapter.ts" },
+    ]);
+  });
+
+  it("emits Edit from Renaming when no hook follows (hook-free mode)", () => {
+    const log =
+      "2026-04-02T10:41:37.770Z [DEBUG] Renaming C:\\source\\teammates\\packages\\cli\\src\\adapter.ts.tmp.34504.12345 to C:\\source\\teammates\\packages\\cli\\src\\adapter.ts";
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toEqual([
+      { elapsedMs: expect.any(Number), tool: "Edit", detail: "adapter.ts" },
+    ]);
+  });
+
+  it("emits multiple Edits from consecutive Renaming lines without hooks", () => {
+    const log = [
+      "2026-04-02T10:41:37.770Z [DEBUG] Renaming a.tmp to C:\\foo\\adapter.ts",
+      "2026-04-02T10:41:52.551Z [DEBUG] Renaming b.tmp to C:\\foo\\cli-proxy.ts",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toEqual([
+      { elapsedMs: expect.any(Number), tool: "Edit", detail: "adapter.ts" },
+      { elapsedMs: expect.any(Number), tool: "Edit", detail: "cli-proxy.ts" },
+    ]);
+  });
+
+  it("detects subagent API turns and emits Agent activity", () => {
+    const log = [
+      "2026-04-02T10:39:01.892Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=abc source=agent:builtin:Explore",
+      "2026-04-02T10:39:04.362Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=def source=agent:builtin:Explore",
+      "2026-04-02T10:39:11.050Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=ghi source=agent:builtin:Explore",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toEqual([
+      {
+        elapsedMs: expect.any(Number),
+        tool: "Agent",
+        detail: "Explore (3 turns)",
+      },
+    ]);
+  });
+
+  it("tracks multiple different subagent types separately", () => {
+    const log = [
+      "2026-04-02T10:39:01.000Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=a source=agent:builtin:Explore",
+      "2026-04-02T10:39:02.000Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=b source=agent:builtin:Plan",
+      "2026-04-02T10:39:03.000Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=c source=agent:builtin:Explore",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toHaveLength(2);
+    expect(events.find((e) => e.detail?.includes("Explore"))?.detail).toBe(
+      "Explore (2 turns)",
+    );
+    expect(events.find((e) => e.detail?.includes("Plan"))?.detail).toBe(
+      "Plan (1 turn)",
+    );
+  });
+
+  it("detects Bash from Spawning shell lines (hook-free)", () => {
+    const log =
+      "2026-04-02T10:39:24.232Z [DEBUG] Spawning shell without login (-l flag skipped)";
+
+    const events = parseClaudeActivity(log, start);
+    expect(events).toEqual([
+      { elapsedMs: expect.any(Number), tool: "Bash" },
+    ]);
+  });
+
+  it("does not duplicate Bash when both hook and Spawning shell appear", () => {
+    const log = [
+      "2026-04-02T10:39:24.232Z [DEBUG] Spawning shell without login (-l flag skipped)",
+      "2026-04-02T10:39:25.152Z [DEBUG] Hook PostToolUse:Bash (PostToolUse) error:",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    // Should have exactly one Bash event (from hook), not two
+    const bashEvents = events.filter((e) => e.tool === "Bash");
+    expect(bashEvents).toHaveLength(1);
+  });
+
+  it("combines all signal types in a real-world scenario", () => {
+    const log = [
+      // Main session API call (ignored by activity)
+      "2026-04-02T10:38:50.140Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=main source=sdk",
+      // Subagent starts exploring
+      "2026-04-02T10:39:01.892Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=e1 source=agent:builtin:Explore",
+      // Subagent tools (via hooks)
+      "2026-04-02T10:39:03.877Z [DEBUG] Hook PostToolUse:Read (PostToolUse) error:",
+      "2026-04-02T10:39:04.328Z [DEBUG] Hook PostToolUse:Glob (PostToolUse) error:",
+      // More subagent turns
+      "2026-04-02T10:39:04.362Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=e2 source=agent:builtin:Explore",
+      "2026-04-02T10:39:06.306Z [DEBUG] Hook PostToolUse:Grep (PostToolUse) error:",
+      // Agent completes
+      "2026-04-02T10:39:53.120Z [DEBUG] Hook PostToolUse:Agent (PostToolUse) error:",
+      // Main session resumes — Bash
+      "2026-04-02T10:39:56.420Z [DEBUG] Spawning shell without login (-l flag skipped)",
+      "2026-04-02T10:39:57.152Z [DEBUG] Hook PostToolUse:Bash (PostToolUse) error:",
+      // File edit
+      "2026-04-02T10:41:37.770Z [DEBUG] Renaming a.tmp to C:\\src\\adapter.ts",
+      "2026-04-02T10:41:37.970Z [DEBUG] Hook PostToolUse:Edit (PostToolUse) error:",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    const tools = events.map((e) => e.tool);
+    // Should see: Read, Glob, Grep, Agent (hook), Agent (subagent turns), Bash, Edit
+    expect(tools).toContain("Read");
+    expect(tools).toContain("Glob");
+    expect(tools).toContain("Grep");
+    expect(tools).toContain("Agent");
+    expect(tools).toContain("Bash");
+    expect(tools).toContain("Edit");
+    // Edit should have the filename
+    const editEvent = events.find((e) => e.tool === "Edit");
+    expect(editEvent?.detail).toBe("adapter.ts");
+  });
+
+  it("sorts events by elapsed time", () => {
+    const log = [
+      "2026-04-02T10:39:01.000Z [DEBUG] [API REQUEST] /v1/messages x-client-request-id=e1 source=agent:builtin:Explore",
+      "2026-04-02T10:38:50.000Z [DEBUG] Hook PostToolUse:Read (PostToolUse) error:",
+    ].join("\n");
+
+    const events = parseClaudeActivity(log, start);
+    expect(events.length).toBeGreaterThanOrEqual(2);
+    for (let i = 1; i < events.length; i++) {
+      expect(events[i].elapsedMs).toBeGreaterThanOrEqual(events[i - 1].elapsedMs);
+    }
   });
 });
 

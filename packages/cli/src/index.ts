@@ -67,6 +67,7 @@ export { ConversationManager } from "./conversation.js";
 export type { FeedRendererDeps } from "./feed-renderer.js";
 export { FeedRenderer } from "./feed-renderer.js";
 export { HandoffManager } from "./handoff-manager.js";
+export { ensurePostToolUseHook } from "./hook-installer.js";
 export type { LogEntry } from "./log-parser.js";
 export {
   buildConversationLog,
@@ -84,7 +85,7 @@ export {
   type TeammateStatus,
 } from "./orchestrator.js";
 export type { Persona } from "./personas.js";
-export { loadPersonas, scaffoldFromPersona } from "./personas.js";
+export { loadPersonas, scaffoldFromPersona, updateFromPersona } from "./personas.js";
 export { Registry } from "./registry.js";
 export { RetroManager } from "./retro-manager.js";
 export { detectServices } from "./service-config.js";

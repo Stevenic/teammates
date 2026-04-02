@@ -2,20 +2,20 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-04-01
+Last compacted: 2026-04-02
 
 ---
 
 ## Prompt & Context
 
-**Prompt structure drives compliance**
-Put context first, the concrete task next, and hard rules last. Restate the user request near the bottom so the model ends on the actual ask, not on background instructions.
+**Prompt pipeline is two-tier: static system prompt + dynamic user message**
+Each teammate has a pre-built `SYSTEM-PROMPT.md` (generated at startup by `system-prompt.ts`). It contains all stable sections: IDENTITY, GOALS, WISDOM, TEAM, SERVICES, RECALL_TOOL, ENVIRONMENT, USER_PROFILE, INSTRUCTIONS. Claude receives this via `--append-system-prompt-file` (preserves Claude Code's built-in system prompt). The dynamic user message carries conversation history, daily log snapshot, recalled memories, handoff context, and the task. Non-Claude agents get the full prompt combined via stdin.
 
 **Prompt stack order is IDENTITY → GOALS → WISDOM → TEAM → ...**
 GOALS.md was added between SOUL.md and WISDOM.md in `buildTeammatePrompt()`. Every `TeammateConfig` must include a `goals` field (empty string if no file exists). Missing it causes `undefined.trim()` crashes.
 
-**Budgets must be explicit**
-Prompt context needs fixed budgets, not intuition. Daily logs, recall results, and conversation history should each have bounded allocations so one source cannot starve the rest.
+**User message budget is 20k tokens, priority-ordered**
+Replaced the old dual-budget system (12k daily logs + 8k recall). Priority order: (1) user's message (unbounded), (2) conversation history (highest), (3) daily log snapshot from before conversation started (medium), (4) recalled memories in `MEMORY:` format (lowest). As conversation grows, it naturally pushes out recall and daily logs. `buildUserMessage()` handles allocation.
 
 **Conversation context stays inline**
 Do not offload conversation history into temp markdown files. Inline context is more reliable, avoids concurrent file races, and works better with deterministic compression. Pre-dispatch compression keeps history within budget.
@@ -51,6 +51,23 @@ Keep upgrade instructions in `packages/cli/MIGRATIONS.md`, parse them by version
 
 **Memory files must not include version: in frontmatter**
 The `version:` field was removed from all memory file frontmatter and from the code that generates it (`compact.ts`, `adapter.ts`). Version is tracked centrally in `.teammates/settings.json` (`cliVersion`), not per-file.
+
+**Index versioning triggers full rebuilds**
+`indexVersion` in `.teammates/settings.json` tracks the index format. `StartupManager.INDEX_VERSION` is the current expected version. When the persisted version is lower (or missing), startup runs `indexer.indexAll()` for a full rebuild instead of incremental sync. Bump `INDEX_VERSION` whenever the indexing format changes (e.g., chunking was v1→v2).
+
+**User twin gets logged and compacted**
+`logUserTask()` writes task entries to the user's twin daily memory (`.teammates/<userAlias>/memory/YYYY-MM-DD.md`) after each task completes. The user's twin is included in startup compaction, daily compression, and stale daily purge cycles. Logging is fire-and-forget to never block task flow.
+
+## Recall & Search
+
+**Recall indexes markdown in chunks**
+`chunker.ts` splits memory files into ~2k token chunks (~8k chars) on markdown heading boundaries, then paragraph boundaries. Each chunk is a separate Vectra document with URI suffix `#0`, `#1`, etc. `classifyUri()` strips `#N` suffix before classification. `isChunkUri()` and `uriToRelativePath()` are the helpers.
+
+**Recalled memories use structured MEMORY: format**
+Results are formatted as `MEMORY:` blocks with `file:`, `type:`, `period:`, `partial:` metadata fields. This replaces the old `<RECALL_RESULTS>` XML block in the system prompt — recall results now go in the user message under the budget system.
+
+**SYSTEM-PROMPT.md is generated, not committed**
+`**/SYSTEM-PROMPT.md` is gitignored. Generated at startup by `writeAllSystemPrompts()` in `system-prompt.ts`. Claude uses it directly via `--append-system-prompt-file`. Falls back to inline generation for tests and first-run scenarios.
 
 ## Feed & Rendering
 

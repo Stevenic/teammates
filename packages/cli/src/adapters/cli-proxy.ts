@@ -27,6 +27,7 @@ import {
   watchDebugLog,
   watchDebugLogErrors,
 } from "../activity-watcher.js";
+import { ensurePostToolUseHook } from "../hook-installer.js";
 import type {
   AgentAdapter,
   InstalledService,
@@ -173,6 +174,17 @@ export class CliProxyAdapter implements AgentAdapter {
             (existing.endsWith("\n") || !existing ? "" : "\n") +
             ".tmp/\n",
         ).catch(() => {});
+      }
+    }
+
+    // Install PostToolUse hook on first use of a Claude-based teammate.
+    // The hook is a no-op — its presence causes Claude Code to log tool
+    // events to --debug-file, which the activity watcher already parses.
+    if (this.preset.supportsDebugFile) {
+      try {
+        ensurePostToolUseHook(teammate.cwd ?? process.cwd());
+      } catch {
+        /* best effort — activity tracking degrades gracefully */
       }
     }
 

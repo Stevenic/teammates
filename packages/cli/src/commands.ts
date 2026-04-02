@@ -30,6 +30,7 @@ import {
   importTeammates,
 } from "./onboard.js";
 import type { OnboardFlow } from "./onboard-flow.js";
+import { loadPersonas, scaffoldFromPersona, updateFromPersona } from "./personas.js";
 import type { Orchestrator } from "./orchestrator.js";
 import type { RetroManager } from "./retro-manager.js";
 import { cmdConfigure, type ServiceView } from "./service-config.js";
@@ -120,6 +121,7 @@ export interface CommandsDeps {
   runOnboardingAgent(adapter: AgentAdapter, projectDir: string): Promise<void>;
   runPersonaOnboardingInline(teammatesDir: string): Promise<void>;
   refreshTeammates(): void;
+  removeTeammateFromDisk(name: string): Promise<void>;
 
   // ── Clipboard helper ──
   askInline(prompt: string): Promise<string>;
@@ -179,12 +181,26 @@ export class CommandManager {
         run: (args) => this.cmdInterrupt(args),
       },
       {
-        name: "init",
-        aliases: ["onboard", "setup"],
-        usage: "/init [pick | from-path]",
+        name: "add",
+        aliases: [],
+        usage: "/add",
+        description: "Add a new teammate from bundled personas",
+        run: () => this.cmdAdd(),
+      },
+      {
+        name: "remove",
+        aliases: [],
+        usage: "/remove",
+        description: "Remove an agentic teammate",
+        run: () => this.cmdRemove(),
+      },
+      {
+        name: "update",
+        aliases: [],
+        usage: "/update",
         description:
-          "Set up teammates (pick from personas, or import from another project)",
-        run: (args) => this.cmdInit(args),
+          "Update a teammate's SOUL.md & WISDOM.md from bundled personas",
+        run: () => this.cmdUpdate(),
       },
       {
         name: "clear",
@@ -738,99 +754,266 @@ export class CommandManager {
     }
   }
 
-  // ── /init ──────────────────────────────────────────────────────────
+  // ── /add ───────────────────────────────────────────────────────────
 
-  private async cmdInit(argsStr: string): Promise<void> {
+  private async cmdAdd(): Promise<void> {
     const d = this.deps;
-    const cwd = process.cwd();
-    const teammatesDir = join(cwd, ".teammates");
-    await mkdir(teammatesDir, { recursive: true });
+    const personas = await loadPersonas();
+    if (personas.length === 0) {
+      d.feedLine(tp.warning("  No persona templates found."));
+      d.refreshView();
+      return;
+    }
 
-    const fromPath = argsStr.trim();
-    if (fromPath === "pick") {
-      await d.runPersonaOnboardingInline(teammatesDir);
-    } else if (fromPath) {
-      const resolved = resolve(fromPath);
-      let sourceDir: string;
-      try {
-        const s = await stat(join(resolved, ".teammates"));
-        if (s.isDirectory()) {
-          sourceDir = join(resolved, ".teammates");
-        } else {
-          sourceDir = resolved;
-        }
-      } catch {
-        sourceDir = resolved;
+    // Filter out personas that are already installed as teammates
+    const existingNames = new Set(d.orchestrator.listTeammates());
+    const available = personas.filter((p) => !existingNames.has(p.alias));
+
+    if (available.length === 0) {
+      d.feedLine(tp.muted("  All bundled personas are already installed."));
+      d.refreshView();
+      return;
+    }
+
+    // Display available personas grouped by tier
+    d.feedLine(tp.text("  Available personas:\n"));
+
+    let currentTier = 0;
+    for (let i = 0; i < available.length; i++) {
+      const p = available[i];
+      if (p.tier !== currentTier) {
+        currentTier = p.tier;
+        const label = currentTier === 1 ? "Core" : "Specialized";
+        d.feedLine(tp.muted(`  ── ${label} ──`));
       }
+      const num = String(i + 1).padStart(2, " ");
+      d.feedLine(
+        concat(
+          tp.text(`  ${num}) @${p.alias} `),
+          tp.muted(`— ${p.persona} — ${p.description}`),
+        ),
+      );
+    }
 
+    d.feedLine(tp.muted("\n  Enter numbers separated by commas, e.g. 1,3,5"));
+    d.refreshView();
+
+    const input = await d.askInline("Add: ");
+    if (!input) {
+      d.feedLine(tp.muted("  No personas selected."));
+      d.refreshView();
+      return;
+    }
+
+    const indices = input
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10) - 1)
+      .filter((i) => i >= 0 && i < available.length);
+
+    const unique = [...new Set(indices)];
+    if (unique.length === 0) {
+      d.feedLine(tp.warning("  No valid selections."));
+      d.refreshView();
+      return;
+    }
+
+    await copyTemplateFiles(d.teammatesDir);
+
+    const created: string[] = [];
+    for (const idx of unique) {
+      const p = available[idx];
+      const nameInput = await d.askInline(
+        `Alias for @${p.alias} [${p.alias}]: `,
+      );
+      const name = nameInput || p.alias;
+      const folderName = name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+
+      await scaffoldFromPersona(d.teammatesDir, folderName, p);
+      created.push(folderName);
+      d.feedLine(
+        concat(tp.success(`  ✔  @${folderName}`), tp.muted(` — ${p.persona}`)),
+      );
+    }
+
+    d.feedLine(
+      concat(
+        tp.success(
+          `\n  ✔  Added ${created.length} teammate${created.length > 1 ? "s" : ""}: `,
+        ),
+        tp.text(created.map((n) => `@${n}`).join(", ")),
+      ),
+    );
+
+    d.refreshTeammates();
+    d.refreshView();
+  }
+
+  // ── /remove ───────────────────────────────────────────────────────
+
+  private async cmdRemove(): Promise<void> {
+    const d = this.deps;
+    const registry = d.orchestrator.getRegistry();
+
+    // Only allow removing agentic teammates — not humans, not the coding agent
+    const removable = d.orchestrator
+      .listTeammates()
+      .filter((name) => {
+        const config = registry.get(name);
+        if (!config) return false;
+        if (config.type === "human") return false;
+        if (name === d.adapterName) return false;
+        if (name === d.selfName) return false;
+        return true;
+      });
+
+    if (removable.length === 0) {
+      d.feedLine(tp.muted("  No removable teammates found."));
+      d.refreshView();
+      return;
+    }
+
+    d.feedLine(tp.text("  Removable teammates:\n"));
+    for (let i = 0; i < removable.length; i++) {
+      const name = removable[i];
+      const config = registry.get(name)!;
+      const num = String(i + 1).padStart(2, " ");
+      d.feedLine(
+        concat(
+          tp.text(`  ${num}) @${name} `),
+          tp.muted(`— ${config.role}`),
+        ),
+      );
+    }
+    d.feedLine();
+    d.refreshView();
+
+    const input = await d.askInline("Remove (number): ");
+    if (!input) {
+      d.feedLine(tp.muted("  Cancelled."));
+      d.refreshView();
+      return;
+    }
+
+    const idx = parseInt(input.trim(), 10) - 1;
+    if (idx < 0 || idx >= removable.length) {
+      d.feedLine(tp.warning("  Invalid selection."));
+      d.refreshView();
+      return;
+    }
+
+    const name = removable[idx];
+    const confirm = await d.askInline(
+      `Remove @${name}? This deletes the folder. (y/n): `,
+    );
+    if (confirm.toLowerCase() !== "y") {
+      d.feedLine(tp.muted("  Cancelled."));
+      d.refreshView();
+      return;
+    }
+
+    try {
+      await d.removeTeammateFromDisk(name);
+      registry.unregister(name);
+      d.orchestrator.getAllStatuses().delete(name);
+      d.feedLine(tp.success(`  ✔  Removed @${name}`));
+      d.refreshTeammates();
+    } catch (err: any) {
+      d.feedLine(tp.error(`  ✖  Failed to remove @${name}: ${err.message}`));
+    }
+    d.refreshView();
+  }
+
+  // ── /update ───────────────────────────────────────────────────────
+
+  private async cmdUpdate(): Promise<void> {
+    const d = this.deps;
+    const personas = await loadPersonas();
+    const registry = d.orchestrator.getRegistry();
+
+    // Find installed teammates that have a matching bundled persona
+    const updatable: { name: string; persona: (typeof personas)[0] }[] = [];
+    const personaByAlias = new Map(personas.map((p) => [p.alias, p]));
+
+    for (const name of d.orchestrator.listTeammates()) {
+      const config = registry.get(name);
+      if (!config || config.type === "human") continue;
+      const persona = personaByAlias.get(name);
+      if (persona) {
+        updatable.push({ name, persona });
+      }
+    }
+
+    if (updatable.length === 0) {
+      d.feedLine(
+        tp.muted("  No teammates match a bundled persona for updating."),
+      );
+      d.refreshView();
+      return;
+    }
+
+    d.feedLine(tp.text("  Updatable teammates:\n"));
+    for (let i = 0; i < updatable.length; i++) {
+      const { name, persona } = updatable[i];
+      const num = String(i + 1).padStart(2, " ");
+      d.feedLine(
+        concat(
+          tp.text(`  ${num}) @${name} `),
+          tp.muted(`— ${persona.persona} — ${persona.description}`),
+        ),
+      );
+    }
+    d.feedLine(
+      tp.muted(
+        "\n  Enter numbers separated by commas, or * for all",
+      ),
+    );
+    d.refreshView();
+
+    const input = await d.askInline("Update: ");
+    if (!input) {
+      d.feedLine(tp.muted("  Cancelled."));
+      d.refreshView();
+      return;
+    }
+
+    let selected: number[];
+    if (input.trim() === "*") {
+      selected = updatable.map((_, i) => i);
+    } else {
+      selected = [
+        ...new Set(
+          input
+            .split(",")
+            .map((s) => parseInt(s.trim(), 10) - 1)
+            .filter((i) => i >= 0 && i < updatable.length),
+        ),
+      ];
+    }
+
+    if (selected.length === 0) {
+      d.feedLine(tp.warning("  No valid selections."));
+      d.refreshView();
+      return;
+    }
+
+    for (const idx of selected) {
+      const { name, persona } = updatable[idx];
       try {
-        const { teammates, skipped, files } = await importTeammates(
-          sourceDir,
-          teammatesDir,
-        );
-
-        const allTeammates = [...teammates, ...skipped];
-
-        if (allTeammates.length === 0) {
-          d.feedLine(tp.warning(`  No teammates found at ${sourceDir}`));
-          d.refreshView();
-          return;
-        }
-
-        if (teammates.length > 0) {
-          d.feedLine(
-            tp.success(
-              `  Imported ${teammates.length} teammate${teammates.length > 1 ? "s" : ""}: ${teammates.join(", ")} (${files.length} files)`,
-            ),
-          );
-        }
-        if (skipped.length > 0) {
-          d.feedLine(
-            tp.muted(
-              `  ${skipped.length} already present: ${skipped.join(", ")} (will re-adapt)`,
-            ),
-          );
-        }
-
-        await copyTemplateFiles(teammatesDir);
-
+        await updateFromPersona(d.teammatesDir, name, persona);
         d.feedLine(
-          tp.muted(
-            "  Queuing agent to scan this project and adapt the team...",
+          concat(
+            tp.success(`  ✔  Updated @${name}`),
+            tp.muted(` — SOUL.md & WISDOM.md refreshed`),
           ),
         );
-        const prompt = await buildImportAdaptationPrompt(
-          teammatesDir,
-          allTeammates,
-          sourceDir,
-        );
-        d.taskQueue.push({
-          id: d.makeQueueEntryId(),
-          type: "agent",
-          teammate: d.selfName,
-          task: prompt,
-        });
-        d.kickDrain();
       } catch (err: any) {
-        d.feedLine(tp.error(`  Import failed: ${err.message}`));
+        d.feedLine(
+          tp.error(`  ✖  Failed to update @${name}: ${err.message}`),
+        );
       }
-    } else {
-      await d.runOnboardingAgent(d.adapter, cwd);
     }
 
-    const added = await d.orchestrator.refresh();
-    if (added.length > 0) {
-      const registry = d.orchestrator.getRegistry();
-      if ("roster" in d.adapter) {
-        (d.adapter as any).roster = d.orchestrator
-          .listTeammates()
-          .map((name) => {
-            const t = registry.get(name)!;
-            return { name: t.name, role: t.role, ownership: t.ownership };
-          });
-      }
-    }
-    d.feedLine(tp.muted("  Run /status to see the roster."));
+    d.refreshTeammates();
     d.refreshView();
   }
 
@@ -1123,7 +1306,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
       } catch {
         d.feedLine(tp.muted("  USER.md not found."));
         d.feedLine(
-          tp.muted("  Run /init or create .teammates/USER.md manually."),
+          tp.muted("  Run /user or create .teammates/USER.md manually."),
         );
         d.refreshView();
         return;
@@ -1684,7 +1867,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
 
     if (teammates.length === 0) {
       col1 = [
-        ["/init", "set up teammates"],
+        ["/add", "add a teammate"],
         ["/help", "all commands"],
       ];
       col2 = [

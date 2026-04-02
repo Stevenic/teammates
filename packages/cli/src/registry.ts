@@ -101,6 +101,11 @@ export class Registry {
     return Array.from(this.teammates.keys());
   }
 
+  /** Remove a teammate from the in-memory registry */
+  unregister(name: string): boolean {
+    return this.teammates.delete(name);
+  }
+
   /** Get the full roster */
   all(): Map<string, TeammateConfig> {
     return this.teammates;

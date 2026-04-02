@@ -747,7 +747,20 @@ export function parseDebugLogErrors(
 
 // ── Claude debug log parser ──────────────────────────────────────────
 
-const TOOL_USE_RE =
+/**
+ * Matches hook-based PostToolUse lines (fires for ALL tool uses including
+ * those inside subagents). Two known formats:
+ *   - `Hook PostToolUse:Read (PostToolUse) error:` (current)
+ *   - `Hook PostToolUse:Read (PostToolUse) completed` (success)
+ */
+const HOOK_POSTTOOLUSE_RE =
+  /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[DEBUG\]\s+Hook PostToolUse:(\w+)\s/;
+
+/**
+ * Legacy pattern (older Claude Code versions).
+ * `Getting matching hook commands for PostToolUse with query: Read`
+ */
+const LEGACY_TOOL_USE_RE =
   /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[DEBUG\]\s+Getting matching hook commands for PostToolUse with query:\s+(\w+)/;
 
 const FILE_WRITTEN_RE =
@@ -757,9 +770,26 @@ const RENAMING_RE =
   /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[DEBUG\]\s+Renaming\s+\S+\s+to\s+(.+)/;
 
 /**
+ * Detects subagent API turns: `[API REQUEST] /v1/messages ... source=agent:builtin:Explore`
+ * Each line represents one turn of conversation inside the subagent.
+ */
+const SUBAGENT_API_RE =
+  /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[DEBUG\]\s+\[API REQUEST\]\s+\/v1\/messages\s+.*source=agent:builtin:(\w+)/;
+
+/**
+ * Detects Bash tool use without hooks — "Spawning shell" appears for every Bash invocation.
+ */
+const SPAWNING_SHELL_RE =
+  /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\[DEBUG\]\s+Spawning shell/;
+
+/**
  * Parse activity events from a Claude debug log.
- * Extracts tool names from PostToolUse hook lines, file paths from
- * write/rename events, and errors from tool error lines.
+ * Uses multiple signal sources:
+ *   1. Hook PostToolUse lines (when hooks are configured) — all tool uses including subagents
+ *   2. Subagent API REQUEST lines — detects work inside Explore/other subagents
+ *   3. File rename/write lines — detects Edit/Write without hooks
+ *   4. Spawning shell lines — detects Bash without hooks
+ *   5. Tool error lines — always present
  */
 export function parseClaudeActivity(
   content: string,
@@ -767,8 +797,33 @@ export function parseClaudeActivity(
 ): ActivityEvent[] {
   const events: ActivityEvent[] = [];
   let pendingFilename: string | undefined;
+  let pendingFileTs = 0;
+
+  // Track which tools we've already seen via hooks to avoid double-counting
+  // with hook-free signals (rename → Edit, spawning shell → Bash)
+  const hookToolTimestamps = new Set<string>();
+
+  // Track subagent turns to emit summarized activity
+  const subagentTurns = new Map<string, { count: number; firstTs: number; lastTs: number }>();
+
+  // Deferred Bash events from "Spawning shell" — only emitted if no hook covers them
+  const deferredBash: Array<{ ts: number }> = [];
+
+  // Flush a pending file event if no hook consumed it
+  const flushPendingFile = () => {
+    if (pendingFilename && pendingFileTs > 0) {
+      events.push({
+        elapsedMs: pendingFileTs - taskStartTime,
+        tool: "Edit",
+        detail: pendingFilename,
+      });
+      pendingFilename = undefined;
+      pendingFileTs = 0;
+    }
+  };
 
   for (const line of content.split("\n")) {
+    // ── Tool errors ──
     let m = TOOL_ERROR_RE.exec(line);
     if (m) {
       const tool = m[2];
@@ -783,35 +838,113 @@ export function parseClaudeActivity(
       continue;
     }
 
+    // ── File rename (Edit/Write signal — works with or without hooks) ──
     m = RENAMING_RE.exec(line);
     if (m) {
+      // Flush any prior unclaimed file event before starting a new one
+      flushPendingFile();
       const fullPath = m[2].trim();
       const segments = fullPath.replace(/\\/g, "/").split("/");
-      pendingFilename = segments[segments.length - 1];
+      const filename = segments[segments.length - 1];
+      const ts = new Date(m[1]).getTime();
+      pendingFilename = filename;
+      pendingFileTs = ts;
       continue;
     }
 
+    // ── File written atomically ──
     m = FILE_WRITTEN_RE.exec(line);
     if (m) {
+      flushPendingFile();
       const fullPath = m[2];
       const segments = fullPath.replace(/\\/g, "/").split("/");
-      pendingFilename = segments[segments.length - 1];
+      const filename = segments[segments.length - 1];
+      const ts = new Date(m[1]).getTime();
+      pendingFilename = filename;
+      pendingFileTs = ts;
       continue;
     }
 
-    m = TOOL_USE_RE.exec(line);
+    // ── Hook-based tool use (current format) ──
+    m = HOOK_POSTTOOLUSE_RE.exec(line);
+    if (!m) {
+      // ── Legacy hook format ──
+      m = LEGACY_TOOL_USE_RE.exec(line);
+    }
     if (m) {
       const tool = m[2];
       if (!WORK_TOOLS.has(tool)) continue;
       const ts = new Date(m[1]).getTime();
+      hookToolTimestamps.add(`${tool}:${ts}`);
       let detail: string | undefined;
       if ((tool === "Write" || tool === "Edit") && pendingFilename) {
         detail = pendingFilename;
+        // Hook consumed the pending file — suppress hook-free fallback
         pendingFilename = undefined;
+        pendingFileTs = 0;
       }
       events.push({ elapsedMs: ts - taskStartTime, tool, detail });
+      continue;
+    }
+
+    // ── Subagent API turns ──
+    m = SUBAGENT_API_RE.exec(line);
+    if (m) {
+      const ts = new Date(m[1]).getTime();
+      const agentName = m[2];
+      const existing = subagentTurns.get(agentName);
+      if (existing) {
+        existing.count++;
+        existing.lastTs = ts;
+      } else {
+        subagentTurns.set(agentName, { count: 1, firstTs: ts, lastTs: ts });
+      }
+      continue;
+    }
+
+    // ── Spawning shell (hook-free Bash detection) ──
+    // Deferred: we check after the loop whether any hook-based Bash already covers it
+    m = SPAWNING_SHELL_RE.exec(line);
+    if (m) {
+      const ts = new Date(m[1]).getTime();
+      deferredBash.push({ ts });
+      continue;
     }
   }
+
+  // Flush any trailing pending file event not consumed by a hook
+  flushPendingFile();
+
+  // Emit deferred Bash events only if no hook-based Bash already covers them
+  for (const { ts } of deferredBash) {
+    let covered = false;
+    for (const k of hookToolTimestamps) {
+      if (k.startsWith("Bash:")) {
+        const hookTs = Number.parseInt(k.split(":")[1], 10);
+        if (Math.abs(hookTs - ts) < 3000) {
+          covered = true;
+          break;
+        }
+      }
+    }
+    if (!covered) {
+      events.push({ elapsedMs: ts - taskStartTime, tool: "Bash" });
+    }
+  }
+
+  // Emit subagent activity events — each subagent run becomes one event
+  // showing the agent name and number of turns
+  for (const [agentName, info] of subagentTurns) {
+    events.push({
+      elapsedMs: info.firstTs - taskStartTime,
+      tool: "Agent",
+      detail: `${agentName} (${info.count} turn${info.count > 1 ? "s" : ""})`,
+    });
+  }
+
+  // Sort by elapsed time since subagent events were appended at the end
+  events.sort((a, b) => a.elapsedMs - b.elapsedMs);
+
   return events;
 }
 

@@ -790,6 +790,11 @@ class TeammatesREPL {
       runPersonaOnboardingInline: (dir) =>
         this.onboardFlow.runPersonaOnboardingInline(dir),
       refreshTeammates: () => this.refreshTeammates(),
+      removeTeammateFromDisk: async (name) => {
+        const { rm } = await import("node:fs/promises");
+        const dir = join(this.teammatesDir, name);
+        await rm(dir, { recursive: true, force: true });
+      },
       askInline: (prompt) => this.askInline(prompt),
       get serviceView() {
         return repl.serviceView;
