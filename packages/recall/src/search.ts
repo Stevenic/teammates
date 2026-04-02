@@ -38,24 +38,72 @@ export interface SearchResult {
   uri: string;
   text: string;
   score: number;
-  /** Content type: "typed_memory", "weekly", "monthly", or "other" */
+  /** Content type: "typed_memory", "weekly", "monthly", "daily", or "other" */
   contentType?: string;
+  /** Whether this is a partial chunk of a larger file. */
+  partial?: boolean;
+  /** Time period for the memory (date, week, or month string). */
+  period?: string;
 }
 
 /**
  * Classify a URI into a content type for priority scoring.
+ * Handles chunk URIs like `beacon/memory/2026-03-30.md#0`.
  */
 export function classifyUri(uri: string): string {
-  if (uri.includes("/memory/weekly/")) return "weekly";
-  if (uri.includes("/memory/monthly/")) return "monthly";
+  // Strip chunk suffix for classification
+  const baseUri = uri.replace(/#\d+$/, "");
+  if (baseUri.includes("/memory/weekly/")) return "weekly";
+  if (baseUri.includes("/memory/monthly/")) return "monthly";
   // Typed memories are in memory/ but not daily logs (YYYY-MM-DD) and not in subdirs
-  const memoryMatch = uri.match(/\/memory\/([^/]+)\.md$/);
+  const memoryMatch = baseUri.match(/\/memory\/([^/]+)\.md$/);
   if (memoryMatch) {
     const stem = memoryMatch[1];
     if (/^\d{4}-\d{2}-\d{2}$/.test(stem)) return "daily";
     return "typed_memory";
   }
   return "other";
+}
+
+/**
+ * Extract the time period from a URI based on its content type.
+ */
+export function extractPeriod(uri: string, contentType: string): string {
+  const baseUri = uri.replace(/#\d+$/, "");
+  switch (contentType) {
+    case "daily": {
+      const match = baseUri.match(/(\d{4}-\d{2}-\d{2})\.md$/);
+      return match?.[1] ?? "";
+    }
+    case "weekly": {
+      const match = baseUri.match(/(\d{4}-W\d{2})\.md$/);
+      return match?.[1] ?? "";
+    }
+    case "monthly": {
+      const match = baseUri.match(/(\d{4}-\d{2})\.md$/);
+      return match?.[1] ?? "";
+    }
+    default:
+      return "";
+  }
+}
+
+/**
+ * Check if a URI refers to a chunk (has #N suffix).
+ */
+export function isChunkUri(uri: string): boolean {
+  return /#\d+$/.test(uri);
+}
+
+/**
+ * Get the base file path from a URI, stripping teammate prefix and chunk suffix.
+ */
+export function uriToRelativePath(uri: string): string {
+  // Strip chunk suffix
+  const baseUri = uri.replace(/#\d+$/, "");
+  // URI format: teammate/path/to/file.md — return path after first /
+  const slashIdx = baseUri.indexOf("/");
+  return slashIdx >= 0 ? baseUri.slice(slashIdx + 1) : baseUri;
 }
 
 /**
@@ -161,6 +209,8 @@ export async function search(
 
       const sections = await doc.renderSections(maxTokens, 1);
       const contentType = classifyUri(doc.uri);
+      const period = extractPeriod(doc.uri, contentType);
+      const partial = isChunkUri(doc.uri);
 
       for (const section of sections) {
         let score = section.score;
@@ -175,6 +225,8 @@ export async function search(
           text: section.text,
           score,
           contentType,
+          partial,
+          period,
         });
       }
     }

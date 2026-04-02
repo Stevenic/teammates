@@ -49,6 +49,7 @@ import { Orchestrator } from "./orchestrator.js";
 import { RetroManager } from "./retro-manager.js";
 import { detectServices } from "./service-config.js";
 import { StartupManager } from "./startup-manager.js";
+import { writeAllSystemPrompts } from "./system-prompt.js";
 import { StatusTracker } from "./status-tracker.js";
 import { theme, tp } from "./theme.js";
 import { ThreadManager } from "./thread-manager.js";
@@ -61,6 +62,7 @@ import type {
   TaskThread,
   ThreadEntry,
 } from "./types.js";
+import { logUserTask } from "./user-task-logger.js";
 import { Wordwheel } from "./wordwheel.js";
 
 // ─── Parsed CLI arguments ────────────────────────────────────────────
@@ -1365,6 +1367,9 @@ class TeammatesREPL {
       get adapterName() {
         return adapterNameFn();
       },
+      get userAlias() {
+        return repl.userAlias;
+      },
       get chatView() {
         return chatViewRef();
       },
@@ -1385,6 +1390,26 @@ class TeammatesREPL {
       listTeammates: () => this.orchestrator.listTeammates(),
       showNotification: (content) =>
         this.statusTracker.showNotification(content),
+      generateSystemPrompts: async () => {
+        const registry = this.orchestrator.getRegistry();
+        const configs = this.orchestrator
+          .listTeammates()
+          .filter((n) => n !== this.adapterName && n !== this.userAlias)
+          .map((n) => registry.get(n)!)
+          .filter(Boolean);
+        const roster = this.orchestrator
+          .listTeammates()
+          .filter((n) => n !== this.adapterName && n !== this.userAlias)
+          .map((n) => {
+            const t = registry.get(n)!;
+            return { name: t.name, role: t.role, ownership: t.ownership };
+          });
+        const services = (this.adapter as any).services ?? [];
+        await writeAllSystemPrompts(this.teammatesDir, configs, {
+          roster,
+          services,
+        });
+      },
     });
     const pendingMigrationRef = () => this.pendingMigrationSyncs;
     const setPendingMigrationRef = (v: number) => {
@@ -1879,6 +1904,25 @@ class TeammatesREPL {
             this.storeResult(result);
             // Check if older history needs summarizing
             this.conversation.maybeQueueSummarization();
+          }
+          // Log to user's twin daily memory — track orchestration activity
+          if (this.userAlias && entry.type === "agent" && !entry.system) {
+            // Include result details only when user used coding agent directly
+            const isSelf = entry.teammate === this.selfName;
+            logUserTask(
+              this.teammatesDir,
+              this.userAlias,
+              entry.teammate,
+              entry.task,
+              isSelf
+                ? {
+                    summary: result.summary,
+                    changedFiles: result.changedFiles,
+                  }
+                : undefined,
+            ).catch(() => {
+              /* non-fatal — don't break task flow */
+            });
           }
           if (entry.type === "retro") {
             this.retroManager.handleRetroResult(result);

@@ -869,7 +869,12 @@ export class CommandManager {
     const allTeammates = d.orchestrator
       .listTeammates()
       .filter((n) => n !== d.selfName && n !== d.adapterName);
-    const names = !arg || arg === "everyone" ? allTeammates : [arg];
+    // Include user's twin in compaction — their orchestration logs need compacting too
+    const allTargets = [...allTeammates];
+    if (d.userAlias && !allTargets.includes(d.userAlias)) {
+      allTargets.push(d.userAlias);
+    }
+    const names = !arg || arg === "everyone" ? allTargets : [arg];
 
     const valid: string[] = [];
     for (const name of names) {

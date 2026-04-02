@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-30
+Last compacted: 2026-04-01
 
 ---
 
@@ -49,10 +49,16 @@ Keep upgrade instructions in `packages/cli/MIGRATIONS.md`, parse them by version
 **Wisdom distillation must be idempotent**
 `buildWisdomPrompt()` checks `Last compacted: YYYY-MM-DD` in WISDOM.md. If today's date is already present, return `null` (skip). Without this guard, wisdom distillation fires on every startup, burning tokens for no reason.
 
+**Memory files must not include version: in frontmatter**
+The `version:` field was removed from all memory file frontmatter and from the code that generates it (`compact.ts`, `adapter.ts`). Version is tracked centrally in `.teammates/settings.json` (`cliVersion`), not per-file.
+
 ## Feed & Rendering
 
 **Feed state should be identity-based**
 Inside `ChatView`, track feed items by stable IDs through `FeedStore`, not parallel index-keyed arrays. `FeedItem` carries `id`, `content`, `actions`, `hidden`. Height caching lives in `VirtualList`, not on `FeedItem`.
+
+**VirtualList is the scrollable rendering primitive**
+`VirtualList` manages scroll state, ID-keyed height caching, screen-to-item mapping, and scrollbar rendering. ChatView builds `VirtualListItem[]` (banner + separator + feed items) each render. Items array is cheap — just references, heights cached by ID.
 
 **Virtualized height caches need explicit invalidation**
 `VirtualList` caches geometry by item ID, so any item whose rendered height can change must be invalidated deliberately. The banner (`__banner__`) is the canonical case — invalidate it every render during animation.
@@ -68,6 +74,9 @@ Keep progress behind `startTask()`, `stopTask()`, and `showNotification()`. `Sta
 
 **Terminal width must be measured, not assumed**
 Use `process.stdout.columns || 80` for layout math. Hardcoded `80` causes suffix clipping and stray characters on narrower terminals. When the elapsed-time suffix won't fit, omit it entirely.
+
+**charWidth must respect Windows Terminal wide overrides**
+`charWidth()` in `symbol.ts` has three tiers: (1) standard CJK/fullwidth → width 2, (2) `Emoji_Presentation=Yes` characters → width 2, (3) 17 Windows Terminal wide overrides (e.g. ℹ ★ ☆ ♠ ♣ ♥ ♦ ⚐ ⚑ ⚙ ⚠ ✔ ✖ ➜ ➤ ▶ ⏱) → width 2. Characters with text presentation (✓ ✂ © ®) remain width 1. Getting this wrong causes "tracer" ghost characters from the continuation cell.
 
 ## Threads
 
@@ -100,14 +109,25 @@ Parse `command_execution`, `file_change`, `exec_command_begin`, `patch_apply_beg
 **Codex activity must watch logFile, not debugFile**
 Codex does not support `--debug-file`. The adapter creates and appends to `logFile` during execution. Gate Codex watcher startup on `logFile` existing, not `debugFile`. This is the #1 cause of "parser works but UI shows nothing."
 
-**Copilot activity uses tool.execution_start events**
-`parseCopilotJsonlLine()` maps `tool.execution_start` events (`view`, `shell`, `grep`, `glob`, `edit`, `write`) into standard activity labels. Copilot tails its paired debug log file, same as Codex.
+**Copilot activity parses tool.execution_start events with expanded mappings**
+`parseCopilotJsonlLine()` maps `tool.execution_start` events into standard activity labels. Mappings include: `view`→Read, `shell`/`bash`/`powershell`→Bash, `grep`/`search`→Grep, `glob`→Glob, `edit`/`write`/`create`→Edit/Write, `task`/`read_agent`/`write_agent`→Agent, `web_search`→WebSearch, `web_fetch`→WebFetch, `github-mcp-server-*` prefix→Search/Read. `COPILOT_PLUMBING` set filters internal tools (`report_intent`, `store_memory`, etc.). Uses event `timestamp` field for elapsed time.
 
 **Collapse activity but preserve singles**
 Group consecutive research runs of 2+ events into `Exploring (N× Read, ...)`. Merge repeated edits to the same file. Filter out TodoWrite and ToolSearch. Never collapse errors. But preserve a single research event (`Read`, `Grep`) as a first-class line — collapsing one event into `Exploring (1× Read)` hides useful evidence.
 
 **Activity cleanup must be thorough**
 When a task completes or is cancelled, hide all activity display lines and delete all bookkeeping state (buffers, indices, blank lines, shown flags). Stale indices from prior feed insertions are the #1 cause of leftover activity lines.
+
+## Terminal & Mouse
+
+**Mouse tracking is pure ANSI — no Win32 SetConsoleMode**
+Consolonia uses ANSI DECSET escape sequences only for mouse tracking. Do not call Win32 `SetConsoleMode()` via FFI. The Consolonia creator confirmed ANSI codes are more accurate. Node.js/libuv drops `MOUSE_EVENT` records from `ReadConsoleInputW`, making `ENABLE_MOUSE_INPUT` useless and potentially counterproductive.
+
+**Six mouse protocols are supported**
+Consolonia parses SGR (`ESC [ < ...`), classic xterm (`ESC [ M ...`), and URXVT (`ESC [ Cb;Cx;Cy M` without `<`). UTF-8 mode needs no separate parser (Node.js decodes automatically). SGR-Pixels uses the same wire format as SGR. Mouse enable requests all six DECSET modes: `?1000h`, `?1003h`, `?1005h`, `?1006h`, `?1015h`, `?1016h`. Terminals pick the highest they support.
+
+**Terminal environment detection tailors init sequences**
+`detectTerminal()` in `terminal-env.ts` probes `process.env` and `process.platform` to identify the terminal (Windows Terminal, VS Code, ConEmu, mintty, conhost, tmux, screen, iTerm2, Alacritty, etc.) and returns `TerminalCaps`. `initSequence()`/`restoreSequence()` compose escape strings based on detected caps. Full mouse modes when SGR is supported; minimal `?1000h + ?1003h` fallback otherwise.
 
 ## Architecture
 
@@ -166,6 +186,9 @@ Resolve sibling files with `fileURLToPath(new URL(..., import.meta.url))`, never
 
 **Spawned stdin needs EOF protection**
 Whenever the CLI writes to a child process stdin, attach an error handler that swallows `EPIPE` and `EOF`. Some agents close stdin early and that should not crash the parent.
+
+**Normalize backslash paths for cross-platform compatibility**
+When using `path.basename()` or similar path utilities on paths that may contain Windows backslashes, normalize `\` to `/` first. On Linux, `path.basename()` does not recognize `\` as a separator and returns the entire path string.
 
 ## Process
 

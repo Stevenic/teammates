@@ -30,6 +30,7 @@ export interface StartupManagerDeps {
   readonly teammatesDir: string;
   readonly selfName: string;
   readonly adapterName: string;
+  readonly userAlias: string | null;
   readonly chatView: any; // ChatView or null
   taskQueue: QueueEntry[];
   pendingMigrationSyncs: number;
@@ -42,6 +43,8 @@ export interface StartupManagerDeps {
   commitVersionUpdate(): void;
   listTeammates(): string[];
   showNotification(content: StyledSpan): void;
+  /** Generate SYSTEM-PROMPT.md files for all teammates. Called at startup. */
+  generateSystemPrompts(): Promise<void>;
 }
 
 // ─── StartupManager ──────────────────────────────────────────────────
@@ -53,6 +56,9 @@ export class StartupManager {
     this.deps = deps;
   }
 
+  /** Current index version. Increment when indexing logic changes to force a full rebuild. */
+  static readonly INDEX_VERSION = 2;
+
   /**
    * Check if the CLI version has changed since last run.
    * Does NOT update settings.json — call `commitVersionUpdate()` after
@@ -63,6 +69,7 @@ export class StartupManager {
     let settings: {
       version?: number;
       cliVersion?: string;
+      indexVersion?: number;
       services?: unknown[];
     } = {};
 
@@ -80,6 +87,41 @@ export class StartupManager {
   }
 
   /**
+   * Check if the index version has changed since last run.
+   * Returns true if indexes need a full rebuild.
+   */
+  checkIndexVersionChanged(): boolean {
+    const settingsPath = join(this.deps.teammatesDir, "settings.json");
+    let settings: { indexVersion?: number } = {};
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    } catch {
+      // No settings file — treat as needing rebuild
+      return true;
+    }
+    return (settings.indexVersion ?? 0) < StartupManager.INDEX_VERSION;
+  }
+
+  /**
+   * Persist the current index version to settings.json.
+   */
+  commitIndexVersion(): void {
+    const settingsPath = join(this.deps.teammatesDir, "settings.json");
+    let settings: Record<string, unknown> = {};
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    } catch {
+      // No settings file — create one
+    }
+    settings.indexVersion = StartupManager.INDEX_VERSION;
+    try {
+      writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+    } catch {
+      /* write failed — non-fatal */
+    }
+  }
+
+  /**
    * Persist the current CLI version to settings.json.
    * Called after all migration tasks complete (or immediately if no migration needed).
    */
@@ -88,6 +130,7 @@ export class StartupManager {
     let settings: {
       version?: number;
       cliVersion?: string;
+      indexVersion?: number;
       services?: unknown[];
     } = {};
 
@@ -101,6 +144,7 @@ export class StartupManager {
     const current = PKG_VERSION;
 
     settings.cliVersion = current;
+    settings.indexVersion = StartupManager.INDEX_VERSION;
     if (!settings.version) settings.version = 1;
     try {
       writeFileSync(
@@ -256,6 +300,13 @@ export class StartupManager {
    * 4. Sync recall indexes
    */
   async startupMaintenance(): Promise<void> {
+    // Generate SYSTEM-PROMPT.md for all teammates (stable system prompt files)
+    try {
+      await this.deps.generateSystemPrompts();
+    } catch {
+      /* non-fatal — prompts will be built dynamically as fallback */
+    }
+
     const versionUpdate = this.checkVersionUpdate();
 
     const tmpDir = join(this.deps.teammatesDir, ".tmp");
@@ -313,21 +364,30 @@ export class StartupManager {
     }
 
     // 2. Compaction + compression — skip when a migration is pending
+    // Include the user's twin for compaction/compression (human orchestration logs)
+    const compactTargets = [...teammates];
+    if (this.deps.userAlias && !compactTargets.includes(this.deps.userAlias)) {
+      compactTargets.push(this.deps.userAlias);
+    }
+
     if (!versionUpdate) {
-      for (const name of teammates) {
+      for (const name of compactTargets) {
         await this.runCompact(name, true);
       }
 
-      for (const name of teammates) {
+      for (const name of compactTargets) {
         try {
           const compression = await buildDailyCompressionPrompt(
             join(this.deps.teammatesDir, name),
           );
           if (compression) {
+            // Route compression task through the user's avatar (coding agent)
+            const assignee =
+              name === this.deps.userAlias ? this.deps.selfName : name;
             this.deps.taskQueue.push({
               id: this.deps.makeQueueEntryId(),
               type: "agent",
-              teammate: name,
+              teammate: assignee,
               task: compression.prompt,
               system: true,
             });
@@ -343,7 +403,7 @@ export class StartupManager {
     // 3. Purge daily logs older than 30 days (disk + Vectra)
     const { Indexer } = await import("@teammates/recall");
     const indexer = new Indexer({ teammatesDir: this.deps.teammatesDir });
-    for (const name of teammates) {
+    for (const name of compactTargets) {
       try {
         const purged = await purgeStaleDailies(
           join(this.deps.teammatesDir, name),
@@ -357,11 +417,25 @@ export class StartupManager {
       }
     }
 
-    // 4. Sync recall indexes (bundled library call)
-    try {
-      await syncRecallIndex(this.deps.teammatesDir);
-    } catch {
-      /* sync failed — non-fatal */
+    // 4. Rebuild or sync recall indexes
+    const needsRebuild = this.checkIndexVersionChanged();
+    if (needsRebuild) {
+      // Index version changed — full rebuild of all teammate indexes
+      try {
+        const { Indexer: RebuildIndexer } = await import("@teammates/recall");
+        const rebuildIndexer = new RebuildIndexer({ teammatesDir: this.deps.teammatesDir });
+        await rebuildIndexer.indexAll();
+        this.commitIndexVersion();
+      } catch {
+        /* full rebuild failed — non-fatal, will retry next startup */
+      }
+    } else {
+      // Incremental sync only
+      try {
+        await syncRecallIndex(this.deps.teammatesDir);
+      } catch {
+        /* sync failed — non-fatal */
+      }
     }
   }
 }

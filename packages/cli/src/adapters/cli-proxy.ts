@@ -35,9 +35,11 @@ import type {
 import {
   buildTeammatePrompt,
   DAILY_LOG_BUDGET_TOKENS,
+  type PromptParts,
   queryRecallContext,
 } from "../adapter.js";
 import { autoCompactForBudget } from "../compact.js";
+import { systemPromptPath } from "../system-prompt.js";
 import type {
   ActivityEvent,
   HandoffEnvelope,
@@ -75,9 +77,14 @@ export interface AgentPreset {
   name: string;
   /** Binary / command to spawn */
   command: string;
-  /** Build CLI args. `promptFile` is a temp file path, `prompt` is the raw text, `debugFile` is an optional path for agent debug logs. */
+  /** Build CLI args. `promptFile` is a temp file path, `prompt` is the raw text, `debugFile` is an optional path for agent debug logs, `systemPromptFile` is the split system prompt file (when supported). */
   buildArgs(
-    ctx: { promptFile: string; prompt: string; debugFile?: string },
+    ctx: {
+      promptFile: string;
+      prompt: string;
+      debugFile?: string;
+      systemPromptFile?: string;
+    },
     teammate: TeammateConfig,
     options: CliProxyOptions,
   ): string[];
@@ -91,6 +98,8 @@ export interface AgentPreset {
   stdinPrompt?: boolean;
   /** Whether this preset supports a debug log file (--debug-file) */
   supportsDebugFile?: boolean;
+  /** Whether this preset supports a system prompt file (--append-system-prompt-file) */
+  supportsSystemPromptFile?: boolean;
   /** Optional output parser — transforms raw stdout into clean agent output */
   parseOutput?(raw: string): string;
 }
@@ -185,6 +194,7 @@ export class CliProxyAdapter implements AgentAdapter {
     // If raw mode is set, skip all prompt wrapping — send prompt as-is
     // Used for defensive retries where the full prompt template is counterproductive
     let fullPrompt: string;
+    let promptParts: PromptParts | undefined;
     if (options?.raw) {
       fullPrompt = prompt;
     } else if (teammate.soul) {
@@ -212,24 +222,40 @@ export class CliProxyAdapter implements AgentAdapter {
         }
       }
 
-      // Read USER.md for injection into the prompt
-      let userProfile: string | undefined;
+      // Try to read the pre-built SYSTEM-PROMPT.md
+      let systemPromptContent: string | undefined;
+      let sysPromptFile: string | undefined;
       if (teammatesDir) {
+        sysPromptFile = systemPromptPath(teammatesDir, teammate.name);
         try {
-          userProfile = await readFile(join(teammatesDir, "USER.md"), "utf-8");
+          systemPromptContent = await readFile(sysPromptFile, "utf-8");
         } catch {
-          // USER.md may not exist yet — that's fine
+          // SYSTEM-PROMPT.md not generated yet — will fall back to inline
+          sysPromptFile = undefined;
         }
       }
 
-      fullPrompt = buildTeammatePrompt(teammate, prompt, {
+      // Extract conversation history and daily log snapshot from the prompt.
+      // The orchestrator prepends conversation context before a "---" separator.
+      // The raw user message is the last segment.
+      const segments = prompt.split(/\n\n---\n\n/);
+      const userTask = segments[segments.length - 1];
+      const conversationHistory =
+        segments.length > 1
+          ? segments.slice(0, -1).join("\n\n---\n\n")
+          : undefined;
+
+      promptParts = buildTeammatePrompt(teammate, userTask, {
         roster: this.roster,
         services: this.services,
         recallResults: recall?.results,
-        userProfile,
+        conversationHistory,
+        systemPromptContent,
+        systemPromptFile: sysPromptFile,
         system: options?.system,
         skipMemoryUpdates: options?.skipMemoryUpdates,
       });
+      fullPrompt = promptParts.fullPrompt;
     } else {
       const parts = [prompt];
       const others = this.roster.filter((r) => r.name !== teammate.name);
@@ -276,6 +302,21 @@ export class CliProxyAdapter implements AgentAdapter {
 
     // Write prompt to persistent file (also used as agent input for file-based presets)
     await writeFile(persistentPromptFile, fullPrompt, "utf-8");
+
+    // When the preset supports system prompt files, use the pre-built
+    // SYSTEM-PROMPT.md if available. Otherwise write a temp file.
+    let systemPromptFile: string | undefined;
+    if (this.preset.supportsSystemPromptFile && promptParts) {
+      if (promptParts.systemPromptFile) {
+        // Use the pre-built SYSTEM-PROMPT.md directly
+        systemPromptFile = promptParts.systemPromptFile;
+      } else {
+        // Fallback: write system prompt to a temp file
+        systemPromptFile = join(debugDir, `${baseName}-system.md`);
+        await writeFile(systemPromptFile, promptParts.systemPrompt, "utf-8");
+      }
+    }
+
     if (!this.preset.supportsDebugFile) {
       // Non-Claude adapters don't own their own debug file, so create it now.
       // This makes the paired file visible immediately instead of only on close.
@@ -291,6 +332,8 @@ export class CliProxyAdapter implements AgentAdapter {
         options?.onActivity,
         logFile,
         options?.signal,
+        systemPromptFile,
+        promptParts?.userMessage,
       );
       const output = this.preset.parseOutput
         ? this.preset.parseOutput(spawn.output)
@@ -446,6 +489,8 @@ export class CliProxyAdapter implements AgentAdapter {
     onActivity?: (events: ActivityEvent[]) => void,
     logFile?: string,
     signal?: AbortSignal,
+    systemPromptFile?: string,
+    userMessage?: string,
   ): Promise<SpawnResult> {
     let resolveOuter!: (result: SpawnResult) => void;
     let rejectOuter!: (err: Error) => void;
@@ -460,7 +505,7 @@ export class CliProxyAdapter implements AgentAdapter {
 
     const args = [
       ...this.preset.buildArgs(
-        { promptFile, prompt: fullPrompt, debugFile },
+        { promptFile, prompt: fullPrompt, debugFile, systemPromptFile },
         teammate,
         this.options,
       ),
@@ -539,11 +584,15 @@ export class CliProxyAdapter implements AgentAdapter {
     }
 
     // Pipe prompt via stdin if the preset requires it.
+    // When a system prompt file is provided, stdin carries only the user
+    // message (task + handoff context). Otherwise, the full combined prompt.
     // Swallow EPIPE / EOF errors — the child may close stdin before
     // the write completes (e.g. Codex exits early on bad input).
     if (useStdin && child.stdin) {
       child.stdin.on("error", () => {});
-      child.stdin.write(fullPrompt);
+      const stdinContent =
+        systemPromptFile && userMessage ? userMessage : fullPrompt;
+      child.stdin.write(stdinContent);
       child.stdin.end();
     }
 

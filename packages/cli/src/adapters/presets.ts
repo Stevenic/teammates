@@ -12,11 +12,14 @@ export const CLAUDE_PRESET: AgentPreset = {
     const args = ["-p", "--verbose", "--dangerously-skip-permissions"];
     if (options.model) args.push("--model", options.model);
     if (ctx.debugFile) args.push("--debug-file", ctx.debugFile);
+    if (ctx.systemPromptFile)
+      args.push("--append-system-prompt-file", ctx.systemPromptFile);
     return args;
   },
   env: { FORCE_COLOR: "1", CLAUDECODE: "" },
   stdinPrompt: true,
   supportsDebugFile: true,
+  supportsSystemPromptFile: true,
 };
 
 export const CODEX_PRESET: AgentPreset = {

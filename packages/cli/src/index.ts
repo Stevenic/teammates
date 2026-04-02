@@ -15,16 +15,26 @@ export {
 export type {
   AgentAdapter,
   InstalledService,
+  PromptParts,
   RecallContext,
   RosterEntry,
 } from "./adapter.js";
 export {
   buildTeammatePrompt,
+  buildUserMessage,
   DAILY_LOG_BUDGET_TOKENS,
   formatHandoffContext,
+  formatRecallResult,
   queryRecallContext,
   syncRecallIndex,
+  USER_MESSAGE_BUDGET_TOKENS,
 } from "./adapter.js";
+export {
+  generateSystemPrompt,
+  systemPromptPath,
+  writeAllSystemPrompts,
+  writeSystemPrompt,
+} from "./system-prompt.js";
 export { ClaudeAdapter, type ClaudeAdapterOptions } from "./adapters/claude.js";
 export {
   type AgentPreset,

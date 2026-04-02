@@ -33,6 +33,15 @@ Scrub system task noise and cap WISDOM.md.
    - Architectural invariants that aren't obvious from the code
    - Process rules the team agreed on
 
+## 0.8.0
+
+Add `SYSTEM-PROMPT.md` to the `.gitignore` file in the `.teammates/` directory. This file is generated at startup and should not be committed.
+
+**What to do:**
+1. Open `.teammates/.gitignore`
+2. If the line `**/SYSTEM-PROMPT.md` is NOT already present, add it after the `**/.index/` line
+3. Save the file
+
 ## 0.7.3
 
 Remove `version:` lines from all memory file YAML frontmatter. The version field caused merge conflicts and serves no purpose.

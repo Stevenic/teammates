@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-30
+Last compacted: 2026-04-02
 
 ---
 
@@ -105,6 +105,14 @@ Any workflow that records completion should also define the verification step fi
 **Roadmap order matters more than feature count**
 Prerequisites and parity work ship before higher-level collaboration features because they unlock the rest.
 When prioritization is unclear, prefer the feature that removes downstream blockers.
+
+**Boundaries are enforced by discipline, not documentation**
+Declared ownership in SOUL.md only works if teammates actively check before touching files.
+Under time pressure it's easy to "just fix it" across a boundary — always hand off instead, even for small changes.
+
+**Verify claims against current source, not assumptions**
+When comparing codebases or documenting external systems, check the actual code before publishing.
+Assumptions decay fast — even recent analysis can be wrong if the source moved since the last look.
 
 **WISDOM is for heuristics, not recipes**
 Keep this file to durable principles and short patterns, not post-mortems or implementation commentary.

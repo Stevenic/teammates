@@ -34,12 +34,7 @@
     "PostToolUse": [
       {
         "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"C:/source/teammates/packages/cli/scripts/activity-hook.mjs\""
-          }
-        ]
+        "hooks": []
       }
     ]
   }

@@ -2,9 +2,13 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-03-30
+Last compacted: 2026-04-02
 
 ---
+
+**Typecheck requires build artifacts.**
+`tsc --noEmit` in the `quality` job fails if workspace packages haven't been built first — cross-package imports need `.d.ts` declarations to exist.
+Mirror the build order from `build-and-test` (consolonia+recall parallel, then cli) before running typecheck.
 
 **Co-ownership should warn, not block.**
 Multiple teammates can legitimately share primary ownership of a file.

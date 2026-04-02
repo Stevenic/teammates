@@ -35,7 +35,7 @@ export class EchoAdapter implements AgentAdapter {
       : buildTeammatePrompt(teammate, prompt, {
           system: options?.system,
           skipMemoryUpdates: options?.skipMemoryUpdates,
-        });
+        }).fullPrompt;
 
     return {
       teammate: teammate.name,

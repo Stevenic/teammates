@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { LocalDocumentIndex } from "vectra";
+import { chunkMarkdown, chunkUri } from "./chunker.js";
 import { LocalEmbeddings } from "./embeddings.js";
 
 export interface IndexerConfig {
@@ -149,8 +150,14 @@ export class Indexer {
     for (const file of files) {
       const text = await fs.readFile(file.absolutePath, "utf-8");
       if (text.trim().length === 0) continue;
-      await index.upsertDocument(file.uri, text, "md");
-      count++;
+
+      // Split into ~2k token chunks for granular retrieval
+      const chunks = chunkMarkdown(text);
+      for (const chunk of chunks) {
+        const uri = chunkUri(file.uri, chunk);
+        await index.upsertDocument(uri, chunk.text, "md");
+        count++;
+      }
     }
 
     return count;
@@ -177,7 +184,7 @@ export class Indexer {
     const teammateDir = path.join(this._config.teammatesDir, teammate);
     const absolutePath = path.resolve(filePath);
     const relativePath = path.relative(teammateDir, absolutePath);
-    const uri = `${teammate}/${relativePath.replace(/\\/g, "/")}`;
+    const baseUri = `${teammate}/${relativePath.replace(/\\/g, "/")}`;
 
     const text = await fs.readFile(absolutePath, "utf-8");
     if (text.trim().length === 0) return;
@@ -192,7 +199,12 @@ export class Indexer {
       await index.createIndex({ version: 1 });
     }
 
-    await index.upsertDocument(uri, text, "md");
+    // Split into chunks and upsert each
+    const chunks = chunkMarkdown(text);
+    for (const chunk of chunks) {
+      const uri = chunkUri(baseUri, chunk);
+      await index.upsertDocument(uri, chunk.text, "md");
+    }
   }
 
   /**
@@ -214,13 +226,18 @@ export class Indexer {
       return this.indexTeammate(teammate);
     }
 
-    // Upsert all files (Vectra handles dedup internally via URI)
+    // Upsert all files as chunks (Vectra handles dedup internally via URI)
     let count = 0;
     for (const file of files) {
       const text = await fs.readFile(file.absolutePath, "utf-8");
       if (text.trim().length === 0) continue;
-      await index.upsertDocument(file.uri, text, "md");
-      count++;
+
+      const chunks = chunkMarkdown(text);
+      for (const chunk of chunks) {
+        const uri = chunkUri(file.uri, chunk);
+        await index.upsertDocument(uri, chunk.text, "md");
+        count++;
+      }
     }
 
     return count;
