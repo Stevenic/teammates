@@ -35,7 +35,7 @@ Based on your analysis, propose a roster of teammates:
 - **One teammate per major subsystem** is the baseline.
 - **Consider a cross-cutting teammate** for testing/quality if the codebase is large enough to warrant it.
 - **Pick short, memorable names** — one word, evocative of the domain. (e.g., Atlas for backend, Pixel for UI, Forge for CI/CD)
-- **Reference the persona catalog** — The CLI includes 15 built-in personas at `packages/cli/personas/` (PM, SWE, DevOps, QA, Security, Designer, Tech Writer, Data Engineer, SRE, Architect, Frontend, Backend, Mobile, ML/AI, Performance). Use these as starting points for identity, principles, and ownership structure — customize them to fit the project.
+- **Reference the persona catalog** — The CLI includes 16 built-in personas at `packages/cli/personas/` (PM, SWE, DevOps, QA, Architect, Designer, Data Engineer, Prompt Engineer, Security, SRE, Tech Writer, Frontend, Backend, Mobile, ML/AI, Performance). Use these as starting points for identity, principles, and ownership structure — customize them to fit the project.
 
 For each proposed teammate, define:
 

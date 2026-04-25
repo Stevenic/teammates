@@ -43,7 +43,7 @@ Concrete recipes for common workflows. Each recipe is self-contained — read th
        monthly/
    ```
 
-2. Fill in every section of SOUL.md with project-specific details. Use `template/example/SOUL.md` as a reference for tone and detail level. You can also start from one of the 15 built-in personas at `packages/cli/personas/` — each provides a role-specific SOUL.md scaffold with identity, principles, and ownership pre-filled.
+2. Fill in every section of SOUL.md with project-specific details. Use `template/example/SOUL.md` as a reference for tone and detail level. You can also start from one of the 16 built-in personas at `packages/cli/personas/` — each provides a role-specific SOUL.md scaffold with identity, principles, and ownership pre-filled. If you're using the CLI, run `/add` instead of copying by hand — it scaffolds the folder, updates the roster, and indexes the new teammate for you.
 
 3. Fill in GOALS.md with 2-3 initial objectives based on the teammate's domain. Use priority tiers (P0/P1/P2). Reference `template/example/GOALS.md` for format.
 
@@ -78,7 +78,7 @@ Concrete recipes for common workflows. Each recipe is self-contained — read th
 3. If archiving:
    - No ownership transfer needed, but verify no files are left unowned.
 
-4. Delete the retired teammate's folder: `.teammates/<name>/`
+4. Remove the teammate. Inside the CLI, run `/remove <name>` — it deletes the folder and updates the roster, recall index, and any cached state. If editing by hand, delete `.teammates/<name>/`.
 
 5. Update shared files:
    - `.teammates/README.md` — remove from roster, routing guide, dependency flow
@@ -246,7 +246,7 @@ See the [decision log template](../template/DECISIONS.md) for the full format.
 
 ## Update templates after a framework change
 
-**When:** The upstream `template/` files have changed (new template version) and your project's `.teammates/` files need to catch up.
+**When:** The upstream `template/` files or bundled personas have changed (new template version, new wisdom in the persona scaffolds) and your project's `.teammates/` files need to catch up.
 
 **Steps:**
 
@@ -257,6 +257,8 @@ See the [decision log template](../template/DECISIONS.md) for the full format.
 3. If versions differ, compare with the upstream `template/` files and apply changes manually.
 
 4. After updating, bump the `<!-- template-version: N -->` comment in each updated file.
+
+5. For per-teammate updates, run `/update <teammate>` in the CLI. It refreshes that teammate's `SOUL.md` and `WISDOM.md` from the bundled persona while preserving the teammate's memory folder.
 
 ---
 

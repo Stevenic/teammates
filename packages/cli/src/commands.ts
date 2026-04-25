@@ -7,7 +7,7 @@
  */
 
 import { exec as execCb, execSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import {
@@ -30,8 +30,12 @@ import {
   importTeammates,
 } from "./onboard.js";
 import type { OnboardFlow } from "./onboard-flow.js";
-import { loadPersonas, scaffoldFromPersona, updateFromPersona } from "./personas.js";
 import type { Orchestrator } from "./orchestrator.js";
+import {
+  loadPersonas,
+  scaffoldFromPersona,
+  updateFromPersona,
+} from "./personas.js";
 import type { RetroManager } from "./retro-manager.js";
 import { cmdConfigure, type ServiceView } from "./service-config.js";
 import type { StatusTracker } from "./status-tracker.js";
@@ -96,7 +100,12 @@ export interface CommandsDeps {
   makeQueueEntryId(): string;
   kickDrain(): void;
   isSystemTask(entry: QueueEntry): boolean;
-  isAgentBusy(teammate: string): boolean;
+  /** Is the (thread, teammate) slot currently busy (queued or active)?
+   *  Slots are the serialization unit — same teammate in different tabs
+   *  runs concurrently. */
+  isSlotBusy(threadId: number | undefined, teammate: string): boolean;
+  /** Compute the slot key used in agentActive/abortControllers maps. */
+  slotKey(threadId: number | undefined, teammate: string): string;
 
   // ── Thread helpers ──
   getThread(id: number): TaskThread | undefined;
@@ -115,7 +124,8 @@ export interface CommandsDeps {
   ): void;
 
   // ── Activity ──
-  cleanupActivityLines(teammate: string): void;
+  /** Clean up activity tracking state for a task (keyed by queue entry ID). */
+  cleanupActivityLines(taskId: string): void;
 
   // ── Onboarding ──
   runOnboardingAgent(adapter: AgentAdapter, projectDir: string): Promise<void>;
@@ -132,6 +142,26 @@ export interface CommandsDeps {
   // ── Misc ──
   readonly teammatesDir: string;
   clearPastedTexts(): void;
+}
+
+// ─── Solo setting helpers ─────────────────────────────────────────────
+
+/** Clear the isSolo flag in settings.json when teammates are added. */
+function clearSoloSetting(teammatesDir: string): void {
+  const settingsPath = join(teammatesDir, "settings.json");
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    if (settings.isSolo) {
+      settings.isSolo = false;
+      writeFileSync(
+        settingsPath,
+        `${JSON.stringify(settings, null, 2)}\n`,
+        "utf-8",
+      );
+    }
+  } catch {
+    /* settings file missing or unreadable — nothing to clear */
+  }
 }
 
 // ─── CommandManager ───────────────────────────────────────────────────
@@ -183,30 +213,51 @@ export class CommandManager {
       {
         name: "add",
         aliases: [],
-        usage: "/add",
+        usage: "/add [teammate]",
         description: "Add a new teammate from bundled personas",
-        run: () => this.cmdAdd(),
+        run: (args) => this.cmdAdd(args),
       },
       {
         name: "remove",
         aliases: [],
-        usage: "/remove",
+        usage: "/remove [teammate]",
         description: "Remove an agentic teammate",
-        run: () => this.cmdRemove(),
+        run: (args) => this.cmdRemove(args),
       },
       {
         name: "update",
         aliases: [],
-        usage: "/update",
+        usage: "/update [teammate]",
         description:
           "Update a teammate's SOUL.md & WISDOM.md from bundled personas",
-        run: () => this.cmdUpdate(),
+        run: (args) => this.cmdUpdate(args),
+      },
+      {
+        name: "tab",
+        aliases: ["new", "t"],
+        usage: "/tab [description]",
+        description: "Create a new tab and switch to it",
+        run: (args) => this.cmdTab(args),
+      },
+      {
+        name: "close",
+        aliases: ["done"],
+        usage: "/close [#id]",
+        description: "Close a tab (cannot close the last tab)",
+        run: (args) => this.cmdClose(args),
+      },
+      {
+        name: "tabs",
+        aliases: ["ls"],
+        usage: "/tabs",
+        description: "List all tabs with status",
+        run: () => this.cmdTabs(),
       },
       {
         name: "clear",
         aliases: ["cls", "reset"],
         usage: "/clear",
-        description: "Clear history and reset the session",
+        description: "Clear the focused tab's feed content",
         run: () => this.cmdClear(),
       },
       {
@@ -343,7 +394,12 @@ export class CommandManager {
       if (name === d.adapterName || name === d.userAlias) continue;
 
       const t = registry.get(name);
-      const active = d.agentActive.get(name);
+      // With per-tab queues, the same teammate can have multiple active tasks
+      // (one per tab). Collect them all.
+      const actives: QueueEntry[] = [];
+      for (const entry of d.agentActive.values()) {
+        if (entry.teammate === name) actives.push(entry);
+      }
       const queued = d.taskQueue.filter((e) => e.teammate === name);
 
       const presenceIcon =
@@ -353,7 +409,8 @@ export class CommandManager {
             ? tp.warning("●")
             : tp.error("●");
 
-      const stateLabel = active ? "working" : status.state;
+      const hasActive = actives.length > 0;
+      const stateLabel = hasActive ? "working" : status.state;
       const stateColor =
         stateLabel === "working"
           ? tp.info(` (${stateLabel})`)
@@ -364,12 +421,13 @@ export class CommandManager {
         d.feedLine(tp.muted(`    ${t.role}`));
       }
 
-      if (active) {
+      for (const active of actives) {
         const taskText =
           active.task.length > 60
             ? `${active.task.slice(0, 57)}…`
             : active.task;
-        d.feedLine(concat(tp.info("    ▸ "), tp.text(taskText)));
+        const tabLabel = active.threadId != null ? ` #${active.threadId}` : "";
+        d.feedLine(concat(tp.info(`    ▸${tabLabel} `), tp.text(taskText)));
       }
 
       for (let i = 0; i < queued.length; i++) {
@@ -380,7 +438,7 @@ export class CommandManager {
         d.feedLine(concat(tp.muted(`    ${i + 1}. `), tp.muted(taskText)));
       }
 
-      if (!active && status.lastSummary) {
+      if (!hasActive && status.lastSummary) {
         const time = status.lastTimestamp
           ? ` ${relativeTime(status.lastTimestamp)}`
           : "";
@@ -620,13 +678,14 @@ export class CommandManager {
       return;
     }
 
-    const activeEntry = d.agentActive.get(teammate);
-    if (activeEntry?.threadId === threadId) {
-      d.abortControllers.get(teammate)?.abort();
-      d.abortControllers.delete(teammate);
-      d.cleanupActivityLines(teammate);
-      d.statusTracker.stopTask(teammate);
-      d.agentActive.delete(teammate);
+    const slot = d.slotKey(threadId, teammate);
+    const activeEntry = d.agentActive.get(slot);
+    if (activeEntry) {
+      d.abortControllers.get(slot)?.abort();
+      d.abortControllers.delete(slot);
+      d.cleanupActivityLines(activeEntry.id);
+      d.statusTracker.stopTask(activeEntry.id);
+      d.agentActive.delete(slot);
       thread.pendingTasks.delete(activeEntry.id);
       if (container && d.chatView) {
         d.threadManager.displayCanceledInThread(
@@ -675,8 +734,9 @@ export class CommandManager {
     const displayName =
       resolvedName === d.selfName ? d.adapterName : resolvedName;
 
-    const activeEntry = d.agentActive.get(resolvedName);
-    const isActive = activeEntry?.threadId === taskId;
+    const interruptSlot = d.slotKey(taskId, resolvedName);
+    const activeEntry = d.agentActive.get(interruptSlot);
+    const isActive = !!activeEntry;
     const queuedIdx = d.taskQueue.findIndex(
       (e) =>
         e.teammate === resolvedName &&
@@ -704,11 +764,11 @@ export class CommandManager {
 
     try {
       if (isActive) {
-        d.abortControllers.get(resolvedName)?.abort();
-        d.abortControllers.delete(resolvedName);
-        d.cleanupActivityLines(resolvedName);
-        d.statusTracker.stopTask(resolvedName);
-        d.agentActive.delete(resolvedName);
+        d.abortControllers.get(interruptSlot)?.abort();
+        d.abortControllers.delete(interruptSlot);
+        d.cleanupActivityLines(activeEntry!.id);
+        d.statusTracker.stopTask(activeEntry!.id);
+        d.agentActive.delete(interruptSlot);
         thread.pendingTasks.delete(activeEntry!.id);
         if (container && d.chatView) {
           container.hidePlaceholder(d.chatView, activeEntry!.id);
@@ -731,7 +791,7 @@ export class CommandManager {
       d.taskQueue.push(newEntry);
       thread.pendingTasks.add(newEntry.id);
 
-      const state = d.isAgentBusy(resolvedName) ? "queued" : "working";
+      const state = d.isSlotBusy(taskId, resolvedName) ? "queued" : "working";
       d.renderTaskPlaceholder(taskId, newEntry.id, resolvedName, state);
 
       d.appendThreadEntry(taskId, {
@@ -756,7 +816,7 @@ export class CommandManager {
 
   // ── /add ───────────────────────────────────────────────────────────
 
-  private async cmdAdd(): Promise<void> {
+  private async cmdAdd(args: string): Promise<void> {
     const d = this.deps;
     const personas = await loadPersonas();
     if (personas.length === 0) {
@@ -771,6 +831,30 @@ export class CommandManager {
 
     if (available.length === 0) {
       d.feedLine(tp.muted("  All bundled personas are already installed."));
+      d.refreshView();
+      return;
+    }
+
+    // If a name was provided via argument, find the matching persona directly
+    const directName = args.trim().toLowerCase();
+    if (directName) {
+      const match = available.find((p) => p.alias.toLowerCase() === directName);
+      if (!match) {
+        d.feedLine(tp.warning(`  No available persona named "${directName}".`));
+        d.refreshView();
+        return;
+      }
+      await copyTemplateFiles(d.teammatesDir);
+      const folderName = match.alias.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      await scaffoldFromPersona(d.teammatesDir, folderName, match);
+      d.feedLine(
+        concat(
+          tp.success(`  ✔  Added @${folderName}`),
+          tp.muted(` — ${match.persona}`),
+        ),
+      );
+      clearSoloSetting(d.teammatesDir);
+      d.refreshTeammates();
       d.refreshView();
       return;
     }
@@ -844,27 +928,26 @@ export class CommandManager {
       ),
     );
 
+    clearSoloSetting(d.teammatesDir);
     d.refreshTeammates();
     d.refreshView();
   }
 
   // ── /remove ───────────────────────────────────────────────────────
 
-  private async cmdRemove(): Promise<void> {
+  private async cmdRemove(args: string): Promise<void> {
     const d = this.deps;
     const registry = d.orchestrator.getRegistry();
 
     // Only allow removing agentic teammates — not humans, not the coding agent
-    const removable = d.orchestrator
-      .listTeammates()
-      .filter((name) => {
-        const config = registry.get(name);
-        if (!config) return false;
-        if (config.type === "human") return false;
-        if (name === d.adapterName) return false;
-        if (name === d.selfName) return false;
-        return true;
-      });
+    const removable = d.orchestrator.listTeammates().filter((name) => {
+      const config = registry.get(name);
+      if (!config) return false;
+      if (config.type === "human") return false;
+      if (name === d.adapterName) return false;
+      if (name === d.selfName) return false;
+      return true;
+    });
 
     if (removable.length === 0) {
       d.feedLine(tp.muted("  No removable teammates found."));
@@ -872,36 +955,48 @@ export class CommandManager {
       return;
     }
 
-    d.feedLine(tp.text("  Removable teammates:\n"));
-    for (let i = 0; i < removable.length; i++) {
-      const name = removable[i];
-      const config = registry.get(name)!;
-      const num = String(i + 1).padStart(2, " ");
-      d.feedLine(
-        concat(
-          tp.text(`  ${num}) @${name} `),
-          tp.muted(`— ${config.role}`),
-        ),
-      );
-    }
-    d.feedLine();
-    d.refreshView();
+    // If a name was provided via argument, find the matching teammate directly
+    const directName = args.trim().toLowerCase();
+    let name: string | undefined;
 
-    const input = await d.askInline("Remove (number): ");
-    if (!input) {
-      d.feedLine(tp.muted("  Cancelled."));
+    if (directName) {
+      name = removable.find((n) => n.toLowerCase() === directName);
+      if (!name) {
+        d.feedLine(
+          tp.warning(`  No removable teammate named "${directName}".`),
+        );
+        d.refreshView();
+        return;
+      }
+    } else {
+      d.feedLine(tp.text("  Removable teammates:\n"));
+      for (let i = 0; i < removable.length; i++) {
+        const n = removable[i];
+        const config = registry.get(n)!;
+        const num = String(i + 1).padStart(2, " ");
+        d.feedLine(
+          concat(tp.text(`  ${num}) @${n} `), tp.muted(`— ${config.role}`)),
+        );
+      }
+      d.feedLine();
       d.refreshView();
-      return;
+
+      const input = await d.askInline("Remove (number): ");
+      if (!input) {
+        d.feedLine(tp.muted("  Cancelled."));
+        d.refreshView();
+        return;
+      }
+
+      const idx = parseInt(input.trim(), 10) - 1;
+      if (idx < 0 || idx >= removable.length) {
+        d.feedLine(tp.warning("  Invalid selection."));
+        d.refreshView();
+        return;
+      }
+      name = removable[idx];
     }
 
-    const idx = parseInt(input.trim(), 10) - 1;
-    if (idx < 0 || idx >= removable.length) {
-      d.feedLine(tp.warning("  Invalid selection."));
-      d.refreshView();
-      return;
-    }
-
-    const name = removable[idx];
     const confirm = await d.askInline(
       `Remove @${name}? This deletes the folder. (y/n): `,
     );
@@ -925,7 +1020,7 @@ export class CommandManager {
 
   // ── /update ───────────────────────────────────────────────────────
 
-  private async cmdUpdate(): Promise<void> {
+  private async cmdUpdate(args: string): Promise<void> {
     const d = this.deps;
     const personas = await loadPersonas();
     const registry = d.orchestrator.getRegistry();
@@ -951,6 +1046,48 @@ export class CommandManager {
       return;
     }
 
+    // If a name was provided via argument, find the matching teammate directly
+    const directName = args.trim().toLowerCase();
+    if (directName) {
+      // Support "*" for all
+      let selected: typeof updatable;
+      if (directName === "*") {
+        selected = updatable;
+      } else {
+        const match = updatable.find(
+          (u) => u.name.toLowerCase() === directName,
+        );
+        if (!match) {
+          d.feedLine(
+            tp.warning(`  No updatable teammate named "${directName}".`),
+          );
+          d.refreshView();
+          return;
+        }
+        selected = [match];
+      }
+
+      for (const { name, persona } of selected) {
+        try {
+          await updateFromPersona(d.teammatesDir, name, persona);
+          d.feedLine(
+            concat(
+              tp.success(`  ✔  Updated @${name}`),
+              tp.muted(` — SOUL.md & WISDOM.md refreshed`),
+            ),
+          );
+        } catch (err: any) {
+          d.feedLine(
+            tp.error(`  ✖  Failed to update @${name}: ${err.message}`),
+          );
+        }
+      }
+
+      d.refreshTeammates();
+      d.refreshView();
+      return;
+    }
+
     d.feedLine(tp.text("  Updatable teammates:\n"));
     for (let i = 0; i < updatable.length; i++) {
       const { name, persona } = updatable[i];
@@ -962,11 +1099,7 @@ export class CommandManager {
         ),
       );
     }
-    d.feedLine(
-      tp.muted(
-        "\n  Enter numbers separated by commas, or * for all",
-      ),
-    );
+    d.feedLine(tp.muted("\n  Enter numbers separated by commas, or * for all"));
     d.refreshView();
 
     const input = await d.askInline("Update: ");
@@ -976,11 +1109,11 @@ export class CommandManager {
       return;
     }
 
-    let selected: number[];
+    let selectedIndices: number[];
     if (input.trim() === "*") {
-      selected = updatable.map((_, i) => i);
+      selectedIndices = updatable.map((_, i) => i);
     } else {
-      selected = [
+      selectedIndices = [
         ...new Set(
           input
             .split(",")
@@ -990,13 +1123,13 @@ export class CommandManager {
       ];
     }
 
-    if (selected.length === 0) {
+    if (selectedIndices.length === 0) {
       d.feedLine(tp.warning("  No valid selections."));
       d.refreshView();
       return;
     }
 
-    for (const idx of selected) {
+    for (const idx of selectedIndices) {
       const { name, persona } = updatable[idx];
       try {
         await updateFromPersona(d.teammatesDir, name, persona);
@@ -1007,9 +1140,7 @@ export class CommandManager {
           ),
         );
       } catch (err: any) {
-        d.feedLine(
-          tp.error(`  ✖  Failed to update @${name}: ${err.message}`),
-        );
+        d.feedLine(tp.error(`  ✖  Failed to update @${name}: ${err.message}`));
       }
     }
 
@@ -1017,10 +1148,112 @@ export class CommandManager {
     d.refreshView();
   }
 
+  // ── /tab ──────────────────────────────────────────────────────────
+
+  private async cmdTab(argsStr: string): Promise<void> {
+    const d = this.deps;
+    const description = argsStr.trim() || "New tab";
+
+    // Ensure thread #1 ("Task") exists before creating a new tab.
+    // Without this, /tab on a fresh session creates thread #1 as the new tab
+    // and the tab bar stays hidden (only 1 tab).
+    if (d.threadManager.threads.size === 0) {
+      const defaultThread = d.threadManager.createThread("Task");
+      d.threadManager.appendThreadEntry(defaultThread.id, {
+        type: "user",
+        content: "",
+        timestamp: Date.now(),
+      });
+    }
+
+    const thread = d.threadManager.createThread(description);
+    d.threadManager.appendThreadEntry(thread.id, {
+      type: "user",
+      content: "",
+      timestamp: Date.now(),
+    });
+    d.feedLine(tp.muted(`  Created tab #${thread.id}: ${description}`));
+    d.refreshView();
+  }
+
+  // ── /close ────────────────────────────────────────────────────────
+
+  private async cmdClose(argsStr: string): Promise<void> {
+    const d = this.deps;
+    const arg = argsStr.trim().replace(/^#/, "");
+    const targetId = arg ? parseInt(arg, 10) : d.focusedThreadId;
+
+    if (targetId == null || Number.isNaN(targetId)) {
+      d.feedLine(tp.warning("  Usage: /close [#id]"));
+      d.refreshView();
+      return;
+    }
+
+    const closed = d.threadManager.closeThread(targetId);
+    if (closed) {
+      d.feedLine(tp.muted(`  Closed tab #${targetId}`));
+    } else if (d.threadManager.threads.size <= 1) {
+      d.feedLine(tp.warning("  Cannot close the last remaining tab."));
+    } else {
+      d.feedLine(tp.warning(`  Unknown tab #${targetId}`));
+    }
+    d.refreshView();
+  }
+
+  // ── /tabs ────────────────────────────────────────────────────────
+
+  private async cmdTabs(): Promise<void> {
+    const d = this.deps;
+    if (d.threads.size === 0) {
+      d.feedLine(tp.muted("  No tabs."));
+      d.refreshView();
+      return;
+    }
+
+    d.feedLine();
+    d.feedLine(tp.bold("  Tabs"));
+    d.feedLine(tp.muted(`  ${"─".repeat(50)}`));
+    for (const [id, thread] of d.threads) {
+      const isFocused = d.focusedThreadId === id;
+      const origin =
+        thread.originMessage.length > 50
+          ? `${thread.originMessage.slice(0, 47)}…`
+          : thread.originMessage;
+      const { working, queued } = this.getThreadTaskCounts(id);
+      const focusTag = isFocused ? tp.info(" ◀ focused") : "";
+      d.feedLine(
+        concat(tp.accent(`  #${id}`), tp.text(`  ${origin}`), focusTag),
+      );
+      const parts: string[] = [];
+      const replies = thread.entries.filter(
+        (e) => e.type !== "user" || thread.entries.indexOf(e) > 0,
+      ).length;
+      if (replies > 0)
+        parts.push(`${replies} repl${replies === 1 ? "y" : "ies"}`);
+      if (working > 0) parts.push(`${working} working`);
+      if (queued > 0) parts.push(`${queued} queued`);
+      if (parts.length > 0) {
+        d.feedLine(tp.muted(`    ${parts.join(" · ")}`));
+      }
+      d.feedLine();
+    }
+    d.refreshView();
+  }
+
   // ── /clear ─────────────────────────────────────────────────────────
 
   private async cmdClear(): Promise<void> {
     const d = this.deps;
+
+    // Per-thread /clear: only clear the focused thread's feed
+    if (d.focusedThreadId != null && d.threads.size > 1) {
+      d.threadManager.clearFocusedThread();
+      d.clearPastedTexts();
+      d.refreshView();
+      return;
+    }
+
+    // Full reset (single thread or no threads)
     d.conversation.history.length = 0;
     d.conversation.summary = "";
     d.lastResult = null;
@@ -1034,6 +1267,14 @@ export class CommandManager {
     d.retroManager.clear();
     d.threadManager.clear();
     await d.orchestrator.reset();
+
+    // Recreate the Task thread so the tab bar stays visible after /clear
+    const defaultThread = d.threadManager.createThread("Task");
+    d.threadManager.appendThreadEntry(defaultThread.id, {
+      type: "user",
+      content: "",
+      timestamp: Date.now(),
+    });
 
     if (d.chatView) {
       d.chatView.clear();
@@ -1890,7 +2131,7 @@ Issues that can't be resolved unilaterally — they need input from other teamma
         ["/retro", "run retrospective"],
       ];
       col3 = [
-        ["/copy", "copy session text"],
+        ["/tab", "new tab"],
         ["/help", "all commands"],
         ["/exit", "exit session"],
       ];

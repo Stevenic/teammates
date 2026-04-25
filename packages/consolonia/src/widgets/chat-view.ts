@@ -34,7 +34,7 @@ import type { DrawingContext, TextStyle } from "../drawing/context.js";
 import type { InputEvent } from "../input/events.js";
 import { Control } from "../layout/control.js";
 import type { Constraint, Rect, Size } from "../layout/types.js";
-import type { StyledSpan } from "../styled.js";
+import type { StyledSegment, StyledSpan } from "../styled.js";
 import {
   type FeedActionEntry,
   type FeedActionItem,
@@ -82,6 +82,9 @@ export interface ChatViewOptions {
   bannerStyle?: TextStyle;
   /** Custom widget to use as the banner instead of the built-in Text. */
   bannerWidget?: Control;
+  /** Optional widget docked between the top separator and the feed.
+   *  Remains pinned at the top even when the feed scrolls. */
+  dockedBar?: Control;
   /** Prompt string for the input box (default "❯ "). */
   prompt?: string;
   /** Style for the prompt. */
@@ -134,10 +137,18 @@ export class ChatView extends Control {
   // ── Child controls ─────────────────────────────────────────────
   private _banner: Control;
   private _topSeparator: _Separator;
+  /** Docked bar between top separator and feed (e.g. thread tab bar). */
+  private _dockedBar: Control | null = null;
   /** Identity-based feed item store — replaces _feedLines + _feedActions + _hiddenFeedLines. */
   private _store: FeedStore = new FeedStore();
   /** ID of the feed item currently hovered (null if none). */
   private _hoveredItemId: string | null = null;
+  /** ID of the feed item whose URL/file region is currently hovered. */
+  private _hoveredLinkItemId: string | null = null;
+  /** Char offset of the currently hovered URL/file target within its item. */
+  private _hoveredLinkIndex: number | null = null;
+  /** Original content.lines of the link-hover item, cached so we can restore. */
+  private _hoveredLinkOriginalLines: StyledLine[] | null = null;
   /** Scrollable list widget — owns scroll state, height cache, screen mapping, scrollbar. */
   private _feed!: VirtualList;
   /** Number of non-feed items (banner + separator) prepended to VirtualList items. */
@@ -207,6 +218,12 @@ export class ChatView extends Control {
       this._separatorStyle,
     );
     this.addChild(this._topSeparator);
+
+    // Docked bar (between separator and feed, optional)
+    if (options.dockedBar) {
+      this._dockedBar = options.dockedBar;
+      this.addChild(this._dockedBar);
+    }
 
     // Virtual list (scrollable feed area — owns scroll, height cache, scrollbar)
     this._feed = new VirtualList({
@@ -355,6 +372,65 @@ export class ChatView extends Control {
     this.invalidate();
   }
 
+  // ── Public API: Docked Bar ─────────────────────────────────────
+
+  /** Set or replace the docked bar widget (pinned between separator and feed). */
+  set dockedBar(widget: Control | null) {
+    if (this._dockedBar) this.removeChild(this._dockedBar);
+    this._dockedBar = widget;
+    if (widget) this.addChild(widget);
+    this.invalidate();
+  }
+
+  /** Get the current docked bar widget. */
+  get dockedBar(): Control | null {
+    return this._dockedBar;
+  }
+
+  // ── Public API: FeedStore swapping ────────────────────────────
+
+  /** Get the current FeedStore. */
+  get store(): FeedStore {
+    return this._store;
+  }
+
+  /**
+   * Swap the active FeedStore (e.g. when switching thread tabs).
+   * Saves the current scroll offset and restores the target's.
+   * Returns the previously active store.
+   */
+  setStore(newStore: FeedStore, savedScroll?: number): FeedStore {
+    const prev = this._store;
+    // Save current scroll state on the outgoing store
+    (prev as any).__savedScroll = this._feed
+      ? ((this._feed as any)._scrollOffset ?? 0)
+      : 0;
+    (prev as any).__savedScrolledAway = this._feed
+      ? ((this._feed as any)._userScrolledAway ?? false)
+      : false;
+
+    this._store = newStore;
+    this._hoveredItemId = null;
+    this._hoveredLinkItemId = null;
+    this._hoveredLinkIndex = null;
+    this._hoveredLinkOriginalLines = null;
+
+    // Restore scroll state for the incoming store
+    if (this._feed) {
+      const scroll =
+        savedScroll ??
+        (newStore as any).__savedScroll ??
+        Number.MAX_SAFE_INTEGER;
+      const scrolledAway = (newStore as any).__savedScrolledAway ?? false;
+      (this._feed as any)._scrollOffset = scroll;
+      (this._feed as any)._userScrolledAway = scrolledAway;
+      this._feed.invalidateAllHeights();
+    }
+
+    this.invalidate();
+    return prev;
+  }
+
   // ── Public API: Feed ───────────────────────────────────────────
 
   /** Append a line of plain text to the feed. Auto-scrolls to bottom. */
@@ -442,6 +518,9 @@ export class ChatView extends Control {
   clear(): void {
     this._store.clear();
     this._hoveredItemId = null;
+    this._hoveredLinkItemId = null;
+    this._hoveredLinkIndex = null;
+    this._hoveredLinkOriginalLines = null;
     this._feed.reset();
     this.invalidate();
   }
@@ -459,6 +538,11 @@ export class ChatView extends Control {
     this._feed.invalidateItem(item.id);
     item.actions = undefined;
     if (this._hoveredItemId === item.id) this._hoveredItemId = null;
+    if (this._hoveredLinkItemId === item.id) {
+      this._hoveredLinkItemId = null;
+      this._hoveredLinkIndex = null;
+      this._hoveredLinkOriginalLines = null;
+    }
     this.invalidate();
   }
 
@@ -472,6 +556,11 @@ export class ChatView extends Control {
     this._feed.invalidateItem(item.id);
     item.actions = { items: actions, normalStyle: combined };
     if (this._hoveredItemId === item.id) this._hoveredItemId = null;
+    if (this._hoveredLinkItemId === item.id) {
+      this._hoveredLinkItemId = null;
+      this._hoveredLinkIndex = null;
+      this._hoveredLinkOriginalLines = null;
+    }
     this.invalidate();
   }
 
@@ -785,6 +874,28 @@ export class ChatView extends Control {
         return true;
       }
 
+      // Docked bar mouse handling — delegate clicks and hover to the bar widget
+      if (this._dockedBar?.visible && this._dockedBar.bounds) {
+        const db = this._dockedBar.bounds;
+        const inDockedBar = me.y >= db.y && me.y < db.y + db.height;
+
+        if (me.type === "move") {
+          if (inDockedBar && "handleMouseMove" in this._dockedBar) {
+            (this._dockedBar as any).handleMouseMove(me.x, me.y - db.y);
+          } else if (!inDockedBar && "handleMouseLeave" in this._dockedBar) {
+            (this._dockedBar as any).handleMouseLeave();
+          }
+        }
+
+        if (me.type === "press" && me.button === "left" && inDockedBar) {
+          // Delegate to the docked bar's handleClick if available
+          if ("handleClick" in this._dockedBar) {
+            (this._dockedBar as any).handleClick(me.x, me.y - db.y);
+          }
+          return true;
+        }
+      }
+
       // Precompute scrollbar hit for reuse
       const onScrollbar =
         fb != null &&
@@ -949,6 +1060,36 @@ export class ChatView extends Control {
           return true;
         }
       }
+
+      // URL / file-path hover: underline the target under the cursor
+      if (me.type === "move") {
+        const hit = this._linkTargetAt(me.x, me.y);
+        const hitItem = hit ? this._store.at(hit.itemIdx) : undefined;
+        // Skip items that own an action entry — their hover is owned by the
+        // action subsystem above.
+        const newItemId = hitItem && !hitItem.actions ? hitItem.id : null;
+        const newIndex = hit && newItemId ? hit.index : null;
+        if (
+          newItemId !== this._hoveredLinkItemId ||
+          newIndex !== this._hoveredLinkIndex
+        ) {
+          const cleared = this._clearLinkHover();
+          if (hit && hitItem && newItemId) {
+            this._hoveredLinkItemId = newItemId;
+            this._hoveredLinkIndex = hit.index;
+            this._hoveredLinkOriginalLines = hitItem.content.lines;
+            hitItem.content.lines = this._applyUnderlineOverlay(
+              hitItem.content.lines,
+              hit.index,
+              hit.text.length,
+            );
+            this._feed.invalidateItem(hitItem.id);
+            this.invalidate();
+          } else if (cleared) {
+            this.invalidate();
+          }
+        }
+      }
     }
 
     // Delegate to override widget or normal input
@@ -1020,6 +1161,132 @@ export class ChatView extends Control {
     return len;
   }
 
+  /** Find the URL or file-path target at screen (x, y), if any. */
+  private _linkTargetAt(
+    x: number,
+    y: number,
+  ): {
+    itemIdx: number;
+    type: "link" | "file";
+    text: string;
+    index: number;
+  } | null {
+    const feedLineIdx = this._feedLineAtScreen(y);
+    if (feedLineIdx < 0) return null;
+    const text = this._extractFeedLineText(feedLineIdx);
+    if (!text) return null;
+    URL_REGEX.lastIndex = 0;
+    FILE_PATH_REGEX.lastIndex = 0;
+    const urls = [...text.matchAll(URL_REGEX)];
+    const paths = [...text.matchAll(FILE_PATH_REGEX)];
+    if (urls.length === 0 && paths.length === 0) return null;
+    const allTargets = [
+      ...urls.map((m) => ({
+        index: m.index!,
+        text: m[0],
+        type: "link" as const,
+      })),
+      ...paths.map((m) => ({
+        index: m.index!,
+        text: m[0],
+        type: "file" as const,
+      })),
+    ];
+    const fb = this._feed.bounds;
+    const row = this._feed.rowAtScreen(y);
+    const col = x - (fb?.x ?? 0);
+    const charOffset = row * this._feed.contentWidth + col;
+    const hit = allTargets.find(
+      (t) => charOffset >= t.index && charOffset < t.index + t.text.length,
+    );
+    if (!hit) return null;
+    return {
+      itemIdx: feedLineIdx,
+      type: hit.type,
+      text: hit.text,
+      index: hit.index,
+    };
+  }
+
+  /** Return a copy of content.lines with underline applied to chars [start, start+length). */
+  private _applyUnderlineOverlay(
+    lines: StyledLine[],
+    startOffset: number,
+    length: number,
+  ): StyledLine[] {
+    const endOffset = startOffset + length;
+    const result: StyledLine[] = [];
+    let cursor = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineText =
+        typeof line === "string"
+          ? line
+          : (line as StyledSpan).map((s) => s.text).join("");
+      const lineLen = lineText.length;
+      const lineStart = cursor;
+      const lineEnd = cursor + lineLen;
+      const intersects =
+        startOffset < lineEnd && endOffset > lineStart && lineLen > 0;
+      if (!intersects) {
+        result.push(line);
+      } else {
+        const segs: StyledSegment[] =
+          typeof line === "string"
+            ? [{ text: line, style: {} }]
+            : [...(line as StyledSpan)];
+        const newSegs: StyledSegment[] = [];
+        let segCursor = lineStart;
+        for (const seg of segs) {
+          const segStart = segCursor;
+          const segEnd = segCursor + seg.text.length;
+          if (segEnd <= startOffset || segStart >= endOffset) {
+            newSegs.push(seg);
+          } else {
+            if (segStart < startOffset) {
+              newSegs.push({
+                text: seg.text.slice(0, startOffset - segStart),
+                style: seg.style,
+              });
+            }
+            const insideStart = Math.max(segStart, startOffset) - segStart;
+            const insideEnd = Math.min(segEnd, endOffset) - segStart;
+            newSegs.push({
+              text: seg.text.slice(insideStart, insideEnd),
+              style: { ...seg.style, underline: true },
+            });
+            if (segEnd > endOffset) {
+              newSegs.push({
+                text: seg.text.slice(endOffset - segStart),
+                style: seg.style,
+              });
+            }
+          }
+          segCursor = segEnd;
+        }
+        result.push(newSegs as unknown as StyledSpan);
+      }
+      cursor = lineEnd + 1; // +1 accounts for the "\n" joiner
+    }
+    return result;
+  }
+
+  /** Restore the link-hover item's original content.lines, if any. */
+  private _clearLinkHover(): boolean {
+    if (this._hoveredLinkItemId && this._hoveredLinkOriginalLines) {
+      const prev = this._store.get(this._hoveredLinkItemId);
+      if (prev) {
+        prev.content.lines = this._hoveredLinkOriginalLines;
+        this._feed.invalidateItem(prev.id);
+      }
+    }
+    const had = this._hoveredLinkItemId !== null;
+    this._hoveredLinkItemId = null;
+    this._hoveredLinkIndex = null;
+    this._hoveredLinkOriginalLines = null;
+    return had;
+  }
+
   // ── Layout ─────────────────────────────────────────────────────
 
   override measure(constraint: Constraint): Size {
@@ -1072,10 +1339,49 @@ export class ChatView extends Control {
         maxHeight: Math.max(1, Math.floor(H / 2)), // up to half the screen
       });
       const overrideH = overrideSize.height;
-      const chromeH = botSepH + progressH + overrideH;
+
+      // Docked bar height
+      let dockedH = 0;
+      if (this._dockedBar?.visible) {
+        const ds = this._dockedBar.measure({
+          minWidth: 0,
+          maxWidth: W,
+          minHeight: 0,
+          maxHeight: 3,
+        });
+        dockedH = ds.height;
+      }
+
+      // Banner height (fixed above docked bar when bar is present)
+      let bannerFixedH = 0;
+      if (this._dockedBar?.visible && this._banner.visible) {
+        const bannerSize = this._banner.measure({
+          minWidth: 0,
+          maxWidth: W,
+          minHeight: 0,
+          maxHeight: Math.max(1, Math.floor(H / 3)),
+        });
+        bannerFixedH = bannerSize.height;
+      }
+
+      const chromeH = botSepH + progressH + overrideH + dockedH + bannerFixedH;
       const feedH = Math.max(0, H - chromeH);
 
       let y = b.y;
+
+      // 0a. Banner (fixed above docked bar when bar is present)
+      if (bannerFixedH > 0) {
+        this._banner.arrange({ x: b.x, y, width: W, height: bannerFixedH });
+        this._banner.render(ctx);
+        y += bannerFixedH;
+      }
+
+      // 0b. Docked bar
+      if (dockedH > 0 && this._dockedBar) {
+        this._dockedBar.arrange({ x: b.x, y, width: W, height: dockedH });
+        this._dockedBar.render(ctx);
+        y += dockedH;
+      }
 
       // 1. Feed area — delegate to VirtualList
       if (feedH > 0) {
@@ -1143,13 +1449,51 @@ export class ChatView extends Control {
       ? Math.min(this._dropdownItems.length - 1, maxDropdownH)
       : 0;
 
-    // Feed gets remaining space (banner + separator scroll within it)
-    const fixedH = chromeH + dropdownExtraH;
+    // Docked bar height (0 if hidden or absent)
+    let dockedH = 0;
+    if (this._dockedBar?.visible) {
+      const dockedSize = this._dockedBar.measure({
+        minWidth: 0,
+        maxWidth: W,
+        minHeight: 0,
+        maxHeight: 3,
+      });
+      dockedH = dockedSize.height;
+    }
+
+    // Banner height (fixed above docked bar when bar is present)
+    let bannerFixedH = 0;
+    if (this._dockedBar?.visible && this._banner.visible) {
+      const bannerSize = this._banner.measure({
+        minWidth: 0,
+        maxWidth: W,
+        minHeight: 0,
+        maxHeight: Math.max(1, Math.floor(H / 3)),
+      });
+      bannerFixedH = bannerSize.height;
+    }
+
+    // Feed gets remaining space (banner + separator scroll within it when no docked bar)
+    const fixedH = chromeH + dropdownExtraH + dockedH + bannerFixedH;
     const feedH = Math.max(0, H - fixedH);
 
     // ── Arrange and render each section ──────────────────────
 
     let y = b.y;
+
+    // 0a. Banner (fixed above docked bar when bar is present)
+    if (bannerFixedH > 0) {
+      this._banner.arrange({ x: b.x, y, width: W, height: bannerFixedH });
+      this._banner.render(ctx);
+      y += bannerFixedH;
+    }
+
+    // 0b. Docked bar (pinned below banner, above the scrollable feed)
+    if (dockedH > 0 && this._dockedBar) {
+      this._dockedBar.arrange({ x: b.x, y, width: W, height: dockedH });
+      this._dockedBar.render(ctx);
+      y += dockedH;
+    }
 
     // 1. Feed area — delegate to VirtualList
     if (feedH > 0) {
@@ -1224,7 +1568,9 @@ export class ChatView extends Control {
   /** Build the VirtualList items array from banner + separator + feed store items. */
   private _buildVirtualListItems(): void {
     const items: VirtualListItem[] = [];
-    if (this._banner.visible) {
+    // When a docked bar is present, the banner is rendered as a fixed element
+    // above the bar (not in the scrollable feed). Otherwise include it in the feed.
+    if (this._banner.visible && !this._dockedBar?.visible) {
       // Banner height changes during animation — always re-measure
       this._feed.invalidateItem("__banner__");
       items.push({ id: "__banner__", content: this._banner });

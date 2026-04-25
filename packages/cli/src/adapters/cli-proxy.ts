@@ -27,7 +27,6 @@ import {
   watchDebugLog,
   watchDebugLogErrors,
 } from "../activity-watcher.js";
-import { ensurePostToolUseHook } from "../hook-installer.js";
 import type {
   AgentAdapter,
   InstalledService,
@@ -40,6 +39,7 @@ import {
   queryRecallContext,
 } from "../adapter.js";
 import { autoCompactForBudget } from "../compact.js";
+import { ensurePostToolUseHook } from "../hook-installer.js";
 import { systemPromptPath } from "../system-prompt.js";
 import type {
   ActivityEvent,

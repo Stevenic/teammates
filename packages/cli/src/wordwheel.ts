@@ -20,6 +20,10 @@ export interface WordwheelView {
   commands: Map<string, SlashCommand>;
   listTeammates(): string[];
   getTeammateRole(name: string): string;
+  /** Available persona aliases not yet installed (for /add). */
+  getAvailablePersonas(): { alias: string; description: string }[];
+  /** Removable installed teammate names (for /remove). */
+  getRemovableTeammates(): string[];
   selfName: string;
   adapterName: string;
   userAlias: string | null;
@@ -157,6 +161,74 @@ export class Wordwheel {
           completion: `/${cmdName} ${s} `,
         }),
       );
+    }
+
+    // Persona name completion for /add
+    if (cmdName === "add") {
+      const completedArgs = argsBefore.trim()
+        ? argsBefore.trim().split(/\s+/).length
+        : 0;
+      if (completedArgs > 0) return [];
+      const lower = partial.toLowerCase();
+      return this.view
+        .getAvailablePersonas()
+        .filter((p) => p.alias.toLowerCase().startsWith(lower))
+        .map((p) => ({
+          label: p.alias,
+          description: p.description,
+          completion: `/add ${p.alias}`,
+        }));
+    }
+
+    // Teammate name completion for /remove
+    if (cmdName === "remove") {
+      const completedArgs = argsBefore.trim()
+        ? argsBefore.trim().split(/\s+/).length
+        : 0;
+      if (completedArgs > 0) return [];
+      const lower = partial.toLowerCase();
+      return this.view
+        .getRemovableTeammates()
+        .filter((n) => n.toLowerCase().startsWith(lower))
+        .map((n) => ({
+          label: n,
+          description: this.view.getTeammateRole(n),
+          completion: `/remove ${n}`,
+        }));
+    }
+
+    // Teammate name completion for /update (teammates with matching personas)
+    if (cmdName === "update") {
+      const completedArgs = argsBefore.trim()
+        ? argsBefore.trim().split(/\s+/).length
+        : 0;
+      if (completedArgs > 0) return [];
+      const lower = partial.toLowerCase();
+      // Updatable = installed teammates whose names match a persona alias
+      const personaAliases = new Set(
+        this.view.getAvailablePersonas().map((p) => p.alias),
+      );
+      const installed = this.view.listTeammates();
+      // Include installed teammates that match a persona (available + installed = all personas)
+      // We need all persona aliases, not just available ones — use removable as a proxy for installed agentic
+      const removable = this.view.getRemovableTeammates();
+      const items: DropdownItem[] = [];
+      if ("*".startsWith(lower)) {
+        items.push({
+          label: "*",
+          description: "update all",
+          completion: `/update *`,
+        });
+      }
+      for (const name of removable) {
+        if (!name.toLowerCase().startsWith(lower)) continue;
+        items.push({
+          label: name,
+          description: this.view.getTeammateRole(name),
+          completion: `/update ${name}`,
+        });
+      }
+      return items;
     }
 
     const positions = TEAMMATE_ARG_POSITIONS[cmdName];

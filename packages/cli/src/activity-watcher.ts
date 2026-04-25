@@ -804,7 +804,10 @@ export function parseClaudeActivity(
   const hookToolTimestamps = new Set<string>();
 
   // Track subagent turns to emit summarized activity
-  const subagentTurns = new Map<string, { count: number; firstTs: number; lastTs: number }>();
+  const subagentTurns = new Map<
+    string,
+    { count: number; firstTs: number; lastTs: number }
+  >();
 
   // Deferred Bash events from "Spawning shell" — only emitted if no hook covers them
   const deferredBash: Array<{ ts: number }> = [];
@@ -908,7 +911,6 @@ export function parseClaudeActivity(
     if (m) {
       const ts = new Date(m[1]).getTime();
       deferredBash.push({ ts });
-      continue;
     }
   }
 

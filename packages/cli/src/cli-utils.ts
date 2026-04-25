@@ -94,6 +94,10 @@ export function formatConversationEntry(role: string, text: string): string {
 /**
  * Build the conversation context section for a teammate prompt.
  * Works backwards from newest entries, including whole entries up to the budget.
+ *
+ * Returns the entries (and optional summary) WITHOUT the "## Conversation History"
+ * section header — the consumer (buildUserMessage) owns that header so we don't
+ * duplicate it when this string is passed through the orchestrator → adapter chain.
  */
 export function buildConversationContext(
   history: ConversationEntry[],
@@ -102,7 +106,7 @@ export function buildConversationContext(
 ): string {
   if (history.length === 0 && !summary) return "";
 
-  const parts: string[] = ["## Conversation History\n"];
+  const parts: string[] = [];
 
   if (summary) {
     parts.push(`### Previous Conversation Summary\n\n${summary}\n`);

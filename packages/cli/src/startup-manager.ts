@@ -115,7 +115,11 @@ export class StartupManager {
     }
     settings.indexVersion = StartupManager.INDEX_VERSION;
     try {
-      writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+      writeFileSync(
+        settingsPath,
+        `${JSON.stringify(settings, null, 2)}\n`,
+        "utf-8",
+      );
     } catch {
       /* write failed — non-fatal */
     }
@@ -423,7 +427,9 @@ export class StartupManager {
       // Index version changed — full rebuild of all teammate indexes
       try {
         const { Indexer: RebuildIndexer } = await import("@teammates/recall");
-        const rebuildIndexer = new RebuildIndexer({ teammatesDir: this.deps.teammatesDir });
+        const rebuildIndexer = new RebuildIndexer({
+          teammatesDir: this.deps.teammatesDir,
+        });
         await rebuildIndexer.indexAll();
         this.commitIndexVersion();
       } catch {

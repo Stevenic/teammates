@@ -11,7 +11,7 @@
 
 import { exec as execCb } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 
 import {
   App,
@@ -20,6 +20,8 @@ import {
   concat,
   pen,
   type StyledSpan,
+  ThreadBar,
+  type ThreadBarTab,
 } from "@teammates/consolonia";
 import chalk from "chalk";
 import { ActivityManager } from "./activity-manager.js";
@@ -46,11 +48,12 @@ import { FeedRenderer } from "./feed-renderer.js";
 import { HandoffManager } from "./handoff-manager.js";
 import { OnboardFlow } from "./onboard-flow.js";
 import { Orchestrator } from "./orchestrator.js";
+import { loadPersonas, type Persona } from "./personas.js";
 import { RetroManager } from "./retro-manager.js";
 import { detectServices } from "./service-config.js";
 import { StartupManager } from "./startup-manager.js";
-import { writeAllSystemPrompts } from "./system-prompt.js";
 import { StatusTracker } from "./status-tracker.js";
+import { writeAllSystemPrompts } from "./system-prompt.js";
 import { theme, tp } from "./theme.js";
 import { ThreadManager } from "./thread-manager.js";
 import type {
@@ -94,9 +97,11 @@ class TeammatesREPL {
   private teammatesDir!: string;
   private taskQueue: QueueEntry[] = [];
   private nextQueueEntryId = 1;
-  /** Per-agent active tasks - one per agent running in parallel. */
+  /** Per-slot active tasks — keyed by `slotKey(threadId, teammate)`.
+   *  A "slot" is a (tab, teammate) pair — the serialization unit.
+   *  Same teammate in two tabs = two slots = two concurrent tasks. */
   private agentActive: Map<string, QueueEntry> = new Map();
-  /** Per-agent abort controllers — abort to cancel the running agent. */
+  /** Per-slot abort controllers — abort to cancel the running agent. */
   private abortControllers: Map<string, AbortController> = new Map();
   /** Active system tasks — multiple can run concurrently per agent. */
   private systemActive: Map<string, QueueEntry> = new Map();
@@ -105,12 +110,14 @@ class TeammatesREPL {
   /** Counter for pending migration compression tasks — triggers re-index when it hits 0. */
   private pendingMigrationSyncs = 0;
   private static readonly MIGRATION_TASK_ID = "__migration__";
-  /** Per-agent drain locks — prevents double-draining a single agent. */
+  /** Per-slot drain locks — prevents double-draining a single slot. */
   private agentDrainLocks: Map<string, Promise<void>> = new Map();
   /** Stored pasted text keyed by paste number, expanded on Enter. */
   private pastedTexts: Map<number, string> = new Map();
   private pasteCounter = 0;
   private wordwheel!: Wordwheel;
+  /** Cached persona list for wordwheel completion. */
+  private cachedPersonas: Persona[] = [];
   private escPending = false; // true after first ESC, waiting for second
   private escTimer: ReturnType<typeof setTimeout> | null = null;
   private ctrlcPending = false; // true after first Ctrl+C, waiting for second
@@ -152,22 +159,13 @@ class TeammatesREPL {
 
   // ── Thread management (delegated to ThreadManager) ──────────────
   private threadManager!: ThreadManager;
+  /** ThreadBar widget (tabs between banner and feed). */
+  private threadBar!: ThreadBar;
+  /** Set of thread IDs with unread content. */
+  private unreadThreads: Set<number> = new Set();
 
   private get shiftAllContainers() {
-    const base = this.threadManager.shiftAllContainers;
-    return (atIndex: number, delta: number) => {
-      base(atIndex, delta);
-      // Also shift activity line indices so cleanup hides the correct lines
-      for (const [_tm, indices] of this.activityManager.lineIndices) {
-        for (let i = 0; i < indices.length; i++) {
-          if (indices[i] >= atIndex) indices[i] += delta;
-        }
-      }
-      // Shift trailing blank line indices
-      for (const [tm, idx] of this.activityManager.blankIdx) {
-        if (idx >= atIndex) this.activityManager.blankIdx.set(tm, idx + delta);
-      }
-    };
+    return this.threadManager.shiftAllContainers;
   }
 
   // ── Animated status tracker (delegated to StatusTracker) ────────
@@ -190,11 +188,22 @@ class TeammatesREPL {
     return `q${this.nextQueueEntryId++}`;
   }
 
-  private isAgentBusy(teammate: string): boolean {
+  /** Compute the slot key for a (thread, teammate) pair.
+   *  Null/undefined threadId collapses to "0" (pre-thread legacy tasks). */
+  private slotKey(threadId: number | undefined, teammate: string): string {
+    return `t${threadId ?? 0}:${teammate}`;
+  }
+
+  /** Is the given (thread, teammate) slot currently busy (queued or active)? */
+  private isSlotBusy(threadId: number | undefined, teammate: string): boolean {
+    const slot = this.slotKey(threadId, teammate);
     return (
-      this.agentActive.has(teammate) ||
+      this.agentActive.has(slot) ||
       this.taskQueue.some(
-        (e) => e.teammate === teammate && !this.isSystemTask(e),
+        (e) =>
+          e.teammate === teammate &&
+          e.threadId === threadId &&
+          !this.isSystemTask(e),
       )
     );
   }
@@ -249,21 +258,42 @@ class TeammatesREPL {
     return this.feedRenderer.makeSpan(...segs);
   }
 
-  /** Refresh the ChatView app if active. */
+  /**
+   * Refresh the ChatView app if active. Coalesces multiple refreshes within
+   * the same tick into a single render — important when many tabs are working
+   * concurrently and firing feed updates/activity events in parallel.
+   */
   private refreshView(): void {
-    if (this.app) this.app.refresh();
+    if (this.app) this.app.scheduleRefresh();
+  }
+
+  /** Rebuild the ThreadBar tabs from current thread state. */
+  private refreshThreadBar(): void {
+    if (!this.threadBar) return;
+    const tabs: ThreadBarTab[] = [];
+    for (const [id, thread] of this.threadManager.threads) {
+      tabs.push({
+        id,
+        name: thread.originMessage || "Thread",
+        focused: this.threadManager.focusedThreadId === id,
+        unread: this.unreadThreads.has(id),
+        working: this.threadManager.isThreadWorking(id),
+      });
+    }
+    this.threadBar.tabs = tabs;
   }
 
   private queueTask(
     input: string,
     preMentions?: string[],
     threadId?: number,
-    replyDisplayText?: string,
   ): void {
     const allNames = this.orchestrator.listTeammates();
 
-    // Create or reuse a thread for this task
+    // Create or reuse a thread. In the tab model, thread #1 is created
+    // implicitly on first task. Explicit tabs come from /tab.
     let thread: TaskThread;
+    let isNewThread = false;
     if (threadId != null) {
       const existing = this.threadManager.getThread(threadId);
       if (!existing) {
@@ -273,49 +303,62 @@ class TeammatesREPL {
       }
       thread = existing;
       thread.focusedAt = Date.now();
-      this.threadManager.focusedThreadId = threadId;
-      this.threadManager.updateFooterHint();
-      // Add user reply to the thread
-      this.threadManager.appendThreadEntry(threadId, {
-        type: "user",
-        content: input,
-        timestamp: Date.now(),
-      });
+      // Switch to this thread if not already focused
+      if (this.threadManager.focusedThreadId !== threadId) {
+        this.threadManager.switchToThread(threadId);
+      }
     } else {
+      // Create thread #1 implicitly
       thread = this.threadManager.createThread(input);
-      // Add user's origin message as first entry
-      this.threadManager.appendThreadEntry(thread.id, {
-        type: "user",
-        content: input,
-        timestamp: Date.now(),
-      });
+      isNewThread = true;
     }
+    // Add user message to thread
+    this.threadManager.appendThreadEntry(thread.id, {
+      type: "user",
+      content: input,
+      timestamp: Date.now(),
+    });
     const tid = thread.id;
 
-    // Check for @everyone — queue to all teammates except the coding agent
+    // Render the user message in the thread's feed
+    this.feedRenderer.printUserMessage(input);
+
+    // Resolve @mentions
+    let mentioned: string[];
+    if (preMentions) {
+      mentioned = preMentions;
+    } else {
+      const mentionRegex = /@(\S+)/g;
+      let m: RegExpExecArray | null;
+      mentioned = [];
+      while ((m = mentionRegex.exec(input)) !== null) {
+        const name =
+          m[1] === this.adapterName && this.userAlias ? this.selfName : m[1];
+        if (allNames.includes(name) && !mentioned.includes(name)) {
+          mentioned.push(name);
+        }
+      }
+    }
+
+    // @everyone — queue to all teammates
     const everyoneMatch = input.match(/^@everyone\s+([\s\S]+)$/i);
     if (everyoneMatch) {
       const task = everyoneMatch[1];
       const names = allNames.filter(
         (n) => n !== this.selfName && n !== this.adapterName,
       );
-      // Atomic snapshot: freeze conversation state ONCE so all agents see
-      // the same context regardless of concurrent preDispatchCompress mutations.
       const contextSnapshot = {
         history: this.conversation.history.map((e) => ({ ...e })),
         summary: this.conversation.summary,
       };
-      // Render dispatch line first — this creates the ThreadContainer
-      if (threadId == null) {
-        this.threadManager.renderThreadHeader(thread, names);
-        const c = this.threadManager.containers.get(tid);
-        if (c && this.chatView) {
-          c.insertLine(this.chatView, "", this.shiftAllContainers);
-        }
-      } else if (replyDisplayText) {
-        this.threadManager.renderThreadReply(tid, replyDisplayText, names);
+      // Render dispatch header in the thread's own feed
+      this.threadManager.renderThreadHeader(thread, names);
+      const adapter = this.threadManager.getAdapter(tid);
+      const c = this.threadManager.containers.get(tid);
+      if (c && adapter) {
+        const shift = this.threadManager.getShiftCallback(tid);
+        c.insertLine(adapter, "", shift);
       }
-      // Now queue entries and render placeholders (container exists)
       for (const teammate of names) {
         const entry = {
           id: this.makeQueueEntryId(),
@@ -325,7 +368,7 @@ class TeammatesREPL {
           threadId: tid,
           contextSnapshot,
         } as const;
-        const state = this.isAgentBusy(teammate) ? "queued" : "working";
+        const state = this.isSlotBusy(tid, teammate) ? "queued" : "working";
         this.taskQueue.push(entry);
         thread.pendingTasks.add(entry.id);
         this.threadManager.renderTaskPlaceholder(
@@ -335,110 +378,58 @@ class TeammatesREPL {
           state,
         );
       }
-      const ec = this.threadManager.containers.get(tid);
-      if (ec && this.chatView) ec.hideThreadActions(this.chatView);
+      if (c && adapter) c.hideThreadActions(adapter);
       this.refreshView();
       this.kickDrain();
       return;
     }
 
-    // Use pre-resolved mentions if provided (avoids picking up @mentions from expanded paste text),
-    // otherwise scan the input directly.
-    let mentioned: string[];
-    if (preMentions) {
-      mentioned = preMentions;
-    } else {
-      const mentionRegex = /@(\S+)/g;
-      let m: RegExpExecArray | null;
-      mentioned = [];
-      while ((m = mentionRegex.exec(input)) !== null) {
-        // Remap adapter name alias → user avatar for routing
-        const name =
-          m[1] === this.adapterName && this.userAlias ? this.selfName : m[1];
-        if (allNames.includes(name) && !mentioned.includes(name)) {
-          mentioned.push(name);
-        }
-      }
-    }
-
+    // Resolve target teammates
+    let targets: string[];
     if (mentioned.length > 0) {
-      // Render dispatch line first — this creates the ThreadContainer
-      if (threadId == null) {
-        this.threadManager.renderThreadHeader(thread, mentioned);
-        const c = this.threadManager.containers.get(tid);
-        if (c && this.chatView) {
-          c.insertLine(this.chatView, "", this.shiftAllContainers);
+      targets = mentioned;
+    } else {
+      // No mentions — default to last responder or route
+      let match: string | null = null;
+      if (thread.entries.length > 0) {
+        for (let i = thread.entries.length - 1; i >= 0; i--) {
+          if (
+            thread.entries[i].type === "agent" &&
+            thread.entries[i].teammate
+          ) {
+            match = thread.entries[i].teammate!;
+            break;
+          }
         }
-      } else if (replyDisplayText) {
-        this.threadManager.renderThreadReply(tid, replyDisplayText, mentioned);
       }
-      // Now queue entries and render placeholders (container exists)
-      for (const teammate of mentioned) {
-        const entry = {
-          id: this.makeQueueEntryId(),
-          type: "agent",
-          teammate,
-          task: input,
-          threadId: tid,
-        } as const;
-        const state = this.isAgentBusy(teammate) ? "queued" : "working";
-        this.taskQueue.push(entry);
-        thread.pendingTasks.add(entry.id);
-        this.threadManager.renderTaskPlaceholder(
-          tid,
-          entry.id,
-          teammate,
-          state,
-        );
-      }
-      const mc = this.threadManager.containers.get(tid);
-      if (mc && this.chatView) mc.hideThreadActions(this.chatView);
-      this.refreshView();
-      this.kickDrain();
-      return;
+      if (!match && this.lastResult) match = this.lastResult.teammate;
+      if (!match) match = this.orchestrator.route(input) ?? this.selfName;
+      targets = [match];
     }
 
-    // No mentions — if in a focused thread, default to that thread's last responder
-    let match: string | null = null;
-    if (threadId != null && thread.entries.length > 0) {
-      // Find the last agent entry in this thread for default routing
-      for (let i = thread.entries.length - 1; i >= 0; i--) {
-        if (thread.entries[i].type === "agent" && thread.entries[i].teammate) {
-          match = thread.entries[i].teammate!;
-          break;
-        }
-      }
-    }
-    if (!match && this.lastResult) {
-      match = this.lastResult.teammate;
-    }
-    if (!match) {
-      match = this.orchestrator.route(input) ?? this.selfName;
-    }
-    // Render dispatch line (part of user message) + blank line + working placeholder
-    if (threadId == null) {
-      this.threadManager.renderThreadHeader(thread, [match]);
-      const c = this.threadManager.containers.get(tid);
-      if (c && this.chatView) {
-        c.insertLine(this.chatView, "", this.shiftAllContainers);
-      }
-    } else if (replyDisplayText) {
-      this.threadManager.renderThreadReply(tid, replyDisplayText, [match]);
-    }
+    // Render dispatch header + placeholders in the thread's feed
+    this.threadManager.renderThreadHeader(thread, targets);
+    const adapter = this.threadManager.getAdapter(tid);
     const dc = this.threadManager.containers.get(tid);
-    if (dc && this.chatView) dc.hideThreadActions(this.chatView);
-    const entry = {
-      id: this.makeQueueEntryId(),
-      type: "agent",
-      teammate: match,
-      task: input,
-      threadId: tid,
-    } as const;
-    const state = this.isAgentBusy(match) ? "queued" : "working";
-    this.threadManager.renderTaskPlaceholder(tid, entry.id, match, state);
+    if (dc && adapter) {
+      const shift = this.threadManager.getShiftCallback(tid);
+      dc.insertLine(adapter, "", shift);
+      dc.hideThreadActions(adapter);
+    }
+    for (const teammate of targets) {
+      const entry = {
+        id: this.makeQueueEntryId(),
+        type: "agent",
+        teammate,
+        task: input,
+        threadId: tid,
+      } as const;
+      const state = this.isSlotBusy(tid, teammate) ? "queued" : "working";
+      this.taskQueue.push(entry);
+      thread.pendingTasks.add(entry.id);
+      this.threadManager.renderTaskPlaceholder(tid, entry.id, teammate, state);
+    }
     this.refreshView();
-    this.taskQueue.push(entry);
-    thread.pendingTasks.add(entry.id);
     this.kickDrain();
   }
 
@@ -463,17 +454,28 @@ class TeammatesREPL {
       }
     }
 
-    // Find agents that have user tasks but no active drain
-    const agentsWithWork = new Set<string>();
+    // Find slots that have user tasks but no active drain.
+    // A slot is a (threadId, teammate) pair — same teammate in different
+    // tabs runs concurrently.
+    const slotsWithWork = new Map<
+      string,
+      { threadId: number | undefined; teammate: string }
+    >();
     for (const entry of this.taskQueue) {
-      agentsWithWork.add(entry.teammate);
-    }
-    for (const agent of agentsWithWork) {
-      if (!this.agentDrainLocks.has(agent)) {
-        const lock = this.drainAgentQueue(agent).finally(() => {
-          this.agentDrainLocks.delete(agent);
+      const slot = this.slotKey(entry.threadId, entry.teammate);
+      if (!slotsWithWork.has(slot)) {
+        slotsWithWork.set(slot, {
+          threadId: entry.threadId,
+          teammate: entry.teammate,
         });
-        this.agentDrainLocks.set(agent, lock);
+      }
+    }
+    for (const [slot, { threadId, teammate }] of slotsWithWork) {
+      if (!this.agentDrainLocks.has(slot)) {
+        const lock = this.drainSlot(threadId, teammate).finally(() => {
+          this.agentDrainLocks.delete(slot);
+        });
+        this.agentDrainLocks.set(slot, lock);
       }
     }
   }
@@ -593,8 +595,11 @@ class TeammatesREPL {
       await this.onboardFlow.runUserSetup(teammatesDir);
     }
 
-    // Team onboarding if .teammates/ was missing
-    if (isNewProject) {
+    // Team onboarding if no agentic teammates configured (and not explicitly solo)
+    const hasTeammates =
+      await this.onboardFlow.hasAgenticTeammates(teammatesDir);
+    const isSolo = this.onboardFlow.readSoloSetting(teammatesDir);
+    if (isNewProject || (!hasTeammates && !isSolo)) {
       const cont = await this.onboardFlow.promptTeamOnboarding(
         adapter,
         teammatesDir,
@@ -611,6 +616,9 @@ class TeammatesREPL {
       onEvent: (e) => this.handleEvent(e),
     });
     await this.orchestrator.init();
+
+    // Pre-load bundled personas for wordwheel completion
+    this.cachedPersonas = await loadPersonas();
 
     // Shared closure ref — used by extracted modules below
     const repl = this;
@@ -763,7 +771,8 @@ class TeammatesREPL {
       makeQueueEntryId: () => this.makeQueueEntryId(),
       kickDrain: () => this.kickDrain(),
       isSystemTask: (entry) => this.isSystemTask(entry),
-      isAgentBusy: (teammate) => this.isAgentBusy(teammate),
+      isSlotBusy: (threadId, teammate) => this.isSlotBusy(threadId, teammate),
+      slotKey: (threadId, teammate) => this.slotKey(threadId, teammate),
       getThread: (id) => this.threadManager.getThread(id),
       get threads() {
         return repl.threadManager.threads;
@@ -778,8 +787,8 @@ class TeammatesREPL {
         this.threadManager.appendThreadEntry(tid, entry),
       renderTaskPlaceholder: (tid, pid, tm, s) =>
         this.threadManager.renderTaskPlaceholder(tid, pid, tm, s),
-      cleanupActivityLines: (tm) =>
-        this.activityManager.cleanupActivityLines(tm),
+      cleanupActivityLines: (taskId) =>
+        this.activityManager.cleanupActivityLines(taskId),
       runOnboardingAgent: (adapter, dir) =>
         this.onboardFlow.runOnboardingAgent(
           adapter,
@@ -956,11 +965,43 @@ class TeammatesREPL {
     });
     this.banner = bannerWidget;
 
-    // ── Create ChatView and Consolonia App ────────────────────────────
+    // ── Create ThreadBar ───────────────────────────────────────────────
 
     const t = theme();
+    this.threadBar = new ThreadBar({
+      focused: { fg: t.text, bold: true },
+      normal: { fg: t.textMuted },
+      unread: { fg: t.accent },
+      working: { fg: t.info },
+      close: { fg: t.textDim },
+      add: { fg: t.textDim },
+      separator: { fg: t.textDim },
+      hover: { fg: t.accent },
+    });
+    this.threadBar.on("switch", (threadId: number) => {
+      this.unreadThreads.delete(threadId);
+      this.threadManager.switchToThread(threadId);
+      this.refreshThreadBar();
+      this.refreshView();
+    });
+    this.threadBar.on("close", (threadId: number) => {
+      this.unreadThreads.delete(threadId);
+      this.threadManager.closeThread(threadId);
+      this.refreshThreadBar();
+      this.refreshView();
+    });
+    this.threadBar.on("new", () => {
+      // Load /tab into the input box so the user can add a description
+      if (this.chatView) {
+        this.chatView.inputValue = "/tab ";
+      }
+    });
+
+    // ── Create ChatView and Consolonia App ────────────────────────────
+
     this.chatView = new ChatView({
       bannerWidget,
+      dockedBar: this.threadBar,
       prompt: "> ",
       promptStyle: { fg: t.prompt },
       inputStyle: { fg: t.textMuted },
@@ -1169,12 +1210,6 @@ class TeammatesREPL {
       if (id.startsWith("thread-toggle-")) {
         const tid = parseInt(id.slice("thread-toggle-".length), 10);
         this.threadManager.toggleThreadCollapse(tid);
-      } else if (id.startsWith("thread-reply-")) {
-        const tid = parseInt(id.slice("thread-reply-".length), 10);
-        this.threadManager.focusedThreadId = tid;
-        this.chatView.inputValue = `#${tid} `;
-        this.threadManager.updateFooterHint();
-        this.refreshView();
       } else if (id.startsWith("thread-copy-")) {
         const tid = parseInt(id.slice("thread-copy-".length), 10);
         this.commandManager.doCopy(
@@ -1214,9 +1249,12 @@ class TeammatesREPL {
         const ctx = this._replyContexts.get(id);
         if (ctx && this.chatView) {
           if (ctx.threadId != null) {
-            // Thread-aware reply: set focus (auto-focus routes to this thread)
-            this.threadManager.focusedThreadId = ctx.threadId;
-            this.threadManager.updateFooterHint();
+            // Tab model: switch to the thread
+            if (this.threadManager.focusedThreadId !== ctx.threadId) {
+              this.unreadThreads.delete(ctx.threadId);
+              this.threadManager.switchToThread(ctx.threadId);
+              this.refreshThreadBar();
+            }
           } else {
             this.chatView.inputValue = `@${ctx.teammate} [quoted reply] `;
             this._pendingQuotedReply = ctx.message;
@@ -1242,7 +1280,14 @@ class TeammatesREPL {
     });
 
     this.chatView.on("file", (filePath: string) => {
-      const quoted = JSON.stringify(filePath);
+      // Always resolve to an absolute path before opening. Relative paths
+      // (including Unix-style `/foo` on Windows, which is drive-relative)
+      // break `start`/`open`/`xdg-open` unless fully qualified.
+      const hasDriveLetter = /^[A-Za-z]:[\\/]/.test(filePath);
+      const absPath = hasDriveLetter
+        ? resolvePath(filePath)
+        : resolvePath(process.cwd(), filePath.replace(/^[\\/]+/, ""));
+      const quoted = JSON.stringify(absPath);
       const cmd =
         process.platform === "darwin"
           ? `open ${quoted}`
@@ -1291,7 +1336,9 @@ class TeammatesREPL {
       get containers() {
         return containersFn();
       },
-      shiftAllContainers: (at, delta) => this.shiftAllContainers(at, delta),
+      getAdapter: (threadId) => this.threadManager.getAdapter(threadId),
+      getShiftCallback: (threadId) =>
+        this.threadManager.getShiftCallback(threadId),
       makeSpan: (...segs) => this.makeSpan(...segs),
       refreshView: () => this.refreshView(),
       feedLine: (text?) => this.feedLine(text),
@@ -1301,6 +1348,8 @@ class TeammatesREPL {
     // Closures to bridge private accessors into the view interfaces
     const selfNameFn = () => this.selfName;
     const adapterNameFn = () => this.adapterName;
+    const userBgRef = () => this.feedRenderer.userBg;
+    const defaultFooterRightRef = () => this.defaultFooterRight;
 
     // Initialize thread manager now that chatView exists
     this.threadManager = new ThreadManager(
@@ -1330,8 +1379,44 @@ class TeammatesREPL {
       this._copyContexts,
       this.handoffManager.pendingHandoffs,
     );
-    const userBgRef = () => this.feedRenderer.userBg;
-    const defaultFooterRightRef = () => this.defaultFooterRight;
+
+    // Wire ThreadManager callbacks for tab bar updates
+    this.threadManager.onTabsChanged = () => this.refreshThreadBar();
+    this.threadManager.onUnread = (threadId) => {
+      this.unreadThreads.add(threadId);
+      this.refreshThreadBar();
+    };
+
+    // Create Task thread so the tab bar always shows at least one tab
+    if (this.threadManager.threads.size === 0) {
+      const defaultThread = this.threadManager.createThread("Task");
+      this.threadManager.appendThreadEntry(defaultThread.id, {
+        type: "user",
+        content: "",
+        timestamp: Date.now(),
+      });
+      this.refreshThreadBar();
+    }
+
+    // Wrap the ThreadManager's shift callback to also shift activity indices.
+    // Without this, ThreadManager insertions (results, thread actions) would
+    // leave activity indices stale, causing cleanup to hide wrong lines.
+    const baseShift = this.threadManager.shiftAllContainers;
+    this.threadManager.shiftAllContainers = (
+      atIndex: number,
+      delta: number,
+    ) => {
+      baseShift(atIndex, delta);
+      for (const [, indices] of this.activityManager.lineIndices) {
+        for (let i = 0; i < indices.length; i++) {
+          if (indices[i] >= atIndex) indices[i] += delta;
+        }
+      }
+      for (const [tm, idx] of this.activityManager.blankIdx) {
+        if (idx >= atIndex) this.activityManager.blankIdx.set(tm, idx + delta);
+      }
+    };
+
     const userAliasFn = () => this.userAlias;
     const teammateDirFn = () => this.teammatesDir;
     const threadsFn = () => this.threadManager.threads;
@@ -1343,6 +1428,26 @@ class TeammatesREPL {
       listTeammates: () => this.orchestrator.listTeammates(),
       getTeammateRole: (name) =>
         this.orchestrator.getRegistry().get(name)?.role ?? "",
+      getAvailablePersonas: () => {
+        const installed = new Set(this.orchestrator.listTeammates());
+        return this.cachedPersonas
+          .filter((p) => !installed.has(p.alias))
+          .map((p) => ({
+            alias: p.alias,
+            description: `${p.persona} — ${p.description}`,
+          }));
+      },
+      getRemovableTeammates: () => {
+        const registry = this.orchestrator.getRegistry();
+        return this.orchestrator.listTeammates().filter((name) => {
+          const config = registry.get(name);
+          if (!config) return false;
+          if (config.type === "human") return false;
+          if (name === this.adapterName) return false;
+          if (name === this.selfName) return false;
+          return true;
+        });
+      },
       get selfName() {
         return selfNameFn();
       },
@@ -1610,7 +1715,20 @@ class TeammatesREPL {
     }
 
     // Everything else gets queued.
-    // Parse #id prefix to target an existing thread
+
+    // Parse #id — bare #id switches focus, #id message dispatches in that thread
+    const bareThreadMatch = input.match(/^#(\d+)\s*$/);
+    if (bareThreadMatch) {
+      const parsedId = parseInt(bareThreadMatch[1], 10);
+      if (this.threadManager.getThread(parsedId)) {
+        this.unreadThreads.delete(parsedId);
+        this.threadManager.switchToThread(parsedId);
+        this.refreshThreadBar();
+        this.refreshView();
+        return;
+      }
+    }
+
     let targetThreadId: number | undefined;
     let taskInput = input;
     const threadMatch = input.match(/^#(\d+)\s+([\s\S]+)/);
@@ -1620,20 +1738,13 @@ class TeammatesREPL {
         targetThreadId = parsedId;
         taskInput = threadMatch[2];
       }
-      // If thread doesn't exist, fall through — treat as normal input
     }
 
-    // Auto-focus: if no explicit #id and no @mentions, continue in focused thread.
-    // @mentions without #id always start a new thread (breaks focus).
-    if (
-      targetThreadId == null &&
-      preMentions.length === 0 &&
-      !input.match(/^@everyone\s/i)
-    ) {
-      // Use explicit focus, or fall back to the last thread in the feed
+    // In the tab model, @mentions dispatch within the current thread.
+    // Everything goes to the focused thread (or creates thread #1 if none).
+    if (targetThreadId == null) {
       let focusId = this.threadManager.focusedThreadId;
       if (focusId == null && this.threadManager.threads.size > 0) {
-        // Pick the most recently focused thread
         let best: TaskThread | null = null;
         for (const t of this.threadManager.threads.values()) {
           if (!best || (t.focusedAt ?? 0) > (best.focusedAt ?? 0)) best = t;
@@ -1647,17 +1758,8 @@ class TeammatesREPL {
 
     // Pass pre-resolved mentions so @mentions inside expanded paste text are ignored.
     this.conversation.history.push({ role: this.selfName, text: taskInput });
-    // For threaded replies, render user message inside the thread container
-    // instead of at the feed end — keeps the reply visually connected to the thread.
-    if (targetThreadId == null) {
-      this.feedRenderer.printUserMessage(input);
-    }
-    this.queueTask(
-      taskInput,
-      preMentions,
-      targetThreadId,
-      targetThreadId != null ? input : undefined,
-    );
+    this.queueTask(taskInput, preMentions, targetThreadId);
+    this.refreshThreadBar();
     this.refreshView();
   }
 
@@ -1688,30 +1790,14 @@ class TeammatesREPL {
     if (this.silentAgents.has(evtAgent)) return;
 
     switch (event.type) {
-      case "task_assigned": {
-        // System tasks (compaction, summarization, wisdom distillation) are
-        // invisible — don't track them in the progress bar.
-        if (event.assignment.system) break;
-
-        this.statusTracker.startTask(
-          event.assignment.teammate,
-          event.assignment.teammate,
-          event.assignment.task,
-        );
+      case "task_assigned":
+      case "task_completed":
+        // StatusTracker lifecycle is driven directly by the drain loop now,
+        // keyed by queue entry ID so two concurrent tasks for the same
+        // teammate don't collide. Orchestrator events are informational.
         break;
-      }
-
-      case "task_completed": {
-        // System task completions — don't touch tasks (was never added)
-        if (event.result.system) break;
-
-        // Remove from active tasks. StatusTracker auto-stops when empty.
-        this.statusTracker.stopTask(event.result.teammate);
-        break;
-      }
 
       case "error": {
-        this.statusTracker.stopTask(event.teammate);
         if (!this.chatView) this.input.deactivateAndErase();
         const displayErr =
           event.teammate === this.selfName ? this.adapterName : event.teammate;
@@ -1723,17 +1809,26 @@ class TeammatesREPL {
   }
 
   /** Cancel a running task or remove a queued task from the queue. */
-  /** Drain user tasks for a single agent - runs in parallel with other agents.
+  /** Drain user tasks for a single (thread, teammate) slot — runs in parallel
+   *  with other slots. Same teammate in different tabs runs concurrently.
    *  System tasks are handled separately by runSystemTask(). */
-  private async drainAgentQueue(agent: string): Promise<void> {
+  private async drainSlot(
+    threadId: number | undefined,
+    teammate: string,
+  ): Promise<void> {
+    const slot = this.slotKey(threadId, teammate);
     while (true) {
       const idx = this.taskQueue.findIndex(
-        (e) => e.teammate === agent && !this.isSystemTask(e),
+        (e) =>
+          e.teammate === teammate &&
+          e.threadId === threadId &&
+          !this.isSystemTask(e),
       );
       if (idx < 0) break;
 
       const entry = this.taskQueue.splice(idx, 1)[0];
-      this.agentActive.set(agent, entry);
+      this.agentActive.set(slot, entry);
+      this.statusTracker.startTask(entry.id, entry.teammate, entry.task);
       if (entry.threadId != null) {
         this.activityManager.updatePlaceholderVerb(
           entry.id,
@@ -1773,15 +1868,16 @@ class TeammatesREPL {
               snapshot,
             );
           }
-          // Set up activity tracking for this task
-          const teammate = entry.teammate;
+          // Set up activity tracking for this task (keyed by task ID so
+          // two concurrent tasks for the same teammate don't collide).
+          const taskId = entry.id;
           const tid = entry.threadId;
-          this.activityManager.initForTask(teammate, tid ?? undefined);
+          this.activityManager.initForTask(taskId, tid ?? undefined);
 
           // Create an AbortController for this task — cancel paths call abort()
           // to signal the adapter to kill/disconnect the running agent.
           const ac = new AbortController();
-          this.abortControllers.set(agent, ac);
+          this.abortControllers.set(slot, ac);
 
           let result = await this.orchestrator.assign({
             teammate: entry.teammate,
@@ -1789,17 +1885,18 @@ class TeammatesREPL {
             extraContext: extraContext || undefined,
             skipMemoryUpdates: entry.type === "btw",
             onActivity: (events) =>
-              this.activityManager.handleActivityEvents(teammate, events),
+              this.activityManager.handleActivityEvents(taskId, events),
             signal: ac.signal,
           });
 
-          this.abortControllers.delete(agent);
+          this.abortControllers.delete(slot);
 
           // If the task was canceled while running (abort resolved the
-          // promise but cancelTeammateInThread already removed us from
-          // agentActive), skip result display and move on.
-          if (!this.agentActive.has(agent)) {
-            this.activityManager.cleanupActivityLines(entry.teammate);
+          // promise but the cancel path already removed us from agentActive),
+          // skip result display and move on.
+          if (!this.agentActive.has(slot)) {
+            this.activityManager.cleanupActivityLines(taskId);
+            this.statusTracker.stopTask(entry.id);
             continue;
           }
 
@@ -1849,7 +1946,7 @@ class TeammatesREPL {
           }
 
           // Hide and clean up activity lines before displaying the result
-          this.activityManager.cleanupActivityLines(entry.teammate);
+          this.activityManager.cleanupActivityLines(taskId);
 
           // Display the (possibly retried) result to the user
           this.feedRenderer.displayTaskResult(
@@ -1937,14 +2034,16 @@ class TeammatesREPL {
         // Write error debug entry to session file
         this.writeDebugEntry(entry.teammate, entry.task, null, startTime, err);
         // Handle spawn failures, network errors, etc. gracefully
-        this.statusTracker.stopTask(agent);
+        this.activityManager.cleanupActivityLines(entry.id);
         const msg = err?.message ?? String(err);
-        const displayAgent = agent === this.selfName ? this.adapterName : agent;
+        const displayAgent =
+          entry.teammate === this.selfName ? this.adapterName : entry.teammate;
         this.feedLine(tp.error(`  ✖  @${displayAgent}: ${msg}`));
         this.refreshView();
       }
 
-      this.agentActive.delete(agent);
+      this.statusTracker.stopTask(entry.id);
+      this.agentActive.delete(slot);
     }
   }
 

@@ -318,7 +318,8 @@ describe("buildConversationContext", () => {
       "Previous topics discussed",
       1000,
     );
-    expect(result).toContain("## Conversation History");
+    // Section header is owned by buildUserMessage, not this function.
+    expect(result).not.toContain("## Conversation History");
     expect(result).toContain("### Previous Conversation Summary");
     expect(result).toContain("Previous topics discussed");
   });

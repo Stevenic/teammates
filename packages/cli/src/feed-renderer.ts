@@ -284,7 +284,11 @@ export class FeedRenderer {
       threadId != null
         ? this.deps.threadManager.containers.get(threadId)
         : undefined;
-    if (container && this.deps.chatView) {
+    const adapter =
+      threadId != null
+        ? this.deps.threadManager.getAdapter(threadId)
+        : undefined;
+    if (container && adapter) {
       this.deps.threadManager.displayThreadedResult(
         result,
         cleaned,

@@ -29,12 +29,6 @@ export {
   syncRecallIndex,
   USER_MESSAGE_BUDGET_TOKENS,
 } from "./adapter.js";
-export {
-  generateSystemPrompt,
-  systemPromptPath,
-  writeAllSystemPrompts,
-  writeSystemPrompt,
-} from "./system-prompt.js";
 export { ClaudeAdapter, type ClaudeAdapterOptions } from "./adapters/claude.js";
 export {
   type AgentPreset,
@@ -64,6 +58,7 @@ export {
 } from "./compact.js";
 export type { ConversationManagerDeps } from "./conversation.js";
 export { ConversationManager } from "./conversation.js";
+export { FeedAdapter } from "./feed-adapter.js";
 export type { FeedRendererDeps } from "./feed-renderer.js";
 export { FeedRenderer } from "./feed-renderer.js";
 export { HandoffManager } from "./handoff-manager.js";
@@ -85,13 +80,23 @@ export {
   type TeammateStatus,
 } from "./orchestrator.js";
 export type { Persona } from "./personas.js";
-export { loadPersonas, scaffoldFromPersona, updateFromPersona } from "./personas.js";
+export {
+  loadPersonas,
+  scaffoldFromPersona,
+  updateFromPersona,
+} from "./personas.js";
 export { Registry } from "./registry.js";
 export { RetroManager } from "./retro-manager.js";
 export { detectServices } from "./service-config.js";
 export type { StartupManagerDeps } from "./startup-manager.js";
 export { StartupManager } from "./startup-manager.js";
 export { StatusTracker } from "./status-tracker.js";
+export {
+  generateSystemPrompt,
+  systemPromptPath,
+  writeAllSystemPrompts,
+  writeSystemPrompt,
+} from "./system-prompt.js";
 export { tp } from "./theme.js";
 export type {
   ShiftCallback,

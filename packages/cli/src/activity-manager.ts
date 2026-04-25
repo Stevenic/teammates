@@ -10,9 +10,10 @@ import {
   collapseActivityEvents,
   formatActivityTime,
 } from "./activity-watcher.js";
+import type { FeedAdapter } from "./feed-adapter.js";
 import type { StatusTracker } from "./status-tracker.js";
 import { theme } from "./theme.js";
-import type { ThreadContainer } from "./thread-container.js";
+import type { ShiftCallback, ThreadContainer } from "./thread-container.js";
 import type { ActivityEvent, QueueEntry } from "./types.js";
 
 // ─── Dependency interface ────────────────────────────────────────────
@@ -24,7 +25,8 @@ export interface ActivityManagerDeps {
   readonly statusTracker: StatusTracker;
   agentActive: Map<string, QueueEntry>;
   containers: Map<number, ThreadContainer>;
-  shiftAllContainers(atIndex: number, delta: number): void;
+  getAdapter(threadId: number): FeedAdapter | undefined;
+  getShiftCallback(threadId: number): ShiftCallback;
   makeSpan(...segs: { text: string; style: { fg?: Color } }[]): StyledSpan;
   refreshView(): void;
   feedLine(text?: string | StyledSpan): void;
@@ -33,15 +35,21 @@ export interface ActivityManagerDeps {
 // ─── ActivityManager ─────────────────────────────────────────────────
 
 export class ActivityManager {
-  /** Buffered activity events per teammate (cleared when task completes). */
+  /**
+   * All activity state is keyed by queue entry ID (taskId) — NOT teammate —
+   * because per-tab queues allow the same teammate to run concurrent tasks
+   * in different tabs. Keying by teammate would cause buffers, line indices,
+   * and "shown" state to collide across tabs.
+   */
+  /** Buffered activity events per task. */
   readonly buffers: Map<string, ActivityEvent[]> = new Map();
-  /** Whether the activity feed is toggled on for a given teammate. */
+  /** Whether the activity feed is toggled on for a given task. */
   readonly shown: Map<string, boolean> = new Map();
-  /** Feed line indices for activity lines per teammate (for hiding on toggle off). */
+  /** Feed line indices for activity lines per task. */
   readonly lineIndices: Map<string, number[]> = new Map();
-  /** Thread IDs associated with activity per teammate. */
+  /** Thread ID associated with a given task's activity (for container lookup). */
   readonly threadIds: Map<string, number> = new Map();
-  /** Trailing blank line index per teammate (inserted after activity block). */
+  /** Trailing blank line index per task (inserted after the activity block). */
   readonly blankIdx: Map<string, number> = new Map();
 
   private readonly deps: ActivityManagerDeps;
@@ -51,36 +59,38 @@ export class ActivityManager {
   }
 
   /** Handle incoming activity events from an agent's debug log watcher. */
-  handleActivityEvents(teammate: string, events: ActivityEvent[]): void {
-    const buf = this.buffers.get(teammate);
+  handleActivityEvents(taskId: string, events: ActivityEvent[]): void {
+    const buf = this.buffers.get(taskId);
     if (!buf) return;
     buf.push(...events);
 
     // If activity view is toggled on, re-render the collapsed view
-    if (this.shown.get(teammate)) {
-      this.rerenderActivityLines(teammate);
+    if (this.shown.get(taskId)) {
+      this.rerenderActivityLines(taskId);
       this.deps.refreshView();
     }
   }
 
   /** Hide existing activity lines and re-insert the collapsed view. */
-  rerenderActivityLines(teammate: string): void {
-    const chatView = this.deps.chatView;
+  rerenderActivityLines(taskId: string): void {
+    const threadId = this.threadIds.get(taskId);
+    const adapter =
+      threadId != null ? this.deps.getAdapter(threadId) : undefined;
     // Hide existing activity lines (except the header)
-    const indices = this.lineIndices.get(teammate) ?? [];
+    const indices = this.lineIndices.get(taskId) ?? [];
     for (let i = 1; i < indices.length; i++) {
-      chatView?.setFeedLineHidden(indices[i], true);
+      adapter?.setFeedLineHidden(indices[i], true);
     }
     // Keep only the header index; we'll insert fresh collapsed lines after it
     const headerIdx = indices.length > 0 ? indices[0] : undefined;
     if (headerIdx != null) {
-      this.lineIndices.set(teammate, [headerIdx]);
+      this.lineIndices.set(taskId, [headerIdx]);
     }
 
-    const buf = this.buffers.get(teammate) ?? [];
+    const buf = this.buffers.get(taskId) ?? [];
     const collapsed = collapseActivityEvents(buf);
     if (collapsed.length > 0) {
-      this.insertActivityLines(teammate, collapsed);
+      this.insertActivityLines(taskId, collapsed);
     }
   }
 
@@ -93,16 +103,19 @@ export class ActivityManager {
     const teammate = activeEntry.teammate;
     const threadId = activeEntry.threadId;
     if (threadId == null) return;
-    const isShown = this.shown.get(teammate) ?? false;
+    const adapter = this.deps.getAdapter(threadId);
+    if (!adapter) return;
+    const taskId = queueId;
+    const isShown = this.shown.get(taskId) ?? false;
     if (isShown) {
       // Hide all activity lines + trailing blank
-      const indices = this.lineIndices.get(teammate) ?? [];
+      const indices = this.lineIndices.get(taskId) ?? [];
       for (const idx of indices) {
-        this.deps.chatView?.setFeedLineHidden(idx, true);
+        adapter.setFeedLineHidden(idx, true);
       }
-      const bi = this.blankIdx.get(teammate);
-      if (bi != null) this.deps.chatView?.setFeedLineHidden(bi, true);
-      this.shown.set(teammate, false);
+      const bi = this.blankIdx.get(taskId);
+      if (bi != null) adapter.setFeedLineHidden(bi, true);
+      this.shown.set(taskId, false);
       this.updatePlaceholderVerb(
         queueId,
         teammate,
@@ -111,24 +124,22 @@ export class ActivityManager {
       );
     } else {
       // Show existing activity lines (or insert them if first time)
-      const indices = this.lineIndices.get(teammate) ?? [];
+      const indices = this.lineIndices.get(taskId) ?? [];
       if (indices.length > 0) {
-        // Already inserted — just unhide
         for (const idx of indices) {
-          this.deps.chatView?.setFeedLineHidden(idx, false);
+          adapter.setFeedLineHidden(idx, false);
         }
-        const bi = this.blankIdx.get(teammate);
-        if (bi != null) this.deps.chatView?.setFeedLineHidden(bi, false);
+        const bi = this.blankIdx.get(taskId);
+        if (bi != null) adapter.setFeedLineHidden(bi, false);
       } else {
-        // First time — insert "Activity" header + blank line, then collapsed events
-        this.insertActivityHeader(teammate);
-        const buf = this.buffers.get(teammate) ?? [];
+        this.insertActivityHeader(taskId);
+        const buf = this.buffers.get(taskId) ?? [];
         const collapsed = collapseActivityEvents(buf);
         if (collapsed.length > 0) {
-          this.insertActivityLines(teammate, collapsed);
+          this.insertActivityLines(taskId, collapsed);
         }
       }
-      this.shown.set(teammate, true);
+      this.shown.set(taskId, true);
       this.updatePlaceholderVerb(
         queueId,
         teammate,
@@ -140,19 +151,22 @@ export class ActivityManager {
   }
 
   /** Insert the "Activity" header line below the placeholder (first time showing). */
-  insertActivityHeader(teammate: string): void {
-    const threadId = this.threadIds.get(teammate);
+  insertActivityHeader(taskId: string): void {
+    const threadId = this.threadIds.get(taskId);
     if (threadId == null) return;
     const container = this.deps.containers.get(threadId);
-    const chatView = this.deps.chatView;
-    if (!container || !chatView) return;
-    const activeEntry = this.deps.agentActive.get(teammate);
+    const adapter = this.deps.getAdapter(threadId);
+    if (!container || !adapter) return;
+    const activeEntry = [...this.deps.agentActive.values()].find(
+      (e) => e.id === taskId,
+    );
     if (!activeEntry) return;
 
     const t = theme();
-    const indices = this.lineIndices.get(teammate) ?? [];
+    const indices = this.lineIndices.get(taskId) ?? [];
     const placeholderIdx = container.getPlaceholderIndex(activeEntry.id);
     if (placeholderIdx == null) return;
+    const shift = this.deps.getShiftCallback(threadId);
 
     // Insert "Activity" header in accent color
     const insertAt = placeholderIdx + 1 + indices.length;
@@ -160,35 +174,38 @@ export class ActivityManager {
       text: "    Activity",
       style: { fg: t.accent },
     });
-    chatView.insertStyledToFeed(insertAt, headerLine);
-    this.deps.shiftAllContainers(insertAt, 1);
+    adapter.insertStyledToFeed(insertAt, headerLine);
+    shift(insertAt, 1);
     indices.push(insertAt);
-    this.lineIndices.set(teammate, indices);
+    this.lineIndices.set(taskId, indices);
 
     // Insert trailing blank line after activity block
     const blankAt = insertAt + 1;
-    chatView.insertStyledToFeed(
+    adapter.insertStyledToFeed(
       blankAt,
       this.deps.makeSpan({ text: "", style: {} }),
     );
-    this.deps.shiftAllContainers(blankAt, 1);
-    this.blankIdx.set(teammate, blankAt);
+    shift(blankAt, 1);
+    this.blankIdx.set(taskId, blankAt);
   }
 
   /** Insert activity event lines into the thread container below the placeholder. */
-  insertActivityLines(teammate: string, events: ActivityEvent[]): void {
-    const threadId = this.threadIds.get(teammate);
+  insertActivityLines(taskId: string, events: ActivityEvent[]): void {
+    const threadId = this.threadIds.get(taskId);
     if (threadId == null) return;
     const container = this.deps.containers.get(threadId);
-    const chatView = this.deps.chatView;
-    if (!container || !chatView) return;
-    const activeEntry = this.deps.agentActive.get(teammate);
+    const adapter = this.deps.getAdapter(threadId);
+    if (!container || !adapter) return;
+    const activeEntry = [...this.deps.agentActive.values()].find(
+      (e) => e.id === taskId,
+    );
     if (!activeEntry) return;
 
     const t = theme();
-    const indices = this.lineIndices.get(teammate) ?? [];
+    const indices = this.lineIndices.get(taskId) ?? [];
     const placeholderIdx = container.getPlaceholderIndex(activeEntry.id);
     if (placeholderIdx == null) return;
+    const shift = this.deps.getShiftCallback(threadId);
 
     for (const ev of events) {
       const time = formatActivityTime(ev.elapsedMs);
@@ -216,31 +233,33 @@ export class ActivityManager {
         );
       }
 
-      chatView.insertStyledToFeed(insertAt, line);
-      this.deps.shiftAllContainers(insertAt, 1);
+      adapter.insertStyledToFeed(insertAt, line);
+      shift(insertAt, 1);
       indices.push(insertAt);
     }
-    this.lineIndices.set(teammate, indices);
+    this.lineIndices.set(taskId, indices);
   }
 
-  /** Hide all activity lines and clean up activity state for a teammate. */
-  cleanupActivityLines(teammate: string): void {
-    const chatView = this.deps.chatView;
-    const indices = this.lineIndices.get(teammate) ?? [];
-    if (indices.length > 0 && chatView) {
+  /** Hide all activity lines and clean up activity state for a task. */
+  cleanupActivityLines(taskId: string): void {
+    const threadId = this.threadIds.get(taskId);
+    const adapter =
+      threadId != null ? this.deps.getAdapter(threadId) : undefined;
+    const indices = this.lineIndices.get(taskId) ?? [];
+    if (indices.length > 0 && adapter) {
       for (const idx of indices) {
-        chatView.setFeedLineHidden(idx, true);
+        adapter.setFeedLineHidden(idx, true);
       }
     }
-    const bi = this.blankIdx.get(teammate);
-    if (bi != null && chatView) {
-      chatView.setFeedLineHidden(bi, true);
+    const bi = this.blankIdx.get(taskId);
+    if (bi != null && adapter) {
+      adapter.setFeedLineHidden(bi, true);
     }
-    this.buffers.delete(teammate);
-    this.shown.delete(teammate);
-    this.lineIndices.delete(teammate);
-    this.threadIds.delete(teammate);
-    this.blankIdx.delete(teammate);
+    this.buffers.delete(taskId);
+    this.shown.delete(taskId);
+    this.lineIndices.delete(taskId);
+    this.threadIds.delete(taskId);
+    this.blankIdx.delete(taskId);
   }
 
   /** Update the [show activity]/[hide activity] verb text on a working placeholder. */
@@ -251,8 +270,8 @@ export class ActivityManager {
     label: string,
   ): void {
     const container = this.deps.containers.get(threadId);
-    const chatView = this.deps.chatView;
-    if (!container || !chatView) return;
+    const adapter = this.deps.getAdapter(threadId);
+    if (!container || !adapter) return;
     const placeholderIdx = container.getPlaceholderIndex(queueId);
     if (placeholderIdx == null) return;
 
@@ -261,7 +280,7 @@ export class ActivityManager {
       teammate === this.deps.selfName ? this.deps.adapterName : teammate;
     const activityId = `activity-${queueId}`;
     const cancelId = `cancel-${queueId}`;
-    chatView.updateActionList(placeholderIdx, [
+    adapter.updateActionList(placeholderIdx, [
       {
         id: activityId,
         normalStyle: this.deps.makeSpan(
@@ -289,11 +308,12 @@ export class ActivityManager {
     ]);
   }
 
-  /** Initialize activity tracking state for a new task. */
-  initForTask(teammate: string, threadId?: number): void {
-    this.buffers.set(teammate, []);
-    this.shown.set(teammate, false);
-    this.lineIndices.set(teammate, []);
-    if (threadId != null) this.threadIds.set(teammate, threadId);
+  /** Initialize activity tracking state for a new task (keyed by task ID
+   *  so two concurrent tasks for the same teammate don't collide). */
+  initForTask(taskId: string, threadId?: number): void {
+    this.buffers.set(taskId, []);
+    this.shown.set(taskId, false);
+    this.lineIndices.set(taskId, []);
+    if (threadId != null) this.threadIds.set(taskId, threadId);
   }
 }

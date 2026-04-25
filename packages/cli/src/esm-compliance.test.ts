@@ -6,7 +6,7 @@
  * "require is not defined" at runtime.
  */
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -44,15 +44,14 @@ function collectSourceFiles(dir: string): string[] {
  * boundary or start-of-line (catches `= require(`, `const x = require(`).
  * We exclude lines that are clearly single-line comments.
  */
-function findRequireCalls(
-  content: string,
-): { line: number; text: string }[] {
+function findRequireCalls(content: string): { line: number; text: string }[] {
   const hits: { line: number; text: string }[] = [];
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     // Skip single-line comments and lines inside JSDoc/block comments
-    if (line.startsWith("//") || line.startsWith("*") || line.startsWith("/*")) continue;
+    if (line.startsWith("//") || line.startsWith("*") || line.startsWith("/*"))
+      continue;
     // Match require("...") or require('...') — actual CJS calls
     if (/\brequire\s*\(/.test(line)) {
       hits.push({ line: i + 1, text: line });
@@ -77,7 +76,8 @@ function findCjsGlobals(
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (line.startsWith("//") || line.startsWith("*") || line.startsWith("/*")) continue;
+    if (line.startsWith("//") || line.startsWith("*") || line.startsWith("/*"))
+      continue;
     for (const g of ["__dirname", "__filename"]) {
       if (new RegExp(`\\b${g}\\b`).test(line)) {
         hits.push({ line: i + 1, text: line, global: g });
@@ -101,12 +101,13 @@ describe("ESM compliance", () => {
       const content = readFileSync(file, "utf-8");
       const hits = findRequireCalls(content);
       for (const hit of hits) {
-        violations.push(
-          `${relative(ROOT, file)}:${hit.line} → ${hit.text}`,
-        );
+        violations.push(`${relative(ROOT, file)}:${hit.line} → ${hit.text}`);
       }
     }
-    expect(violations, `Found require() calls in ESM source files:\n${violations.join("\n")}`).toEqual([]);
+    expect(
+      violations,
+      `Found require() calls in ESM source files:\n${violations.join("\n")}`,
+    ).toEqual([]);
   });
 
   it("no source files use __dirname or __filename — use import.meta.url instead", () => {
@@ -120,7 +121,10 @@ describe("ESM compliance", () => {
         );
       }
     }
-    expect(violations, `Found CJS globals in ESM source files:\n${violations.join("\n")}`).toEqual([]);
+    expect(
+      violations,
+      `Found CJS globals in ESM source files:\n${violations.join("\n")}`,
+    ).toEqual([]);
   });
 
   it("all packages declare type: module", () => {
@@ -131,7 +135,10 @@ describe("ESM compliance", () => {
     ];
     for (const dir of pkgDirs) {
       const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf-8"));
-      expect(pkg.type, `${relative(ROOT, dir)}/package.json should have "type": "module"`).toBe("module");
+      expect(
+        pkg.type,
+        `${relative(ROOT, dir)}/package.json should have "type": "module"`,
+      ).toBe("module");
     }
   });
 });

@@ -257,9 +257,7 @@ describe("parseClaudeActivity", () => {
     ].join("\n");
 
     const events = parseClaudeActivity(log, start);
-    expect(events).toEqual([
-      { elapsedMs: expect.any(Number), tool: "Read" },
-    ]);
+    expect(events).toEqual([{ elapsedMs: expect.any(Number), tool: "Read" }]);
     expect(events[0].elapsedMs).toBeGreaterThan(0);
   });
 
@@ -272,7 +270,12 @@ describe("parseClaudeActivity", () => {
     ].join("\n");
 
     const events = parseClaudeActivity(log, start);
-    expect(events.map((e) => e.tool)).toEqual(["Read", "Glob", "Grep", "Agent"]);
+    expect(events.map((e) => e.tool)).toEqual([
+      "Read",
+      "Glob",
+      "Grep",
+      "Agent",
+    ]);
   });
 
   it("skips non-work tools like ToolSearch", () => {
@@ -372,9 +375,7 @@ describe("parseClaudeActivity", () => {
       "2026-04-02T10:39:24.232Z [DEBUG] Spawning shell without login (-l flag skipped)";
 
     const events = parseClaudeActivity(log, start);
-    expect(events).toEqual([
-      { elapsedMs: expect.any(Number), tool: "Bash" },
-    ]);
+    expect(events).toEqual([{ elapsedMs: expect.any(Number), tool: "Bash" }]);
   });
 
   it("does not duplicate Bash when both hook and Spawning shell appear", () => {
@@ -434,7 +435,9 @@ describe("parseClaudeActivity", () => {
     const events = parseClaudeActivity(log, start);
     expect(events.length).toBeGreaterThanOrEqual(2);
     for (let i = 1; i < events.length; i++) {
-      expect(events[i].elapsedMs).toBeGreaterThanOrEqual(events[i - 1].elapsedMs);
+      expect(events[i].elapsedMs).toBeGreaterThanOrEqual(
+        events[i - 1].elapsedMs,
+      );
     }
   });
 });

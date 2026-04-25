@@ -205,7 +205,7 @@ export class AnimatedBanner extends Control {
       ["/retro", "run retrospective"],
     ];
     const col3 = [
-      ["/copy", "copy session text"],
+      ["/tab", "new tab"],
       ["/help", "all commands"],
       ["/exit", "exit session"],
     ];

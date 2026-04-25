@@ -50,9 +50,10 @@ If this is a new project without a `.teammates/` directory, the CLI prompts you 
 
 | Option | What it does |
 |---|---|
-| **New team** | Analyzes your codebase and creates teammates from scratch — proposes a roster based on your project's domains (with 15 built-in personas as starting points), gets your approval, then scaffolds everything |
-| **Import team** | Copies teammates from another project (`/init <path>`). Imports SOUL.md + WISDOM.md only, then each teammate adapts itself to the new codebase |
-| **Solo mode** | Uses the agent without teammates — no `.teammates/` directory, no routing |
+| **Pick teammates** | Choose from 16 bundled persona templates (PM, SWE, DevOps, QA, Prompt Engineer, Security, Designer, and more). You pick roles, optionally rename them, and the CLI scaffolds the folders |
+| **Auto-generate** | The agent analyzes your codebase and proposes a tailored roster based on your project's domains, gets your approval, then scaffolds everything |
+| **Import team** | Copies teammates from another project. Imports SOUL.md + WISDOM.md only, then each teammate adapts itself to the new codebase |
+| **Solo mode** | Uses the agent without teammates — no routing, no handoffs. You can add teammates later with `/add` |
 | **Exit** | Quits without changes |
 
 All onboarding agents run non-interactively — they complete fully without additional prompts.
@@ -62,13 +63,11 @@ All onboarding agents run non-interactively — they complete fully without addi
 Once your team is set up, you're in the REPL:
 
 - **`@mention`** — assign directly to a teammate (`@beacon fix the search index`)
-- **Bare text** — auto-routes to the best teammate based on keywords
+- **`@everyone`** — broadcast the same message to all teammates
+- **Bare text** — auto-routes to the best teammate based on keywords and ownership
 - **`/status`** — see active teammates, running tasks, and the queue
-- **Handoff approval** — teammates can propose handoffs; you approve, auto-approve, or reject
-
-### Re-running onboarding
-
-Use `/init` inside an existing session to re-run onboarding from scratch, or `/init <path>` to import teammates from another project.
+- **`/tab`** — open a second conversation tab; switch between tabs without losing state
+- **Handoff approval** — teammates can propose handoffs; you approve, auto-approve, or reject each one
 
 ### CLI options
 
@@ -171,8 +170,8 @@ teammates/
   LICENSE               # MIT
   packages/
     cli/                # Interactive teammate orchestrator
-      src/              # TypeScript source (REPL, orchestrator, adapters)
-      personas/         # 15 built-in persona templates (PM, SWE, DevOps, QA, Security, etc.)
+      src/              # TypeScript source (REPL, orchestrator, adapters, threads)
+      personas/         # 16 built-in persona templates (PM, SWE, DevOps, QA, Prompt Engineer, Security, etc.)
       package.json      # @teammates/cli package
       README.md         # CLI documentation
     consolonia/         # Terminal UI rendering
@@ -185,7 +184,7 @@ teammates/
   docs/                 # Documentation site (https://stevenic.github.io/teammates)
     working-with-teammates.md  # Day-to-day workflows: standups, retros, routing
     adoption-guide.md   # How to introduce teammates to an existing team
-    cookbook.md          # Concrete recipes for common workflows
+    cookbook.md         # Concrete recipes for common workflows
     teammates-vision.md # Architecture and Microsoft Teams roadmap
     teammates-memory.md # Memory system design and comparison
   template/
@@ -196,6 +195,7 @@ teammates/
     DECISIONS.md        # Decision log template
     TEMPLATE.md         # Template for individual teammate files (SOUL, GOALS, WISDOM, RESUME, typed memories, daily logs)
     USER.md             # User profile template (gitignored)
+    services.json       # Optional services config (e.g. GitHub)
     example/
       SOUL.md           # Worked example of a filled-in SOUL.md
       GOALS.md          # Worked example of a filled-in GOALS.md

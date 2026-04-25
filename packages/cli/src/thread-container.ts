@@ -64,7 +64,7 @@ export class ThreadContainer {
   targetNames: string[];
   /** Tracked reply items with body ranges for collapse. */
   items: ThreadItemEntry[] = [];
-  /** Feed line index of the thread-level [reply] [copy thread] action line, or null if not yet rendered. */
+  /** Feed line index of the thread-level [copy thread] action line, or null if not yet rendered. */
   replyActionIdx: number | null = null;
 
   /** Maps placeholder ID → feed line index of the queued/working placeholder. */
@@ -111,7 +111,7 @@ export class ThreadContainer {
 
   private _computeInsertPoint(): number {
     let insertPoint = this.endIdx;
-    // Insert before thread-level actions ([reply] [copy thread]) if present
+    // Insert before thread-level actions ([copy thread]) if present
     if (this.replyActionIdx != null && this.replyActionIdx < insertPoint) {
       insertPoint = this.replyActionIdx;
     }
@@ -186,7 +186,7 @@ export class ThreadContainer {
     actions: FeedActionItem[],
     onShift: ShiftCallback,
   ): void {
-    // Insert before thread-level actions ([reply] [copy thread]) if present,
+    // Insert before thread-level actions ([copy thread]) if present,
     // otherwise at end of range. This ensures reply placeholders appear
     // within the thread content, not after the thread-level verbs.
     let insertAt = this.endIdx;
@@ -234,7 +234,7 @@ export class ThreadContainer {
   // ── Thread-level action visibility ───────────────────────────────
 
   /**
-   * Hide the thread-level [reply] [copy thread] action line.
+   * Hide the thread-level [copy thread] action line.
    * Called when working placeholders are added to suppress verbs during work.
    */
   hideThreadActions(view: ThreadFeedView): void {
@@ -244,7 +244,7 @@ export class ThreadContainer {
   }
 
   /**
-   * Show the thread-level [reply] [copy thread] action line.
+   * Show the thread-level [copy thread] action line.
    * Called when all working placeholders are resolved.
    */
   showThreadActions(view: ThreadFeedView): void {
@@ -282,7 +282,7 @@ export class ThreadContainer {
   // ── Thread-level action line ───────────────────────────────────
 
   /**
-   * Insert the thread-level [reply] [copy thread] action line.
+   * Insert the thread-level [copy thread] action line.
    * Only inserts once — subsequent calls are no-ops (line shifts automatically).
    */
   insertThreadActions(

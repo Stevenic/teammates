@@ -60,3 +60,6 @@ Interactive features need concrete rendering examples and behavior rules before 
 
 **Command surfaces must fit both the host and the product**
 Slash commands should avoid collisions with the agent's native command set and align with the product's existing interaction model.
+
+**Size work for agents, not humans**
+All implementation is done by agents. Don't break work into human-effort-sized chunks. Break into logical groups defined by verification checkpoints — "can we check the result here?" — not by estimated human hours or fatigue. Larger batches with clear check-gates are better than many tiny handoffs.

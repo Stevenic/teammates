@@ -1,11 +1,20 @@
 /**
- * Thread management — data model, feed rendering, and thread-specific operations.
- * Extracted from cli.ts to reduce file size.
+ * Thread management — data model, per-thread feed stores, tab switching,
+ * and thread-specific rendering operations.
+ *
+ * v2: Tab-based architecture. Each thread owns its own FeedStore and
+ * FeedAdapter. Cross-thread index shifting is eliminated.
  */
 
-import type { ChatView, Color, StyledSpan } from "@teammates/consolonia";
+import type {
+  ChatView,
+  Color,
+  FeedActionItem,
+  StyledSpan,
+} from "@teammates/consolonia";
 import { concat, pen, renderMarkdown } from "@teammates/consolonia";
 import { wrapLine } from "./cli-utils.js";
+import { FeedAdapter } from "./feed-adapter.js";
 import type { HandoffContainerCtx } from "./handoff-manager.js";
 import { theme, tp } from "./theme.js";
 import { type ShiftCallback, ThreadContainer } from "./thread-container.js";
@@ -40,16 +49,44 @@ export class ThreadManager {
   threads: Map<number, TaskThread> = new Map();
   /** Auto-incrementing thread ID counter (session-scoped). */
   nextThreadId = 1;
-  /** Currently focused thread ID (for default routing and rendering). */
+  /** Currently focused thread ID. */
   focusedThreadId: number | null = null;
   /** Thread containers keyed by thread ID — each manages its own feed indices. */
   containers: Map<number, ThreadContainer> = new Map();
+  /** Per-thread FeedAdapters — each wraps its own FeedStore. */
+  adapters: Map<number, FeedAdapter> = new Map();
   /** Maps copy action IDs to cleaned output text. */
   private _copyContexts: Map<string, string>;
-  /** Shift callback for all containers. */
+
+  /**
+   * Per-thread shift callback. In the tab model, shifts only affect the
+   * single container within the active thread (no cross-thread shifting).
+   */
+  getShiftCallback(threadId: number): ShiftCallback {
+    return (atIndex: number, delta: number) => {
+      const container = this.containers.get(threadId);
+      if (container) container.shiftIndices(atIndex, delta);
+      // Also shift pending handoffs that are within this thread
+      for (const h of this.pendingHandoffs) {
+        if (h.approveIdx >= atIndex) h.approveIdx += delta;
+        if (h.rejectIdx >= atIndex) h.rejectIdx += delta;
+      }
+    };
+  }
+
+  /**
+   * Legacy shiftAllContainers — kept for ActivityManager compatibility.
+   * In the tab model, this only shifts the focused thread's container.
+   */
   shiftAllContainers: ShiftCallback;
+
   /** Pending handoffs reference (for shifting). */
   private pendingHandoffs: { approveIdx: number; rejectIdx: number }[];
+
+  /** Callback fired when the tab bar state changes. */
+  onTabsChanged?: () => void;
+  /** Callback fired when thread has unread content. */
+  onUnread?: (threadId: number) => void;
 
   private view: ThreadManagerView;
 
@@ -62,9 +99,11 @@ export class ThreadManager {
     this._copyContexts = copyContexts;
     this.pendingHandoffs = pendingHandoffs;
 
+    // Default shift callback targets focused thread
     this.shiftAllContainers = (atIndex: number, delta: number) => {
-      for (const container of this.containers.values()) {
-        container.shiftIndices(atIndex, delta);
+      if (this.focusedThreadId != null) {
+        const container = this.containers.get(this.focusedThreadId);
+        if (container) container.shiftIndices(atIndex, delta);
       }
       for (const h of this.pendingHandoffs) {
         if (h.approveIdx >= atIndex) h.approveIdx += delta;
@@ -73,7 +112,9 @@ export class ThreadManager {
     };
   }
 
-  /** Create a new thread and return it. */
+  // ── Thread lifecycle ────────────────────────────────────────────
+
+  /** Create a new thread with its own FeedStore. Returns the thread. */
   createThread(originMessage: string): TaskThread {
     const id = this.nextThreadId++;
     const thread: TaskThread = {
@@ -87,25 +128,109 @@ export class ThreadManager {
       focusedAt: Date.now(),
     };
     this.threads.set(id, thread);
-    this.focusedThreadId = id;
-    this.updateFooterHint();
+
+    // Create a FeedAdapter + FeedStore for this thread
+    const adapter = new FeedAdapter();
+    adapter.bind(this.view.chatView);
+    this.adapters.set(id, adapter);
+
+    // Auto-focus the new thread
+    this.switchToThread(id);
+
     return thread;
   }
 
+  /** Switch the active (visible) thread. Swaps FeedStores in ChatView. */
+  switchToThread(threadId: number): void {
+    const targetAdapter = this.adapters.get(threadId);
+    if (!targetAdapter || !this.view.chatView) return;
+
+    // Deactivate the current thread's adapter
+    if (this.focusedThreadId != null) {
+      const prevAdapter = this.adapters.get(this.focusedThreadId);
+      if (prevAdapter) prevAdapter.setActive(false);
+    }
+
+    // Swap the FeedStore in ChatView
+    this.view.chatView.setStore(targetAdapter.store);
+    targetAdapter.setActive(true);
+    this.focusedThreadId = threadId;
+
+    // Update thread focus timestamp and clear unread
+    const thread = this.threads.get(threadId);
+    if (thread) thread.focusedAt = Date.now();
+
+    // Notify tab bar
+    this.onTabsChanged?.();
+    this.updateFooterHint();
+  }
+
+  /** Close a thread: remove its data, adapter, container, and feed. */
+  closeThread(threadId: number): boolean {
+    // Cannot close the last remaining tab
+    if (this.threads.size <= 1) return false;
+
+    const thread = this.threads.get(threadId);
+    if (!thread) return false;
+
+    this.threads.delete(threadId);
+    this.containers.delete(threadId);
+    this.adapters.delete(threadId);
+
+    // If the closed thread was focused, switch to the nearest remaining
+    if (this.focusedThreadId === threadId) {
+      const remaining = [...this.threads.keys()].sort((a, b) => a - b);
+      const next =
+        remaining.find((id) => id > threadId) ??
+        remaining[remaining.length - 1] ??
+        1;
+      this.switchToThread(next);
+    }
+
+    this.onTabsChanged?.();
+    return true;
+  }
+
+  /** Auto-name a thread from the first message content. */
+  autoNameThread(threadId: number, message: string): void {
+    const thread = this.threads.get(threadId);
+    if (!thread) return;
+    // Extract a short name: strip @mentions, take first ~30 chars
+    const cleaned = message
+      .replace(/@\S+/g, "")
+      .replace(/^[\s,]+/, "")
+      .trim();
+    thread.originMessage =
+      cleaned.length > 30 ? `${cleaned.slice(0, 28)}…` : cleaned || "Thread";
+    this.onTabsChanged?.();
+  }
+
+  /** Get the FeedAdapter for a thread. */
+  getAdapter(threadId: number): FeedAdapter | undefined {
+    return this.adapters.get(threadId);
+  }
+
+  /** Check if a thread has agents currently working. */
+  isThreadWorking(threadId: number): boolean {
+    const thread = this.threads.get(threadId);
+    return thread ? thread.pendingTasks.size > 0 : false;
+  }
+
+  // ── Footer hint ─────────────────────────────────────────────────
+
   /**
-   * Update the footer right hint to show the focused thread.
-   * Shows "replying to task #N" when a thread is focused, or "? /help" otherwise.
+   * Update the footer right hint. In tab mode, we don't show
+   * "replying to task #N" — that concept is replaced by tabs.
+   * Only show the hint when there are multiple threads.
    */
   updateFooterHint(): void {
     if (!this.view.chatView) return;
-    if (this.focusedThreadId != null && this.getThread(this.focusedThreadId)) {
-      this.view.chatView.setFooterRight(
-        tp.muted(`replying to task #${this.focusedThreadId} `),
-      );
-    } else if (this.view.defaultFooterRight) {
+    if (this.view.defaultFooterRight) {
       this.view.chatView.setFooterRight(this.view.defaultFooterRight);
     }
   }
+
+  // ── Thread data access ──────────────────────────────────────────
 
   /** Find a thread by its numeric ID. */
   getThread(id: number): TaskThread | undefined {
@@ -135,23 +260,30 @@ export class ThreadManager {
     const thread = this.threads.get(threadId);
     if (!thread) return;
     thread.entries.push(entry);
+
+    // Mark as unread if not focused
+    if (threadId !== this.focusedThreadId && entry.type === "agent") {
+      this.onUnread?.(threadId);
+    }
   }
 
   // ── Thread feed rendering ───────────────────────────────────────
 
   /**
-   * Insert markdown content into a thread's feed range with extra indentation.
+   * Insert markdown content into a thread's feed.
+   * Uses the thread's own FeedAdapter, not the ChatView directly.
    */
   threadFeedMarkdown(threadId: number, source: string): void {
     const container = this.containers.get(threadId);
-    if (!container || !this.view.chatView) {
+    const adapter = this.adapters.get(threadId);
+    if (!container || !adapter) {
       this.view.feedMarkdown(source);
       return;
     }
     const t = theme();
     const width = process.stdout.columns || 80;
     const lines = renderMarkdown(source, {
-      width: width - 5, // -4 for indent, -1 for scrollbar
+      width: width - 5,
       indent: "    ",
       theme: {
         text: { fg: t.textMuted },
@@ -175,38 +307,41 @@ export class ThreadManager {
         checkbox: { fg: t.accent },
       },
     });
+    const shift = this.getShiftCallback(threadId);
     for (const line of lines) {
       const styledSpan = line.map((seg) => ({
         text: seg.text,
         style: seg.style,
       })) as StyledSpan;
       (styledSpan as any).__brand = "StyledSpan";
-      container.insertLine(
-        this.view.chatView,
-        styledSpan,
-        this.shiftAllContainers,
-      );
+      container.insertLine(adapter, styledSpan, shift);
     }
   }
 
   /** Render the thread dispatch line as part of the user message block. */
   renderThreadHeader(thread: TaskThread, targetNames: string[]): void {
-    if (!this.view.chatView) return;
+    const adapter = this.adapters.get(thread.id);
+    if (!adapter) return;
     const t = theme();
     const bg = this.view.userBg;
-    const headerIdx = this.view.chatView.feedLineCount;
+    const headerIdx = adapter.feedLineCount;
 
     const displayNames = targetNames.map((n) =>
       n === this.view.selfName ? this.view.adapterName : n,
     );
     const namesText = displayNames.join(", ");
 
-    // Render as a user-styled line (dark bg) so it looks like part of the user's message
-    this.view.feedUserLine(
-      concat(
-        pen.fg(t.textDim).bg(bg)(`#${thread.id} → `),
-        pen.fg(t.accent).bg(bg)(namesText),
-      ),
+    // Render as a user-styled line (dark bg)
+    const termW = (process.stdout.columns || 80) - 1;
+    const content = concat(
+      pen.fg(t.textDim).bg(bg)(`→ `),
+      pen.fg(t.accent).bg(bg)(namesText),
+    );
+    let len = 0;
+    for (const seg of content) len += seg.text.length;
+    const pad = Math.max(0, termW - len);
+    adapter.appendStyledToFeed(
+      concat(content, pen.fg(bg).bg(bg)(" ".repeat(pad))),
     );
 
     // Create container for this thread
@@ -214,56 +349,26 @@ export class ThreadManager {
     this.containers.set(thread.id, container);
   }
 
-  /** Update the thread header to reflect current collapse state. */
-  updateThreadHeader(threadId: number): void {
-    const container = this.containers.get(threadId);
-    const thread = this.getThread(threadId);
-    if (!container || !thread || !this.view.chatView) return;
-    const t = theme();
-    const bg = this.view.userBg;
-    const displayNames = container.targetNames.map((n) =>
-      n === this.view.selfName ? this.view.adapterName : n,
-    );
-    const namesText = displayNames.join(", ");
-    const arrow = thread.collapsed ? "▶ " : "";
-
-    // Update as user-styled line (dark bg)
-    const termW = (process.stdout.columns || 80) - 1;
-    const content = concat(
-      pen.fg(t.textDim).bg(bg)(`${arrow}#${threadId} → `),
-      pen.fg(t.accent).bg(bg)(namesText),
-    );
-    let len = 0;
-    for (const seg of content) len += seg.text.length;
-    const pad = Math.max(0, termW - len);
-    const padded = concat(content, pen.fg(bg).bg(bg)(" ".repeat(pad)));
-    this.view.chatView.updateFeedLine(container.headerIdx, padded);
-  }
-
-  /**
-   * Render a user reply message inside a thread container, including a dispatch line.
-   * Used when a user sends a reply to an existing thread (vs. creating a new thread).
-   */
+  /** Render a user reply message inside a thread container. */
   renderThreadReply(
     threadId: number,
     displayText: string,
     targetNames: string[],
   ): void {
-    if (!this.view.chatView) return;
     const container = this.containers.get(threadId);
-    if (!container) return;
+    const adapter = this.adapters.get(threadId);
+    if (!container || !adapter) return;
     const t = theme();
     const bg = this.view.userBg;
     const termW = (process.stdout.columns || 80) - 1;
+    const shift = this.getShiftCallback(threadId);
 
-    // Blank line separator before the reply block
-    container.insertLine(this.view.chatView, "", this.shiftAllContainers);
+    // Blank line separator
+    container.insertLine(adapter, "", shift);
 
-    // Render user message lines inside the thread (user-styled, indented)
-    // All content indented 2 spaces with bg color
+    // Render user message lines
     const indent = "  ";
     const label = `${indent}${this.view.selfName}: `;
-    const wrapW = termW - indent.length;
     const lines = displayText.split("\n");
     const first = lines.shift() ?? "";
     const firstWrapW = termW - label.length;
@@ -271,40 +376,41 @@ export class ThreadManager {
     const seg0 = firstWrapped.shift() ?? "";
     const pad0 = Math.max(0, termW - label.length - seg0.length);
     container.insertLine(
-      this.view.chatView,
+      adapter,
       concat(
         pen.fg(t.accent).bg(bg)(label),
         pen.fg(t.text).bg(bg)(seg0 + " ".repeat(pad0)),
       ),
-      this.shiftAllContainers,
+      shift,
     );
     for (const wl of firstWrapped) {
       const padWl = Math.max(0, termW - indent.length - wl.length);
       container.insertLine(
-        this.view.chatView,
+        adapter,
         concat(
           pen.fg(t.text).bg(bg)(indent),
           pen.fg(t.text).bg(bg)(wl + " ".repeat(padWl)),
         ),
-        this.shiftAllContainers,
+        shift,
       );
     }
     for (const line of lines) {
+      const wrapW = termW - indent.length;
       const wrapped = wrapLine(line, wrapW);
       for (const wl of wrapped) {
         const padWl = Math.max(0, termW - indent.length - wl.length);
         container.insertLine(
-          this.view.chatView,
+          adapter,
           concat(
             pen.fg(t.text).bg(bg)(indent),
             pen.fg(t.text).bg(bg)(wl + " ".repeat(padWl)),
           ),
-          this.shiftAllContainers,
+          shift,
         );
       }
     }
 
-    // Render dispatch line inside the thread (user-styled, like the original header)
+    // Render dispatch line
     const displayNames = targetNames.map((n) =>
       n === this.view.selfName ? this.view.adapterName : n,
     );
@@ -317,15 +423,13 @@ export class ThreadManager {
     for (const seg of dispatchContent) dispLen += seg.text.length;
     const dispPad = Math.max(0, termW - dispLen);
     container.insertLine(
-      this.view.chatView,
+      adapter,
       concat(dispatchContent, pen.fg(bg).bg(bg)(" ".repeat(dispPad))),
-      this.shiftAllContainers,
+      shift,
     );
 
-    // Blank line between dispatch and working placeholders
-    container.insertLine(this.view.chatView, "", this.shiftAllContainers);
-
-    // Clear insert override so placeholders use normal insert point
+    // Blank line
+    container.insertLine(adapter, "", shift);
     container.clearInsertAt();
   }
 
@@ -336,16 +440,16 @@ export class ThreadManager {
     teammate: string,
     state: "queued" | "working",
   ): void {
-    if (!this.view.chatView) return;
     const container = this.containers.get(threadId);
-    if (!container) return;
+    const adapter = this.adapters.get(threadId);
+    if (!container || !adapter) return;
     const t = theme();
     const displayName =
       teammate === this.view.selfName ? this.view.adapterName : teammate;
     const activityId = `activity-${placeholderId}`;
     const cancelId = `cancel-${placeholderId}`;
     const statusText = state === "queued" ? "queued..." : "working...";
-    const actions =
+    const actions: FeedActionItem[] =
       state === "queued"
         ? [
             {
@@ -388,34 +492,29 @@ export class ThreadManager {
               }),
             },
           ];
-    container.addPlaceholder(
-      this.view.chatView,
-      placeholderId,
-      actions,
-      this.shiftAllContainers,
-    );
+    const shift = this.getShiftCallback(threadId);
+    container.addPlaceholder(adapter, placeholderId, actions, shift);
   }
 
   /** Toggle collapse/expand for an entire thread. */
   toggleThreadCollapse(threadId: number): void {
     const thread = this.getThread(threadId);
     const container = this.containers.get(threadId);
-    if (!thread || !container || !this.view.chatView) return;
+    const adapter = this.adapters.get(threadId);
+    if (!thread || !container || !adapter) return;
 
     thread.collapsed = !thread.collapsed;
-    container.toggleCollapse(this.view.chatView, thread.collapsed);
-
-    // Update header arrow
-    this.updateThreadHeader(threadId);
+    container.toggleCollapse(adapter, thread.collapsed);
     this.view.refreshView();
   }
 
   /** Toggle collapse/expand for an individual reply within a thread. */
   toggleReplyCollapse(threadId: number, replyKey: string): void {
     const container = this.containers.get(threadId);
-    if (!container || !this.view.chatView) return;
-    container.toggleReplyCollapse(this.view.chatView, replyKey);
-    // Update the action text to show [show] or [hide] based on new state
+    const adapter = this.adapters.get(threadId);
+    if (!container || !adapter) return;
+    container.toggleReplyCollapse(adapter, replyKey);
+    // Update the action text
     const item = container.items.find((i) => i.key === replyKey);
     if (item?.displayName) {
       const t = theme();
@@ -447,12 +546,12 @@ export class ThreadManager {
           }),
         },
       ];
-      this.view.chatView.updateActionList(item.subjectLineIndex, actions);
+      adapter.updateActionList(item.subjectLineIndex, actions);
     }
     this.view.refreshView();
   }
 
-  /** Render a task result indented inside a thread, replacing the working placeholder in-place. */
+  /** Render a task result inside a thread. */
   displayThreadedResult(
     result: {
       teammate: string;
@@ -466,17 +565,16 @@ export class ThreadManager {
     container: ThreadContainer,
     placeholderId: string,
   ): void {
+    const adapter = this.adapters.get(threadId);
+    if (!adapter) return;
     const t = theme();
     const subject = result.summary || "Task completed";
+    const shift = this.getShiftCallback(threadId);
 
-    // Hide the original working placeholder (don't update in-place)
-    // and insert the completed response at the reply insert point
-    // (before remaining working placeholders) so completed replies float up.
-    if (this.view.chatView) {
-      container.hidePlaceholder(this.view.chatView, placeholderId);
-    }
+    // Hide the working placeholder
+    container.hidePlaceholder(adapter, placeholderId);
 
-    // Track reply key for individual collapse
+    // Track reply key
     const thread = this.getThread(threadId);
     const replyIndex = thread
       ? thread.entries.filter((e) => e.type !== "user").length
@@ -490,7 +588,7 @@ export class ThreadManager {
         ? this.view.adapterName
         : result.teammate;
 
-    // Store copy context for [copy] action (include teammate: subject header)
+    // Store copy context
     if (cleaned) {
       this._copyContexts.set(
         copyId,
@@ -498,7 +596,7 @@ export class ThreadManager {
       );
     }
 
-    // Insert subject line as action list with inline [hide] [copy]
+    // Insert subject line as action list
     const subjectActions = [
       {
         id: collapseId,
@@ -525,16 +623,9 @@ export class ThreadManager {
         }),
       },
     ];
-    const headerIdx = container.insertActions(
-      this.view.chatView,
-      subjectActions,
-      this.shiftAllContainers,
-    );
+    const headerIdx = container.insertActions(adapter, subjectActions, shift);
 
-    // Set insert position to right after the subject line
     container.setInsertAt(headerIdx + 1);
-
-    // Track body start for individual collapse (peek — don't consume a position)
     const bodyStartIdx = container.peekInsertPoint();
 
     if (cleaned) {
@@ -549,15 +640,14 @@ export class ThreadManager {
       this.threadFeedMarkdown(threadId, syntheticLines.join("\n"));
     } else {
       container.insertLine(
-        this.view.chatView,
+        adapter,
         tp.muted(
           "    (no response text — the agent may have only performed tool actions)",
         ),
-        this.shiftAllContainers,
+        shift,
       );
     }
 
-    // Track body end for individual collapse (peek — don't consume a position)
     const bodyEndIdx = container.peekInsertPoint();
     container.trackReplyBody(
       replyKey,
@@ -569,22 +659,12 @@ export class ThreadManager {
       copyId,
     );
 
-    // Render handoffs inside thread (using container insert so they stay
-    // within the thread range, before the [reply] [copy thread] verbs)
+    // Render handoffs inside thread
     if (result.handoffs.length > 0) {
       const containerCtx: HandoffContainerCtx = {
-        insertLine: (text) =>
-          container.insertLine(
-            this.view.chatView,
-            text,
-            this.shiftAllContainers,
-          ),
+        insertLine: (text) => container.insertLine(adapter, text, shift),
         insertActions: (actions) =>
-          container.insertActions(
-            this.view.chatView,
-            actions,
-            this.shiftAllContainers,
-          ),
+          container.insertActions(adapter, actions, shift),
       };
       this.view.renderHandoffs(
         result.teammate,
@@ -595,77 +675,57 @@ export class ThreadManager {
     }
 
     // Blank line after reply
-    container.insertLine(this.view.chatView, "", this.shiftAllContainers);
+    container.insertLine(adapter, "", shift);
 
-    // Insert thread-level [reply] [copy thread] verbs (once, shifts automatically)
-    if (this.view.chatView) {
-      const threadReplyId = `thread-reply-${threadId}`;
-      const threadCopyId = `thread-copy-${threadId}`;
-      container.insertThreadActions(
-        this.view.chatView,
-        [
-          {
-            id: threadReplyId,
-            normalStyle: this.view.makeSpan({
-              text: "  [reply]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.view.makeSpan({
-              text: "  [reply]",
-              style: { fg: t.accent },
-            }),
-          },
-          {
-            id: threadCopyId,
-            normalStyle: this.view.makeSpan({
-              text: " [copy thread]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.view.makeSpan({
-              text: " [copy thread]",
-              style: { fg: t.accent },
-            }),
-          },
-        ],
-        this.shiftAllContainers,
-      );
+    // Insert thread-level [copy thread] verb
+    const threadCopyId = `thread-copy-${threadId}`;
+    container.insertThreadActions(
+      adapter,
+      [
+        {
+          id: threadCopyId,
+          normalStyle: this.view.makeSpan({
+            text: "  [copy thread]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.view.makeSpan({
+            text: "  [copy thread]",
+            style: { fg: t.accent },
+          }),
+        },
+      ],
+      shift,
+    );
 
-      // Show/hide thread-level actions based on whether work is still in progress
-      if (container.placeholderCount === 0) {
-        container.showThreadActions(this.view.chatView);
-      } else {
-        container.hideThreadActions(this.view.chatView);
-      }
+    // Show/hide thread-level actions
+    if (container.placeholderCount === 0) {
+      container.showThreadActions(adapter);
+    } else {
+      container.hideThreadActions(adapter);
     }
 
-    // Update thread header
-    this.updateThreadHeader(threadId);
-
-    // Clear insert position override
     container.clearInsertAt();
   }
 
-  /**
-   * Display a "canceled" subject line for a teammate in a thread.
-   * Hides the working placeholder and inserts a dimmed subject line.
-   */
+  /** Display a "canceled" subject line for a teammate in a thread. */
   displayCanceledInThread(
     teammate: string,
     threadId: number,
     container: ThreadContainer,
     placeholderId: string,
   ): void {
+    const adapter = this.adapters.get(threadId);
+    if (!adapter) return;
     const t = theme();
-    if (this.view.chatView) {
-      container.hidePlaceholder(this.view.chatView, placeholderId);
-    }
+    const shift = this.getShiftCallback(threadId);
+
+    container.hidePlaceholder(adapter, placeholderId);
 
     const displayName =
       teammate === this.view.selfName ? this.view.adapterName : teammate;
 
-    // Insert canceled subject line (no [hide]/[copy] — nothing to show)
     container.insertActions(
-      this.view.chatView,
+      adapter,
       [
         {
           id: `canceled-${teammate}-${Date.now()}`,
@@ -679,55 +739,36 @@ export class ThreadManager {
           ),
         },
       ],
-      this.shiftAllContainers,
+      shift,
     );
 
-    // Blank line after
-    container.insertLine(this.view.chatView, "", this.shiftAllContainers);
+    container.insertLine(adapter, "", shift);
 
-    // Insert thread-level [reply] [copy thread] verbs (once, shifts automatically)
-    if (this.view.chatView) {
-      const threadReplyId = `thread-reply-${threadId}`;
-      const threadCopyId = `thread-copy-${threadId}`;
-      container.insertThreadActions(
-        this.view.chatView,
-        [
-          {
-            id: threadReplyId,
-            normalStyle: this.view.makeSpan({
-              text: "  [reply]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.view.makeSpan({
-              text: "  [reply]",
-              style: { fg: t.accent },
-            }),
-          },
-          {
-            id: threadCopyId,
-            normalStyle: this.view.makeSpan({
-              text: " [copy thread]",
-              style: { fg: t.textDim },
-            }),
-            hoverStyle: this.view.makeSpan({
-              text: " [copy thread]",
-              style: { fg: t.accent },
-            }),
-          },
-        ],
-        this.shiftAllContainers,
-      );
+    // Insert thread-level verbs
+    const threadCopyId = `thread-copy-${threadId}`;
+    container.insertThreadActions(
+      adapter,
+      [
+        {
+          id: threadCopyId,
+          normalStyle: this.view.makeSpan({
+            text: "  [copy thread]",
+            style: { fg: t.textDim },
+          }),
+          hoverStyle: this.view.makeSpan({
+            text: "  [copy thread]",
+            style: { fg: t.accent },
+          }),
+        },
+      ],
+      shift,
+    );
 
-      // Show/hide thread-level actions based on whether work is still in progress
-      if (container.placeholderCount === 0) {
-        container.showThreadActions(this.view.chatView);
-      } else {
-        container.hideThreadActions(this.view.chatView);
-      }
+    if (container.placeholderCount === 0) {
+      container.showThreadActions(adapter);
+    } else {
+      container.hideThreadActions(adapter);
     }
-
-    // Update thread header
-    this.updateThreadHeader(threadId);
   }
 
   /** Reset all thread state — called by /clear. */
@@ -736,6 +777,24 @@ export class ThreadManager {
     this.nextThreadId = 1;
     this.focusedThreadId = null;
     this.containers.clear();
+    this.adapters.clear();
     this.updateFooterHint();
+    this.onTabsChanged?.();
+  }
+
+  /** Clear only the focused thread's feed content (per-thread /clear). */
+  clearFocusedThread(): void {
+    if (this.focusedThreadId == null) return;
+    const adapter = this.adapters.get(this.focusedThreadId);
+    const thread = this.threads.get(this.focusedThreadId);
+    if (adapter) adapter.clear();
+    if (thread) {
+      thread.entries.length = 0;
+      thread.collapsed = false;
+      thread.collapsedEntries.clear();
+    }
+    // Reset the container
+    this.containers.delete(this.focusedThreadId);
+    this.view.refreshView();
   }
 }

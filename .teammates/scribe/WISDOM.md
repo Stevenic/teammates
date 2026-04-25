@@ -2,7 +2,7 @@
 
 Distilled principles. Read this first every session (after SOUL.md).
 
-Last compacted: 2026-04-02
+Last compacted: 2026-04-25
 
 ---
 
@@ -25,6 +25,10 @@ Treat it as a checklist, not a best-effort sweep — missed references become st
 **Practice drifts from templates**
 Periodically compare live `.teammates/` against `template/` to catch convention gaps that evolved in practice but weren't backported.
 The template is the contract; if practice improved, update the template so new projects inherit it.
+
+**Docs drift scales with commit velocity**
+Slash command tables, persona counts, architecture listings, and command signatures go stale fast on an active branch.
+Schedule a docs audit any time the branch sits more than ~20 commits ahead of main — diffing surface-area docs (README, CLI README, cookbook, working-with-teammates) against the current source catches most regressions in one pass.
 
 **Three files define a teammate**
 SOUL.md (identity and boundaries), WISDOM.md (distilled knowledge), GOALS.md (intent and direction).
@@ -86,6 +90,10 @@ Specs should call for focused tests around index shifts, selection movement, and
 Slash commands should avoid collisions with the agent's native command set and align with the product's existing interaction model.
 A clear name is still wrong if it conflicts with the host or duplicates a better built-in affordance.
 
+**Terminology shapes the mental model**
+User-facing concept names (tab vs task, thread vs session) set expectations about behavior.
+When a term confuses users, rename before adding features on top — renaming later cascades through docs, commands, and memory.
+
 **Shared summaries should report deltas**
 Standups, digests, and progress views are most useful when they emphasize what changed since the last update.
 Repeating static state creates noise and hides the actual movement.
@@ -110,9 +118,28 @@ When prioritization is unclear, prefer the feature that removes downstream block
 Declared ownership in SOUL.md only works if teammates actively check before touching files.
 Under time pressure it's easy to "just fix it" across a boundary — always hand off instead, even for small changes.
 
+**Co-owned docs are in-scope for consistency review**
+Secondary ownership (like packages/*/README.md co-owned with Beacon) means Scribe can edit for doc-consistency passes without a handoff.
+Primary owner still decides structural changes; consistency fixes travel with the broader docs sweep.
+
 **Verify claims against current source, not assumptions**
 When comparing codebases or documenting external systems, check the actual code before publishing.
 Assumptions decay fast — even recent analysis can be wrong if the source moved since the last look.
+
+**Knowledge transfer requires filtering, not copying**
+When porting wisdom across contexts (live teammates → bundled personas, cross-codebase comparisons), strip project-specific details and verify each claim against the target.
+Unfiltered transfer carries stale assumptions; universal heuristics survive the move, implementation recipes don't.
+
+**Integration specs have a direction — consuming vs providing**
+A spec for "use MCP servers" (consuming) is fundamentally different from "be an MCP server" (providing).
+When designing integration features, explicitly name the direction; flipping it later changes the entire architecture.
+
+**Size work for agents, not humans**
+All implementation is done by agents. Don't break work into human-effort-sized chunks. Break into logical groups defined by verification checkpoints — "can we check the result here?" — not by estimated human hours or fatigue. Larger batches with clear check-gates are better than many tiny handoffs.
+
+**Offer options, let the human pick**
+When a design has multiple viable paths (Option A tab bar vs Option B accordion), present them with trade-offs rather than picking one unilaterally.
+The spec author frames the choice; the human makes it. Converges faster than arguing a single recommendation.
 
 **WISDOM is for heuristics, not recipes**
 Keep this file to durable principles and short patterns, not post-mortems or implementation commentary.

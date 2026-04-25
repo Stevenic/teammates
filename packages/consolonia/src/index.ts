@@ -179,6 +179,7 @@ export {
   TextInput,
   type TextInputOptions,
 } from "./widgets/text-input.js";
+export { ThreadBar, type ThreadBarTab } from "./widgets/thread-bar.js";
 export {
   VirtualList,
   type VirtualListItem,

@@ -12,8 +12,8 @@
  * --debug-file, not by separate hook entries.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /** Marker comment embedded in the hook command so we can detect our own hook. */
 const HOOK_MARKER = "teammates-activity";
@@ -88,7 +88,11 @@ export function ensurePostToolUseHook(projectRoot: string): void {
       /* already exists */
     }
 
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+    writeFileSync(
+      settingsPath,
+      JSON.stringify(settings, null, 2) + "\n",
+      "utf-8",
+    );
   }
 
   _installed = true;

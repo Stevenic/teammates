@@ -13,9 +13,8 @@ import type { StyledSpan } from "@teammates/consolonia";
 import { concat } from "@teammates/consolonia";
 import chalk from "chalk";
 import ora from "ora";
-
-import { buildTitle } from "./console/startup.js";
 import type { AgentAdapter } from "./adapter.js";
+import { buildTitle } from "./console/startup.js";
 import {
   buildImportAdaptationPrompt,
   copyTemplateFiles,
@@ -450,7 +449,77 @@ export class OnboardFlow {
     }
   }
 
+  /**
+   * Read the isSolo flag from settings.json.
+   * Returns true only if the user explicitly chose solo mode.
+   */
+  readSoloSetting(teammatesDir: string): boolean {
+    try {
+      const settings = JSON.parse(
+        readFileSync(join(teammatesDir, "settings.json"), "utf-8"),
+      );
+      return settings.isSolo === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Persist the isSolo flag to settings.json.
+   */
+  writeSoloSetting(teammatesDir: string, value: boolean): void {
+    const settingsPath = join(teammatesDir, "settings.json");
+    let settings: Record<string, unknown> = {};
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    } catch {
+      /* create fresh */
+    }
+    settings.isSolo = value;
+    try {
+      writeFileSync(
+        settingsPath,
+        `${JSON.stringify(settings, null, 2)}\n`,
+        "utf-8",
+      );
+    } catch {
+      /* write failed — non-fatal */
+    }
+  }
+
   // ── Team onboarding ──────────────────────────────────────────────
+
+  /**
+   * Check whether any agentic teammates are configured.
+   * Scans .teammates/ for subdirectories with SOUL.md that aren't human-type.
+   */
+  async hasAgenticTeammates(teammatesDir: string): Promise<boolean> {
+    let entries: { isDirectory(): boolean; name: string }[];
+    try {
+      entries = await readdir(teammatesDir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    const userAlias = this.readUserAlias(teammatesDir);
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith(".") || entry.name.startsWith("_")) continue;
+      if (entry.name === "example") continue;
+      if (entry.name === userAlias) continue;
+
+      try {
+        const soul = readFileSync(
+          join(teammatesDir, entry.name, "SOUL.md"),
+          "utf-8",
+        );
+        if (soul.includes("**Type:** human")) continue;
+        return true;
+      } catch {}
+    }
+
+    return false;
+  }
 
   /**
    * Interactive prompt for team onboarding after user profile is set up.
@@ -516,6 +585,8 @@ export class OnboardFlow {
       );
       console.log(chalk.gray("  Run /add later to add teammates."));
       console.log();
+      // Persist the solo choice so we don't re-prompt on next startup
+      this.writeSoloSetting(teammatesDir, true);
       return true;
     }
 

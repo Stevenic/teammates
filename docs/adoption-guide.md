@@ -51,7 +51,7 @@ On first run, the CLI walks you through two setup steps **before** the terminal 
 
 **Key moment:** When the agent proposes the roster, push back if the domains are too narrow. Fewer teammates with broader scope is almost always better than many narrow specialists.
 
-**Tip:** The CLI includes 15 built-in personas (PM, SWE, DevOps, QA, Security, Designer, and more) as starting points. Each persona comes with a pre-filled SOUL.md scaffold — identity, principles, quality bar, and ownership structure — that the onboarding agent customizes to your project.
+**Tip:** The CLI includes 16 built-in personas (PM, SWE, DevOps, QA, Prompt Engineer, Security, Designer, and more) as starting points. Each persona comes with a pre-filled SOUL.md scaffold — identity, principles, quality bar, and ownership structure — that the onboarding agent customizes to your project.
 
 > **Without the CLI:** You can also point any AI tool at `ONBOARDING.md` directly. See the [README](https://github.com/Stevenic/teammates#framework-only-no-cli) for details.
 
