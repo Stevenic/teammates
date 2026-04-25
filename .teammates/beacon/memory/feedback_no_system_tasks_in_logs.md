@@ -1,5 +1,4 @@
 ---
-version: 0.6.0
 name: No system tasks in daily logs
 description: Never log system tasks (compaction, WISDOM.md distillation, summarization) in daily logs or weekly summaries
 type: feedback

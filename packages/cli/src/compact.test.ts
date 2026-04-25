@@ -65,7 +65,9 @@ describe("compactDailies", () => {
     const memDir = join(testDir, "memory");
     await mkdir(memDir, { recursive: true });
 
-    const today = new Date().toISOString().slice(0, 10);
+    // Use local date to match compactDailies' getISOWeek (which uses local accessors)
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     await writeFile(join(memDir, `${today}.md`), "# Today\nDoing stuff");
 
     const result = await compactDailies(testDir);

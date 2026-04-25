@@ -35,7 +35,7 @@ Based on your analysis, propose a roster of teammates:
 - **One teammate per major subsystem** is the baseline.
 - **Consider a cross-cutting teammate** for testing/quality if the codebase is large enough to warrant it.
 - **Pick short, memorable names** — one word, evocative of the domain. (e.g., Atlas for backend, Pixel for UI, Forge for CI/CD)
-- **Reference the persona catalog** — The CLI includes 15 built-in personas at `packages/cli/personas/` (PM, SWE, DevOps, QA, Security, Designer, Tech Writer, Data Engineer, SRE, Architect, Frontend, Backend, Mobile, ML/AI, Performance). Use these as starting points for identity, principles, and ownership structure — customize them to fit the project.
+- **Reference the persona catalog** — The CLI includes 16 built-in personas at `packages/cli/personas/` (PM, SWE, DevOps, QA, Architect, Designer, Data Engineer, Prompt Engineer, Security, SRE, Tech Writer, Frontend, Backend, Mobile, ML/AI, Performance). Use these as starting points for identity, principles, and ownership structure — customize them to fit the project.
 
 For each proposed teammate, define:
 
@@ -90,6 +90,8 @@ For each teammate, create a folder at `.teammates/<name>/` containing:
 
 **SOUL.md** — Use the SOUL.md template from `template/TEMPLATE.md`. Fill in every section with project-specific details. Reference `template/example/SOUL.md` for the level of detail and tone expected.
 
+**GOALS.md** — Use the GOALS.md template from `template/TEMPLATE.md`. Add 2-3 initial objectives based on the teammate's domain and the project's current state. Reference `template/example/GOALS.md` for format and tone.
+
 **WISDOM.md** — Use the WISDOM.md template from `template/TEMPLATE.md`. Leave it in its initial empty state — wisdom entries emerge after the first compaction.
 
 **RESUME.md** — Use the RESUME.md template from `template/TEMPLATE.md`. Fill in the current project name and role. Leave role history and past projects empty — these accumulate as the teammate evolves.
@@ -102,7 +104,7 @@ For each teammate, create a folder at `.teammates/<name>/` containing:
 
 Before finishing, check:
 
-- [ ] Every teammate in the README roster has a corresponding folder with SOUL.md, WISDOM.md, and RESUME.md
+- [ ] Every teammate in the README roster has a corresponding folder with SOUL.md, GOALS.md, WISDOM.md, and RESUME.md
 - [ ] README.md roster matches the actual folders
 - [ ] Ownership globs across all SOUL.md files collectively cover the codebase without major gaps or overlaps
 - [ ] Boundaries in each SOUL.md correctly reference the teammate who DOES own that area
@@ -190,7 +192,7 @@ frontend-repo/
 
 ## Tips
 
-- **The `template/example/` folder** has a complete worked example of a filled-in teammate (SOUL.md, WISDOM.md, daily logs, typed memories, weekly and monthly summaries). Use it as a reference for tone, detail level, and file structure.
+- **The `template/example/` folder** has a complete worked example of a filled-in teammate (SOUL.md, GOALS.md, WISDOM.md, daily logs, typed memories, weekly and monthly summaries). Use it as a reference for tone, detail level, and file structure.
 - **WISDOM.md starts empty.** Wisdom entries emerge after the first compaction of typed memories. Don't pre-populate it.
 - **Not every SOUL.md section needs to be exhaustive.** Fill in what's known now. Teammates grow more detailed as the project evolves.
 - **If the agent can't create directories**, ask the user to create the folder structure manually, then have the agent fill in the file contents.

@@ -1,6 +1,6 @@
 # New Teammate Template
 
-Copy the SOUL.md, WISDOM.md, and RESUME.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
+Copy the SOUL.md, GOALS.md, WISDOM.md, and RESUME.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
 
 ---
 
@@ -21,11 +21,12 @@ Do what you're told. If the task is unclear, ask clarifying questions — but ex
 
 Each session, you wake up fresh. These files _are_ your memory. Read them. Update them. They're how you persist.
 
-- Read your SOUL.md and WISDOM.md at the start of every session.
+- Read your SOUL.md, GOALS.md, and WISDOM.md at the start of every session.
 - Read `memory/YYYY-MM-DD.md` for today and yesterday.
 - Read USER.md to understand who you're working with.
 - Relevant memories from past work are automatically provided in your context via recall search.
 - Update your files as you learn. If you change SOUL.md, tell the user.
+- Keep GOALS.md current — mark goals done as you complete them, add new ones as they emerge.
 
 ## Core Principles
 
@@ -93,6 +94,38 @@ Last compacted: YYYY-MM-DD
 
 _(No wisdom yet — principles emerge after the first compaction.)_
 ```
+
+---
+
+## GOALS.md Template
+
+GOALS.md tracks what a teammate is actively working towards — *intent* and *direction*. Read it each session after SOUL.md and WISDOM.md. Keep it scannable and current.
+
+```markdown
+# <Name> — Goals
+
+Updated: YYYY-MM-DD
+
+## Active Goals
+
+### P0 — Current Sprint
+
+- [ ] <Goal description> — <brief context or link to spec>
+
+### P1 — Up Next
+
+- [ ] <Goal description>
+
+### P2 — Backlog
+
+- [ ] <Goal description>
+
+## Completed
+
+- [x] <Goal description> — done YYYY-MM-DD
+```
+
+**Guidelines:** One line per goal. Link to specs when they exist. Mark done inline with date, don't delete. Update at end of each session. See `template/TEMPLATE.md` for full format details.
 
 ---
 

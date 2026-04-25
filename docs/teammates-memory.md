@@ -34,6 +34,7 @@ Each teammate has its own memory under `.teammates/<name>/`:
 ```
 .teammates/<name>/
 ├── SOUL.md                        # Identity, principles, boundaries
+├── GOALS.md                       # Active objectives and priorities
 ├── WISDOM.md                      # Distilled principles (Tier 3)
 └── memory/
     ├── YYYY-MM-DD.md              # Daily logs (Tier 1)
@@ -51,15 +52,16 @@ The CLI automatically builds each teammate's context before every task. The prom
 The prompt stack (in order):
 
 1. **SOUL.md** — identity, principles, boundaries (always, outside budget)
-2. **WISDOM.md** — distilled principles from compacted memories (always, outside budget)
-3. **Relevant memories from recall** — automatically queried using the task prompt; returns matching episodic summaries and typed memories from the vector index (at least 8k tokens, plus any unused daily log budget)
-4. **Recent daily logs** — today's log is always included; days 2-7 are included most-recent-first up to 24k tokens (whole entries only, never truncated mid-entry)
-5. **Session state** — path to the session file (`.teammates/.tmp/sessions/<name>.md`); the agent reads and writes it directly for cross-task continuity
-6. **Roster** — all teammates and their roles
-7. **Memory update instructions** — how to write daily logs, typed memories, and WISDOM.md
-8. **Output protocol** — response format and handoff syntax
-9. **Current date/time**
-10. **Task** — the user's message (always, outside budget)
+2. **GOALS.md** — active objectives and priorities (always, outside budget)
+3. **WISDOM.md** — distilled principles from compacted memories (always, outside budget)
+4. **Relevant memories from recall** — automatically queried using the task prompt; returns matching episodic summaries and typed memories from the vector index (at least 8k tokens, plus any unused daily log budget)
+5. **Recent daily logs** — today's log is always included; days 2-7 are included most-recent-first up to 24k tokens (whole entries only, never truncated mid-entry)
+6. **Session state** — path to the session file (`.teammates/.tmp/sessions/<name>.md`); the agent reads and writes it directly for cross-task continuity
+7. **Roster** — all teammates and their roles
+8. **Memory update instructions** — how to write daily logs, typed memories, and WISDOM.md
+9. **Output protocol** — response format and handoff syntax
+10. **Current date/time**
+11. **Task** — the user's message (always, outside budget)
 
 Weekly summaries are **not** injected directly — they are searchable via recall (step 3) and surface when relevant to the task prompt.
 
@@ -134,7 +136,7 @@ staging environment. Only use mocks for unit tests of pure logic.
 
 ## Tier 3 — Wisdom
 
-`WISDOM.md` — Distilled, high-signal principles derived from compacting multiple typed memories. Compact, stable, rarely changes. Read second after SOUL.md.
+`WISDOM.md` — Distilled, high-signal principles derived from compacting multiple typed memories. Compact, stable, rarely changes. Read after SOUL.md and GOALS.md.
 
 A good wisdom entry is:
 - **Pattern, not incident** — derived from multiple memories
@@ -207,7 +209,7 @@ The CLI queries the recall index before every task, using the task prompt as the
 | Monthly summaries | Yes | Long-term episodic context (permanent) |
 | Typed memories | Yes | Searchable semantic knowledge |
 | Raw daily logs | No | Already in prompt context (last 7 days), too noisy for search |
-| SOUL.md / WISDOM.md | No | Always loaded directly into prompt |
+| SOUL.md / GOALS.md / WISDOM.md | No | Always loaded directly into prompt |
 
 ## Cross-Teammate Sharing
 

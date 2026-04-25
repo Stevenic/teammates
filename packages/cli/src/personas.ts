@@ -1,17 +1,21 @@
 /**
  * Persona loader — reads bundled persona templates from the personas/ directory.
  *
- * Each persona file is a markdown file with YAML frontmatter:
+ * Each persona lives in its own folder named after its alias:
+ *   personas/<alias>/SOUL.md
+ *   personas/<alias>/WISDOM.md
+ *
+ * The SOUL.md file carries the template metadata in YAML frontmatter:
  *   ---
  *   persona: Software Engineer
  *   alias: beacon
  *   tier: 1
  *   description: Architecture, implementation, and code quality
  *   ---
- *   # <Name> — Software Engineer
+ *   # <Name> - Software Engineer
  *   ...body (SOUL.md scaffold)...
  *
- * The `<Name>` placeholder in the body is replaced with the user's chosen
+ * The `<Name>` placeholder in both files is replaced with the user's chosen
  * teammate name during scaffolding.
  */
 
@@ -22,16 +26,18 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface Persona {
-  /** Display name, e.g. "Software Engineer" */
+  /** Role label, e.g. "Software Engineer" */
   persona: string;
-  /** Suggested alias, e.g. "beacon" */
+  /** Persona alias and default installed teammate name, e.g. "beacon" */
   alias: string;
   /** Tier for ordering: 1 = core, 2 = specialized */
   tier: number;
   /** One-line description shown in selection UI */
   description: string;
-  /** Raw SOUL.md body (everything after the closing ---) */
-  body: string;
+  /** Raw SOUL.md template body (everything after the closing ---) */
+  soul: string;
+  /** Raw WISDOM.md template */
+  wisdom: string;
 }
 
 /**
@@ -40,17 +46,20 @@ export interface Persona {
  */
 function getPersonasDir(): string {
   const candidates = [
-    resolve(__dirname, "../personas"), // dist/ → cli/personas
-    resolve(__dirname, "../../personas"), // src/ → cli/personas (dev)
+    resolve(__dirname, "../personas"), // dist/ -> cli/personas
+    resolve(__dirname, "../../personas"), // src/ -> cli/personas (dev)
   ];
-  return candidates[0]; // both resolve to cli/personas
+  return candidates[0];
 }
 
 /**
- * Parse a persona file's frontmatter and body.
+ * Parse a persona SOUL.md file's frontmatter and body.
  */
-function parsePersonaFile(content: string): Persona | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+function parsePersonaSoul(
+  soulContent: string,
+  wisdomContent: string,
+): Persona | null {
+  const match = soulContent.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   if (!match) return null;
 
   const frontmatter = match[1];
@@ -68,7 +77,8 @@ function parsePersonaFile(content: string): Persona | null {
     alias,
     tier: tierStr ? parseInt(tierStr, 10) : 2,
     description,
-    body,
+    soul: body,
+    wisdom: wisdomContent.trim(),
   };
 }
 
@@ -80,31 +90,35 @@ function extractField(frontmatter: string, field: string): string | undefined {
 
 /**
  * Load all personas from the bundled personas/ directory.
- * Returns sorted by tier (ascending), then alphabetically.
+ * Only directories whose name matches the persona alias are considered valid.
+ * Returns sorted by tier (ascending), then by alias.
  */
 export async function loadPersonas(): Promise<Persona[]> {
   const dir = getPersonasDir();
   const personas: Persona[] = [];
 
   try {
-    const files = await readdir(dir);
-    for (const file of files) {
-      if (!file.endsWith(".md")) continue;
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
       try {
-        const content = await readFile(join(dir, file), "utf-8");
-        const persona = parsePersonaFile(content);
-        if (persona) personas.push(persona);
+        const soulPath = join(dir, entry.name, "SOUL.md");
+        const wisdomPath = join(dir, entry.name, "WISDOM.md");
+        const [soulContent, wisdomContent] = await Promise.all([
+          readFile(soulPath, "utf-8"),
+          readFile(wisdomPath, "utf-8"),
+        ]);
+        const persona = parsePersonaSoul(soulContent, wisdomContent);
+        if (persona && persona.alias === entry.name) personas.push(persona);
       } catch {
-        /* skip unreadable files */
+        /* skip unreadable persona directories */
       }
     }
   } catch {
-    /* personas dir missing — return empty */
+    /* personas dir missing - return empty */
   }
 
-  personas.sort(
-    (a, b) => a.tier - b.tier || a.persona.localeCompare(b.persona),
-  );
+  personas.sort((a, b) => a.tier - b.tier || a.alias.localeCompare(b.alias));
   return personas;
 }
 
@@ -127,16 +141,35 @@ export async function scaffoldFromPersona(
   await mkdir(teamDir, { recursive: true });
   await mkdir(join(teamDir, "memory"), { recursive: true });
 
-  // Replace <Name> placeholder with the chosen name (capitalize first letter)
+  // Replace <Name> placeholders with the chosen display name.
   const displayName = name.charAt(0).toUpperCase() + name.slice(1);
-  const soulContent = persona.body.replace(/<Name>/g, displayName);
+  const soulContent = persona.soul.replace(/<Name>/g, displayName);
+  const wisdomContent = persona.wisdom.replace(/<Name>/g, displayName);
 
   await writeFile(join(teamDir, "SOUL.md"), soulContent, "utf-8");
-  await writeFile(
-    join(teamDir, "WISDOM.md"),
-    `# ${displayName} — Wisdom\n\nDistilled principles. Read this first every session (after SOUL.md).\n\nLast compacted: never\n\n---\n\n*No entries yet — wisdom is distilled from experience.*\n`,
-    "utf-8",
-  );
+  await writeFile(join(teamDir, "WISDOM.md"), wisdomContent, "utf-8");
 
   return teamDir;
+}
+
+/**
+ * Update an existing teammate's SOUL.md and WISDOM.md from a persona template.
+ * Preserves the teammate's memory/ directory and other files.
+ *
+ * @param teammatesDir - The .teammates/ directory
+ * @param name - The teammate folder name
+ * @param persona - The persona to update from
+ */
+export async function updateFromPersona(
+  teammatesDir: string,
+  name: string,
+  persona: Persona,
+): Promise<void> {
+  const teamDir = join(teammatesDir, name);
+  const displayName = name.charAt(0).toUpperCase() + name.slice(1);
+  const soulContent = persona.soul.replace(/<Name>/g, displayName);
+  const wisdomContent = persona.wisdom.replace(/<Name>/g, displayName);
+
+  await writeFile(join(teamDir, "SOUL.md"), soulContent, "utf-8");
+  await writeFile(join(teamDir, "WISDOM.md"), wisdomContent, "utf-8");
 }

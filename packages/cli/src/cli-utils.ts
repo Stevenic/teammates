@@ -94,6 +94,10 @@ export function formatConversationEntry(role: string, text: string): string {
 /**
  * Build the conversation context section for a teammate prompt.
  * Works backwards from newest entries, including whole entries up to the budget.
+ *
+ * Returns the entries (and optional summary) WITHOUT the "## Conversation History"
+ * section header — the consumer (buildUserMessage) owns that header so we don't
+ * duplicate it when this string is passed through the orchestrator → adapter chain.
  */
 export function buildConversationContext(
   history: ConversationEntry[],
@@ -102,7 +106,7 @@ export function buildConversationContext(
 ): string {
   if (history.length === 0 && !summary) return "";
 
-  const parts: string[] = ["## Conversation History\n"];
+  const parts: string[] = [];
 
   if (summary) {
     parts.push(`### Previous Conversation Summary\n\n${summary}\n`);
@@ -182,6 +186,48 @@ export function compressConversationEntries(
     return `${existingSummary}\n\n### Compressed\n${compressed}`;
   }
   return compressed;
+}
+
+// ─── Thread-local conversation context ──────────────────────────────
+
+/** Minimal thread entry shape needed by buildThreadContext. */
+export interface ThreadContextEntry {
+  type: "user" | "agent" | "handoff" | "system";
+  teammate?: string;
+  content: string;
+  subject?: string;
+}
+
+/**
+ * Build conversation context from a thread's entries rather than the global
+ * conversation history. Each entry maps to a ConversationEntry-style line.
+ * The budget limits total characters included (newest entries first).
+ */
+export function buildThreadContext(
+  entries: ThreadContextEntry[],
+  userName: string,
+  budget: number,
+): string {
+  if (entries.length === 0) return "";
+
+  // Map thread entries → conversation-style lines
+  const mapped: ConversationEntry[] = [];
+  for (const e of entries) {
+    const role =
+      e.type === "user"
+        ? userName
+        : e.type === "handoff"
+          ? `${e.teammate ?? "system"} (handoff)`
+          : (e.teammate ?? "system");
+    // Use subject + abbreviated content for agent entries, full content for user
+    const text =
+      e.type === "agent" && e.subject
+        ? `${e.subject}\n${e.content}`
+        : e.content;
+    mapped.push({ role, text });
+  }
+
+  return buildConversationContext(mapped, "", budget);
 }
 
 /** Check if a string looks like an image file path. */

@@ -1,8 +1,8 @@
 # New Teammate Template
 
-<!-- template-version: 2 -->
+<!-- template-version: 3 -->
 
-Copy the SOUL.md, WISDOM.md, and RESUME.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
+Copy the SOUL.md, GOALS.md, WISDOM.md, and RESUME.md structures below to `.teammates/<name>/` and fill in each file. Create an empty `memory/` directory (with `weekly/` and `monthly/` subdirectories) for daily logs, episodic summaries, and typed memory files.
 
 ---
 
@@ -19,11 +19,12 @@ Copy the SOUL.md, WISDOM.md, and RESUME.md structures below to `.teammates/<name
 
 Each session, you wake up fresh. These files _are_ your memory. Read them. Update them. They're how you persist.
 
-- Read your SOUL.md and WISDOM.md at the start of every session.
+- Read your SOUL.md, GOALS.md, and WISDOM.md at the start of every session.
 - Read `memory/YYYY-MM-DD.md` for today and yesterday.
 - Read USER.md to understand who you're working with.
 - Relevant memories from past work are automatically provided in your context via recall search.
 - Update your files as you learn. If you change SOUL.md, tell the user.
+- Keep GOALS.md current — mark goals done as you complete them, add new ones as they emerge.
 - You may create additional private docs under your folder (e.g., `.teammates/<name>/notes/`, `.teammates/<name>/specs/`). To share a doc with other teammates, add a pointer to it in [CROSS-TEAM.md](../CROSS-TEAM.md).
 
 ## Core Principles
@@ -96,6 +97,48 @@ Last compacted: YYYY-MM-DD
 
 _(No wisdom yet — principles emerge after the first compaction.)_
 ```
+
+---
+
+## GOALS.md Template
+
+GOALS.md tracks what a teammate is actively working towards. Unlike SOUL.md (identity) or WISDOM.md (accumulated knowledge), GOALS.md captures *intent* and *direction*. It is the third file a teammate reads each session — after SOUL.md and WISDOM.md — so they can immediately orient on what matters.
+
+Goals should be scannable by the user so they can quickly verify alignment and correct course. Group by priority tier. Mark goals done inline rather than deleting them (the history is useful). Add new goals as they emerge from user requests, specs, or handoffs.
+
+```markdown
+# <Name> — Goals
+
+Updated: YYYY-MM-DD
+
+## Active Goals
+
+### P0 — Current Sprint
+
+- [ ] <Goal description> — <brief context or link to spec>
+- [ ] <Goal description>
+
+### P1 — Up Next
+
+- [ ] <Goal description>
+- [ ] <Goal description>
+
+### P2 — Backlog
+
+- [ ] <Goal description>
+
+## Completed
+
+- [x] <Goal description> — done YYYY-MM-DD
+```
+
+**Guidelines:**
+
+- **Keep it current** — Update at the end of each session. Stale goals erode trust.
+- **One line per goal** — If a goal needs more than a line, it needs a spec, not a longer goal entry.
+- **Link to specs** — If a goal has a design doc, link it: `— [spec](docs/specs/F-foo.md)`.
+- **Priority tiers are flexible** — Use P0/P1/P2 as a starting point. Teams with deeper backlogs (like Pipeline's P0-P9) can extend the tiers.
+- **Completed section is a changelog** — Move goals here when done, with the date. Trim periodically during compaction.
 
 ---
 

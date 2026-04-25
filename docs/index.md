@@ -19,13 +19,14 @@ A `.teammates/` directory in your repo containing markdown files that any AI age
 
 1. Install the CLI: `npm install -g @teammates/cli`
 2. Launch a session: `teammates claude` (or codex, aider, copilot)
-3. The CLI guides you through onboarding — analyzing your codebase, proposing teammates from 15 built-in personas (PM, SWE, DevOps, QA, Security, and more), and scaffolding the `.teammates/` directory
+3. The CLI guides you through onboarding — analyzing your codebase, proposing teammates from 16 built-in personas (PM, SWE, DevOps, QA, Prompt Engineer, Security, and more), and scaffolding the `.teammates/` directory
 
 That's it. The CLI handles routing, handoffs, and memory automatically.
 
 ## Key Concepts
 
 - **Soul** — A teammate's identity: who they are, what they own, their principles, and their boundaries.
+- **Goals** — Active objectives and priorities. Tracks what a teammate is working towards — distinct from identity (SOUL.md) and knowledge (WISDOM.md).
 - **Continuity** — Each session starts fresh. Files are the only memory. Teammates read their files at startup and write to them before ending a session.
 - **Memory** — Three tiers: raw daily logs, typed memories, and distilled wisdom. Memories compact into wisdom over time.
 - **Ownership** — File patterns each teammate is responsible for. Every part of the codebase has a clear owner.

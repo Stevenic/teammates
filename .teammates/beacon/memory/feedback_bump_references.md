@@ -1,5 +1,4 @@
 ---
-version: 0.6.0
 name: Bump package references on version bump
 description: When bumping package versions, always update all references including settings.json cliVersion
 type: feedback

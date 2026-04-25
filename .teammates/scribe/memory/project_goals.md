@@ -1,5 +1,4 @@
 ---
-version: 0.6.1
 name: Scribe goals — March 2026
 description: Current goals and backlog for Scribe's framework/docs ownership areas
 type: project

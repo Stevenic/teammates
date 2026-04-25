@@ -113,7 +113,7 @@ Retrospectives are how teammates grow. They review their own work, identify what
 
 ### What happens during a retro
 
-1. The teammate reviews its SOUL.md, WISDOM.md, recent logs, and typed memories
+1. The teammate reviews its SOUL.md, GOALS.md, WISDOM.md, recent logs, and typed memories
 2. It produces four sections:
    - **What's Working** — patterns worth reinforcing, with evidence
    - **What's Not Working** — friction or recurring issues
@@ -227,10 +227,17 @@ Use `/status` (or `/s`) to see what's running and what's queued:
 /status
 ```
 
-Cancel a queued task by number:
+Cancel a task (or a specific teammate inside a task):
 
 ```
-/cancel 2
+/cancel 2            # cancel task #2
+/cancel 2 beacon     # cancel just beacon's slice of task #2
+```
+
+Interrupt a running teammate with extra instructions instead of cancelling:
+
+```
+/interrupt 2 beacon also update the tests
 ```
 
 ## Handling Handoffs
@@ -327,6 +334,39 @@ Every request generates a temporary log file of the coding agent's actions. You 
 
 This analyzes the log for `beacon`'s last response, showing what the coding agent did and why. It's useful for understanding why a teammate took a particular approach or produced unexpected output.
 
+## Managing the Roster
+
+Grow or shrink the team from inside the REPL — no manual file edits required.
+
+```
+/add                  # pick a persona and optionally rename it
+/add pixel            # add the "pixel" persona directly
+/remove <teammate>    # remove an agentic teammate (your user avatar is protected)
+/update <teammate>    # refresh SOUL.md and WISDOM.md from the bundled persona
+```
+
+The CLI scaffolds the folder structure, updates the roster, and reindexes recall. `/update` is useful after upgrading the CLI — it re-applies persona improvements to existing teammates without overwriting memory.
+
+## Working in Multiple Tabs
+
+Each tab is an independent conversation with its own feed, tasks, and scroll state. Use tabs to isolate parallel work.
+
+```
+/tab spec: thread view    # open a new tab with a description
+/tabs                     # list all tabs
+/close 2                  # close tab #2
+```
+
+Tasks keep running in background tabs — switching away never blocks them. Use the tab shortcut shown in the footer to cycle.
+
+## Writing a Reusable Script
+
+`/script` hands a short description to the coding agent, which writes and runs a script you can reuse later. Useful for repeatable one-offs like log slicing, data munging, or bulk refactors.
+
+```
+/script count handoffs per teammate in the last 7 daily logs
+```
+
 ## Quick Reference
 
 | What you want | What to type |
@@ -340,7 +380,13 @@ This analyzes the log for `beacon`'s last response, showing what the coding agen
 | Run all retros | `/retro everyone` |
 | Compact memories | `/compact beacon` |
 | Check queue status | `/status` |
+| Cancel a task | `/cancel 2` |
+| Interrupt a teammate | `/interrupt 2 beacon <msg>` |
+| Add a teammate | `/add` |
+| Open a new tab | `/tab` |
 | Debug last response | `/debug beacon` |
+| Run a one-off script | `/script <desc>` |
 | Copy session text | `/copy` |
 | Clear session | `/clear` |
+| Version & diagnostics | `/about` |
 | Exit | `/exit` |

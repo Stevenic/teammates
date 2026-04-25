@@ -63,6 +63,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Build independent packages
+        run: npm run build -w packages/consolonia & npm run build -w packages/recall & wait
+
+      - name: Build CLI (depends on consolonia + recall)
+        run: npm run build -w packages/cli
+
       - name: Type-check
         run: npm run typecheck
 

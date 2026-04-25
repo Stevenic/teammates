@@ -99,6 +99,10 @@ export {
   truncateAnsi,
   visibleLength,
 } from "./ansi/strip.js";
+export {
+  detectTerminal,
+  type TerminalCaps,
+} from "./ansi/terminal-env.js";
 
 // ── Render pipeline ─────────────────────────────────────────────────
 
@@ -151,8 +155,11 @@ export {
   ChatView,
   type ChatViewOptions,
   type DropdownItem,
+  type FeedActionEntry,
   type FeedActionItem,
+  type FeedItem,
 } from "./widgets/chat-view.js";
+export { FeedStore } from "./widgets/feed-store.js";
 export {
   Interview,
   type InterviewOptions,
@@ -172,6 +179,12 @@ export {
   TextInput,
   type TextInputOptions,
 } from "./widgets/text-input.js";
+export { ThreadBar, type ThreadBarTab } from "./widgets/thread-bar.js";
+export {
+  VirtualList,
+  type VirtualListItem,
+  type VirtualListOptions,
+} from "./widgets/virtual-list.js";
 
 // ── Markdown ─────────────────────────────────────────────────────────
 

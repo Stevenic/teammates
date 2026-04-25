@@ -59,6 +59,7 @@ export class Registry {
     }
 
     const soul = await readFile(soulPath, "utf-8");
+    const goals = await readFileSafe(join(dir, "GOALS.md"));
     const wisdom = await readFileSafe(join(dir, "WISDOM.md"));
     const dailyLogs = await loadDailyLogs(join(dir, "memory"));
     const weeklyLogs = await loadWeeklyLogs(join(dir, "memory"));
@@ -72,6 +73,7 @@ export class Registry {
       type,
       role,
       soul,
+      goals,
       wisdom,
       dailyLogs,
       weeklyLogs,
@@ -97,6 +99,11 @@ export class Registry {
   /** List all loaded teammate names */
   list(): string[] {
     return Array.from(this.teammates.keys());
+  }
+
+  /** Remove a teammate from the in-memory registry */
+  unregister(name: string): boolean {
+    return this.teammates.delete(name);
   }
 
   /** Get the full roster */

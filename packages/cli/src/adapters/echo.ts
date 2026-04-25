@@ -7,7 +7,7 @@
 
 import type { AgentAdapter } from "../adapter.js";
 import { buildTeammatePrompt } from "../adapter.js";
-import type { TaskResult, TeammateConfig } from "../types.js";
+import type { ActivityEvent, TaskResult, TeammateConfig } from "../types.js";
 
 let nextId = 1;
 
@@ -22,11 +22,20 @@ export class EchoAdapter implements AgentAdapter {
     _sessionId: string,
     teammate: TeammateConfig,
     prompt: string,
-    options?: { raw?: boolean },
+    options?: {
+      raw?: boolean;
+      system?: boolean;
+      skipMemoryUpdates?: boolean;
+      onActivity?: (events: ActivityEvent[]) => void;
+      signal?: AbortSignal;
+    },
   ): Promise<TaskResult> {
     const fullPrompt = options?.raw
       ? prompt
-      : buildTeammatePrompt(teammate, prompt);
+      : buildTeammatePrompt(teammate, prompt, {
+          system: options?.system,
+          skipMemoryUpdates: options?.skipMemoryUpdates,
+        }).fullPrompt;
 
     return {
       teammate: teammate.name,

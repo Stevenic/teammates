@@ -1,5 +1,4 @@
 ---
-version: 0.6.0
 name: Consolonia ownership
 description: Beacon's top-level identity and routing scope explicitly include @teammates/consolonia alongside recall and cli.
 type: decision
